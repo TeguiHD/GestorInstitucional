@@ -1,0 +1,120 @@
+@import 'tailwindcss';
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+@theme {
+  /* Marca CSSP */
+  --color-primary: #008269;
+  --color-primary-hover: #006b56;
+  --color-primary-active: #004d40;
+  --color-primary-foreground: #ffffff;
+  --color-accent: #e6f4f1;
+  --color-accent-foreground: #004d40;
+
+  /* Superficies light */
+  --color-background: #ffffff;
+  --color-surface: #f4f4f4;
+  --color-foreground: #1a1a1a;
+  --color-muted: #f4f4f4;
+  --color-muted-foreground: #595959;
+  --color-border: #e5e5e5;
+  --color-ring: #008269;
+
+  /* Estados (WCAG AA sobre blanco) */
+  --color-success: #2d7a3f;
+  --color-success-foreground: #ffffff;
+  --color-warning: #b45309;
+  --color-warning-foreground: #ffffff;
+  --color-destructive: #b91c1c;
+  --color-destructive-foreground: #ffffff;
+
+  --radius-sm: 0.375rem;
+  --radius-md: 0.5rem;
+  --radius-lg: 0.75rem;
+  --radius-xl: 1rem;
+
+  --font-sans: 'Inter', system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --font-mono: 'JetBrains Mono', 'Fira Code', ui-monospace, monospace;
+}
+
+:root.dark {
+  --color-background: #0f1614;
+  --color-surface: #1a2421;
+  --color-foreground: #f4f4f4;
+  --color-muted: #1a2421;
+  --color-muted-foreground: #b8c5c0;
+  --color-border: #2a3a36;
+  --color-ring: #2ea88e;
+
+  --color-primary: #2ea88e;
+  --color-primary-hover: #36c1a3;
+  --color-primary-active: #1f8c75;
+  --color-primary-foreground: #0f1614;
+  --color-accent: #14302a;
+  --color-accent-foreground: #b8e6d8;
+
+  --color-success: #4ade80;
+  --color-warning: #fbbf24;
+  --color-destructive: #f87171;
+}
+
+html, body { min-height: 100%; }
+html { color-scheme: light; }
+html.dark { color-scheme: dark; }
+
+body {
+  background-color: var(--color-background);
+  color: var(--color-foreground);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+*:focus-visible {
+  outline: 2px solid var(--color-ring);
+  outline-offset: 2px;
+}
+
+/* Theme toggle — circle reveal animation */
+::view-transition-new(root) {
+  mask: url('data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 40 40"><circle cx="20" cy="20" r="20" fill="white"/></svg>')
+    center / 0 no-repeat;
+  animation: cssp-theme-scale 0.8s ease-in-out;
+  animation-fill-mode: both;
+}
+
+::view-transition-old(root),
+.dark::view-transition-old(root) {
+  animation: none;
+  animation-fill-mode: both;
+  z-index: -1;
+}
+
+.dark::view-transition-new(root) {
+  animation: cssp-theme-scale 0.8s ease-in-out;
+  animation-fill-mode: both;
+}
+
+@keyframes cssp-theme-scale {
+  to {
+    mask-size: 200vmax;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  ::view-transition-new(root),
+  .dark::view-transition-new(root) {
+    animation: none;
+  }
+}
+
+@keyframes shake {
+  0%, 100% { transform: translateX(0); }
+  15%       { transform: translateX(-6px); }
+  30%       { transform: translateX(6px); }
+  45%       { transform: translateX(-4px); }
+  60%       { transform: translateX(4px); }
+  75%       { transform: translateX(-2px); }
+  90%       { transform: translateX(2px); }
+}
+.animate-shake { animation: shake 0.5s ease-in-out; }

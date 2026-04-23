@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <link rel="icon" type="image/x-icon" href="/favicon.ico" sizes="64x64 48x48 32x32 16x16" />
+    <link rel="apple-touch-icon" sizes="180x180" href="/logo-cssp.svg" />
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <meta name="color-scheme" content="light dark" />
+    <meta name="theme-color" content="#008269" media="(prefers-color-scheme: light)" />
+    <meta name="theme-color" content="#0f1614" media="(prefers-color-scheme: dark)" />
+    <meta name="description" content="Sistema de gestión de asistencia escolar — Colegio San Sebastián de Paine" />
+    <title>Asistencia · CSSP</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;600&display=swap"
+      rel="stylesheet"
+    />
+    <script>
+      // Anti-FOUC: aplica tema persistido antes del render React.
+      (function () {
+        try {
+          var raw = localStorage.getItem('cssp-theme');
+          var theme = 'system';
+          if (raw) {
+            var parsed = JSON.parse(raw);
+            theme = (parsed && parsed.state && parsed.state.theme) || 'system';
+          }
+          var effective = theme;
+          if (theme === 'system') {
+            effective = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+          }
+          if (effective === 'dark') document.documentElement.classList.add('dark');
+          document.documentElement.style.colorScheme = effective;
+        } catch (e) {}
+      })();
+    </script>
+  </head>
+  <body class="min-h-screen bg-background text-foreground antialiased">
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

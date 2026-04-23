@@ -1,0 +1,14 @@
+{
+  "name": "Asistencia CSSP",
+  "short_name": "Asistencia",
+  "description": "Sistema de gestión de asistencia escolar — Colegio San Sebastián de Paine",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#ffffff",
+  "theme_color": "#008269",
+  "lang": "es-CL",
+  "icons": [
+    { "src": "/favicon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" },
+    { "src": "/logo-cssp.svg", "sizes": "any", "type": "image/svg+xml" }
+  ]
+}
