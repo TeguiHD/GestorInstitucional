@@ -248,11 +248,13 @@ function UserModal({
   schoolId,
   onClose,
   onSuccess,
+  onPasswordGenerated,
 }: {
   state: ModalState;
   schoolId: string;
   onClose: () => void;
   onSuccess: () => void;
+  onPasswordGenerated: (password: string, userId?: string) => void;
 }) {
   const qc = useQueryClient();
   const [firstName, setFirstName] = useState(state?.type === 'edit' ? state.user.firstName : '');
@@ -274,6 +276,7 @@ function UserModal({
       qc.invalidateQueries({ queryKey: ['users', schoolId] });
       const d = data as { tempPassword?: string; id?: string };
       if (d.tempPassword) {
+        onPasswordGenerated(d.tempPassword, d.id);
         onSuccess();
       } else {
         toast.success('Usuario creado', {
@@ -356,20 +359,14 @@ function UserModal({
         schoolId,
       });
     } else {
-      const data = (await create.mutateAsync({
+      await create.mutateAsync({
         email,
         firstName,
         lastName,
         schoolId,
         role,
         sendWelcomeEmail: sendWelcome,
-      })) as { tempPassword?: string; id?: string };
-      if (data?.tempPassword) {
-        // Trigger password reveal modal
-        qc.invalidateQueries({ queryKey: ['users', schoolId] });
-        onSuccess();
-        return;
-      }
+      });
     }
   }
 
@@ -759,6 +756,9 @@ function UsersPage() {
           onSuccess={() => {
             setModal(null);
           }}
+          onPasswordGenerated={(tempPassword, userId) =>
+            setPendingPassword({ userId: userId ?? 'new', tempPassword })
+          }
         />
       )}
       {pendingPassword && (
@@ -771,6 +771,7 @@ function UsersPage() {
           schoolId={schoolId}
           onClose={() => setPendingPassword(null)}
           onSuccess={() => setPendingPassword(null)}
+          onPasswordGenerated={() => undefined}
         />
       )}
     </div>

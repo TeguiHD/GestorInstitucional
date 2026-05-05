@@ -197,7 +197,7 @@ export function AppLayout({ children }: Props) {
         )}
       >
         <div className="flex h-16 items-center gap-3 px-5 border-b border-border">
-          <img src="/logo-cssp.svg" alt="CSSP" className="size-9 rounded-lg shadow-sm" />
+          <img src="/logo-cssp.png" alt="CSSP" className="size-9 object-contain drop-shadow-sm" />
           <div className="min-w-0">
             <p className="text-sm font-semibold leading-tight truncate">Asistencia CSSP</p>
             <p className="text-[11px] text-muted-foreground truncate">San Sebastián de Paine</p>

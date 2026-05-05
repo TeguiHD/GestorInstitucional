@@ -61,6 +61,7 @@ export class JustificationsController {
     return this.service.upload({
       recordId,
       uploadedById: user.sub,
+      actor: user,
       reason,
       file: { filename: mp.filename, mimetype: mp.mimetype, stream: mp.file },
     });
@@ -68,41 +69,45 @@ export class JustificationsController {
 
   @Get('record/:recordId')
   @ApiOperation({ summary: 'Listar justificaciones de un registro' })
-  listByRecord(@Param('recordId') recordId: string) {
-    return this.service.listByRecord(recordId);
+  listByRecord(@Param('recordId') recordId: string, @CurrentUser() user: JwtPayload) {
+    return this.service.listByRecord(recordId, user);
   }
 
   @Get('student/:studentId')
   @ApiOperation({ summary: 'Listar justificaciones de un alumno' })
-  listByStudent(@Param('studentId') studentId: string) {
-    return this.service.listByStudent(studentId);
+  listByStudent(@Param('studentId') studentId: string, @CurrentUser() user: JwtPayload) {
+    return this.service.listByStudent(studentId, user);
   }
 
   @Get('school/:schoolId')
   @Roles(SystemRole.SUPER_ADMIN, SystemRole.DIRECTOR, SystemRole.UTP)
   @ApiOperation({ summary: 'Todas las justificaciones del colegio' })
-  listBySchool(@Param('schoolId') schoolId: string) {
-    return this.service.listBySchool(schoolId);
+  listBySchool(@Param('schoolId') schoolId: string, @CurrentUser() user: JwtPayload) {
+    return this.service.listBySchool(schoolId, user);
   }
 
   @Get('pending')
   @Roles(SystemRole.SUPER_ADMIN, SystemRole.DIRECTOR, SystemRole.UTP)
   @ApiOperation({ summary: 'Justificaciones pendientes del colegio' })
-  pending(@Query('schoolId') schoolId: string) {
-    return this.service.pendingBySchool(schoolId);
+  pending(@Query('schoolId') schoolId: string, @CurrentUser() user: JwtPayload) {
+    return this.service.pendingBySchool(schoolId, user);
   }
 
   @Patch(':id/review')
   @Roles(SystemRole.SUPER_ADMIN, SystemRole.DIRECTOR, SystemRole.UTP)
   @ApiOperation({ summary: 'Aprobar o rechazar justificación' })
   review(@Param('id') id: string, @Body() dto: ReviewDto, @CurrentUser() user: JwtPayload) {
-    return this.service.review(id, user.sub, dto.decision, dto.notes);
+    return this.service.review(id, user, dto.decision, dto.notes);
   }
 
   @Get(':id/file')
   @ApiOperation({ summary: 'Descargar certificado' })
-  async download(@Param('id') id: string, @Res() res: FastifyReply) {
-    const j = await this.service.getFile(id);
+  async download(
+    @Param('id') id: string,
+    @CurrentUser() user: JwtPayload,
+    @Res() res: FastifyReply,
+  ) {
+    const j = await this.service.getFile(id, user);
     void res.header('Content-Type', j.mimeType);
     void res.header('Content-Disposition', `inline; filename="${encodeURIComponent(j.fileName)}"`);
     void res.send(createReadStream(j.filePath));
@@ -111,6 +116,6 @@ export class JustificationsController {
   @Delete(':id')
   @ApiOperation({ summary: 'Eliminar justificación (solo autor antes de revisión)' })
   remove(@Param('id') id: string, @CurrentUser() user: JwtPayload) {
-    return this.service.remove(id, user.sub);
+    return this.service.remove(id, user);
   }
 }

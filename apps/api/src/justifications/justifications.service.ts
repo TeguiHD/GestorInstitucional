@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { createWriteStream } from 'node:fs';
 import { mkdir, unlink } from 'node:fs/promises';
 import { extname, join } from 'node:path';
+import { Transform } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 
 import {
@@ -16,8 +17,11 @@ import type { JustificationStatus } from '@prisma/client';
 import { MailService } from '../mail/mail.service.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { AuditService } from '../audit/audit.service.js';
+import type { JwtPayload } from '../common/decorators/current-user.decorator.js';
 
 const ALLOWED_MIME = new Set(['application/pdf', 'image/png', 'image/jpeg', 'image/webp']);
+const MAX_FILE_SIZE_BYTES = 8 * 1024 * 1024;
+const SCHOOL_ADMIN_ROLES = new Set(['SUPER_ADMIN', 'DIRECTOR', 'UTP']);
 
 const UPLOADS_ROOT = process.env.UPLOADS_DIR ?? join(process.cwd(), 'uploads');
 
@@ -34,6 +38,7 @@ export class JustificationsService {
   async upload(params: {
     recordId: string;
     uploadedById: string;
+    actor: JwtPayload;
     reason: string;
     file: { filename: string; mimetype: string; stream: NodeJS.ReadableStream };
   }) {
@@ -42,8 +47,23 @@ export class JustificationsService {
     }
     const record = await this.prisma.attendanceRecord.findUnique({
       where: { id: params.recordId },
+      include: {
+        student: {
+          select: {
+            schoolId: true,
+            courseId: true,
+            guardianships: { select: { guardianId: true } },
+          },
+        },
+      },
     });
     if (!record) throw new NotFoundException('Registro de asistencia no encontrado');
+    await this.assertCanAccessStudent(
+      params.actor,
+      record.student.schoolId,
+      record.student.courseId,
+      record.student.guardianships.map((g) => g.guardianId),
+    );
 
     const year = new Date().getFullYear();
     const dir = join(UPLOADS_ROOT, 'justifications', String(year));
@@ -55,12 +75,23 @@ export class JustificationsService {
     const filePath = join(dir, `${fileId}${safeExt}`);
 
     let size = 0;
-    const counter = new (await import('node:stream')).PassThrough();
-    counter.on('data', (c: Buffer) => {
-      size += c.length;
+    const counter = new Transform({
+      transform(chunk: Buffer, _encoding, callback) {
+        size += chunk.length;
+        if (size > MAX_FILE_SIZE_BYTES) {
+          callback(new BadRequestException('Archivo demasiado grande (máx 8 MB)'));
+          return;
+        }
+        callback(null, chunk);
+      },
     });
     const out = createWriteStream(filePath);
-    await pipeline(params.file.stream, counter, out);
+    try {
+      await pipeline(params.file.stream, counter, out);
+    } catch (error) {
+      await unlink(filePath).catch(() => undefined);
+      throw error;
+    }
 
     const created = await this.prisma.attendanceJustification.create({
       data: {
@@ -85,7 +116,26 @@ export class JustificationsService {
     return created;
   }
 
-  async listByRecord(recordId: string) {
+  async listByRecord(recordId: string, user: JwtPayload) {
+    const record = await this.prisma.attendanceRecord.findUnique({
+      where: { id: recordId },
+      include: {
+        student: {
+          select: {
+            schoolId: true,
+            courseId: true,
+            guardianships: { select: { guardianId: true } },
+          },
+        },
+      },
+    });
+    if (!record) throw new NotFoundException('Registro de asistencia no encontrado');
+    await this.assertCanAccessStudent(
+      user,
+      record.student.schoolId,
+      record.student.courseId,
+      record.student.guardianships.map((g) => g.guardianId),
+    );
     return this.prisma.attendanceJustification.findMany({
       where: { recordId },
       orderBy: { createdAt: 'desc' },
@@ -96,7 +146,22 @@ export class JustificationsService {
     });
   }
 
-  async listByStudent(studentId: string) {
+  async listByStudent(studentId: string, user: JwtPayload) {
+    const student = await this.prisma.student.findUnique({
+      where: { id: studentId },
+      select: {
+        schoolId: true,
+        courseId: true,
+        guardianships: { select: { guardianId: true } },
+      },
+    });
+    if (!student) throw new NotFoundException('Alumno no encontrado');
+    await this.assertCanAccessStudent(
+      user,
+      student.schoolId,
+      student.courseId,
+      student.guardianships.map((g) => g.guardianId),
+    );
     return this.prisma.attendanceJustification.findMany({
       where: { record: { studentId } },
       orderBy: { createdAt: 'desc' },
@@ -107,7 +172,8 @@ export class JustificationsService {
     });
   }
 
-  async listBySchool(schoolId: string) {
+  async listBySchool(schoolId: string, user: JwtPayload) {
+    this.assertCanAccessSchool(user, schoolId);
     return this.prisma.attendanceJustification.findMany({
       where: { record: { student: { schoolId } } },
       orderBy: { createdAt: 'desc' },
@@ -133,7 +199,8 @@ export class JustificationsService {
     });
   }
 
-  async pendingBySchool(schoolId: string) {
+  async pendingBySchool(schoolId: string, user: JwtPayload) {
+    this.assertCanAccessSchool(user, schoolId);
     return this.prisma.attendanceJustification.findMany({
       where: { status: 'PENDING', record: { student: { schoolId } } },
       orderBy: { createdAt: 'asc' },
@@ -157,9 +224,18 @@ export class JustificationsService {
     });
   }
 
-  async review(id: string, reviewerId: string, decision: 'APPROVED' | 'REJECTED', notes?: string) {
-    const j = await this.prisma.attendanceJustification.findUnique({ where: { id } });
+  async review(
+    id: string,
+    reviewer: JwtPayload,
+    decision: 'APPROVED' | 'REJECTED',
+    notes?: string,
+  ) {
+    const j = await this.prisma.attendanceJustification.findUnique({
+      where: { id },
+      include: { record: { select: { student: { select: { schoolId: true } } } } },
+    });
     if (!j) throw new NotFoundException('Justificación no encontrada');
+    this.assertCanAccessSchool(reviewer, j.record.student.schoolId);
     if (j.status !== 'PENDING') throw new ForbiddenException('Ya fue revisada');
 
     const updated = await this.prisma.$transaction(async (tx) => {
@@ -167,7 +243,7 @@ export class JustificationsService {
         where: { id },
         data: {
           status: decision as JustificationStatus,
-          reviewedById: reviewerId,
+          reviewedById: reviewer.sub,
           reviewedAt: new Date(),
           reviewNotes: notes ?? null,
         },
@@ -182,7 +258,7 @@ export class JustificationsService {
     });
 
     await this.audit.log({
-      userId: reviewerId,
+      userId: reviewer.sub,
       action: 'UPDATE',
       entity: 'AttendanceJustification',
       entityId: id,
@@ -262,24 +338,88 @@ export class JustificationsService {
     });
   }
 
-  async getFile(id: string) {
-    const j = await this.prisma.attendanceJustification.findUnique({ where: { id } });
+  async getFile(id: string, user: JwtPayload) {
+    const j = await this.prisma.attendanceJustification.findUnique({
+      where: { id },
+      include: {
+        record: {
+          select: {
+            student: {
+              select: {
+                schoolId: true,
+                courseId: true,
+                guardianships: { select: { guardianId: true } },
+              },
+            },
+          },
+        },
+      },
+    });
     if (!j) throw new NotFoundException('Justificación no encontrada');
+    await this.assertCanAccessStudent(
+      user,
+      j.record.student.schoolId,
+      j.record.student.courseId,
+      j.record.student.guardianships.map((g) => g.guardianId),
+    );
     return j;
   }
 
-  async remove(id: string, userId: string) {
-    const j = await this.prisma.attendanceJustification.findUnique({ where: { id } });
+  async remove(id: string, user: JwtPayload) {
+    const j = await this.prisma.attendanceJustification.findUnique({
+      where: { id },
+      include: { record: { select: { student: { select: { schoolId: true } } } } },
+    });
     if (!j) throw new NotFoundException('Justificación no encontrada');
-    if (j.uploadedById !== userId && j.status !== 'PENDING') {
-      throw new ForbiddenException('Solo el autor puede eliminar antes de revisión');
+    if (j.status !== 'PENDING') {
+      throw new ForbiddenException('Solo se pueden eliminar justificaciones pendientes');
+    }
+    const sameSchoolAdmin = this.canAccessSchool(user, j.record.student.schoolId);
+    if (j.uploadedById !== user.sub && !sameSchoolAdmin) {
+      throw new ForbiddenException('Solo el autor o personal autorizado puede eliminarla');
     }
     await this.prisma.attendanceJustification.delete({ where: { id } });
+    await this.audit.log({
+      userId: user.sub,
+      action: 'DELETE',
+      entity: 'AttendanceJustification',
+      entityId: id,
+      meta: { recordId: j.recordId },
+    });
     try {
       await unlink(j.filePath);
     } catch {
       /* file may be gone */
     }
     return { ok: true };
+  }
+
+  private assertCanAccessSchool(user: JwtPayload, schoolId: string) {
+    if (!this.canAccessSchool(user, schoolId)) {
+      throw new ForbiddenException('No tienes acceso a este colegio');
+    }
+  }
+
+  private canAccessSchool(user: JwtPayload, schoolId: string) {
+    if (user.roles.includes('SUPER_ADMIN')) return true;
+    return user.schoolId === schoolId && user.roles.some((role) => SCHOOL_ADMIN_ROLES.has(role));
+  }
+
+  private async assertCanAccessStudent(
+    user: JwtPayload,
+    schoolId: string,
+    courseId: string,
+    guardianIds: string[],
+  ) {
+    if (this.canAccessSchool(user, schoolId)) return;
+    if (user.roles.includes('APODERADO') && guardianIds.includes(user.sub)) return;
+    if (user.schoolId === schoolId && user.roles.includes('PROFESOR')) {
+      const assigned = await this.prisma.courseTeacher.findUnique({
+        where: { courseId_userId: { courseId, userId: user.sub } },
+        select: { id: true },
+      });
+      if (assigned) return;
+    }
+    throw new ForbiddenException('No tienes acceso a este alumno');
   }
 }

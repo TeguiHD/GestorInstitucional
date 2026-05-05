@@ -1,6 +1,14 @@
 import { createFileRoute, redirect, useNavigate } from '@tanstack/react-router';
 import { useState } from 'react';
-import { Eye, EyeOff, Loader2, ShieldCheck, Sparkles } from 'lucide-react';
+import {
+  AlertTriangle,
+  Eye,
+  EyeOff,
+  Loader2,
+  LockKeyhole,
+  ShieldCheck,
+  Sparkles,
+} from 'lucide-react';
 import { toast } from 'sonner';
 
 import { useAuthStore } from '@/stores/auth.store';
@@ -152,11 +160,7 @@ function LoginPage() {
           }}
         />
         <div className="relative flex items-center gap-3">
-          <img
-            src="/logo-cssp.svg"
-            alt="CSSP"
-            className="size-14 rounded-xl shadow-lg ring-1 ring-white/20"
-          />
+          <img src="/logo-cssp.png" alt="CSSP" className="size-14 object-contain drop-shadow-lg" />
           <div>
             <p className="text-sm font-semibold tracking-wide opacity-90">CSSP · 2026</p>
             <p className="text-xs opacity-70">Colegio San Sebastián de Paine</p>
@@ -192,7 +196,11 @@ function LoginPage() {
       <main className="flex items-center justify-center p-6 lg:p-10">
         <div className="w-full max-w-md">
           <div className="lg:hidden flex flex-col items-center mb-6 gap-2">
-            <img src="/logo-cssp.svg" alt="CSSP" className="size-16 rounded-xl shadow-md" />
+            <img
+              src="/logo-cssp.png"
+              alt="CSSP"
+              className="size-16 object-contain drop-shadow-md"
+            />
             <h1 className="text-lg font-bold">Asistencia CSSP</h1>
           </div>
 
@@ -221,7 +229,7 @@ function LoginPage() {
 
                 {remainingAttempts != null && remainingAttempts <= 3 && remainingAttempts > 0 && (
                   <div className="rounded-lg border border-amber-300/50 bg-amber-50 dark:bg-amber-900/20 px-3 py-2 text-sm text-amber-700 dark:text-amber-400 flex items-center gap-2">
-                    <span className="text-base">⚠️</span>
+                    <AlertTriangle className="size-4 shrink-0" />
                     <span>
                       Tu cuenta se bloqueará después de {remainingAttempts} intento
                       {remainingAttempts !== 1 ? 's' : ''} más.
@@ -230,7 +238,7 @@ function LoginPage() {
                 )}
                 {remainingAttempts === 0 && (
                   <div className="rounded-lg border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive flex items-center gap-2">
-                    <span className="text-base">🔒</span>
+                    <LockKeyhole className="size-4 shrink-0" />
                     <span>Cuenta bloqueada. Espera 30 minutos o contacta al administrador.</span>
                   </div>
                 )}
