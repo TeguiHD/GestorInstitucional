@@ -1,4 +1,14 @@
-import { Body, Controller, Delete, Get, Param, Post, Query, UseGuards } from '@nestjs/common';
+import {
+  BadRequestException,
+  Body,
+  Controller,
+  Delete,
+  Get,
+  Param,
+  Post,
+  Query,
+  UseGuards,
+} from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { SystemRole } from '@prisma/client';
 
@@ -20,10 +30,14 @@ export class CoursesController {
   @ApiOperation({ summary: 'Listar cursos de un colegio' })
   findAll(
     @Query('schoolId') schoolId: string,
-    @Query('year') year: number | undefined,
+    @Query('year') year: string | undefined,
     @CurrentUser() user: JwtPayload,
   ) {
-    return this.courses.findAll(schoolId, year, user);
+    const parsedYear = year ? Number(year) : undefined;
+    if (parsedYear !== undefined && !Number.isInteger(parsedYear)) {
+      throw new BadRequestException('year debe ser numérico');
+    }
+    return this.courses.findAll(schoolId, parsedYear, user);
   }
 
   @Get(':id')

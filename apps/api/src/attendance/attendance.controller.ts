@@ -1,4 +1,13 @@
-import { Body, Controller, Get, Param, Post, Query, UseGuards } from '@nestjs/common';
+import {
+  BadRequestException,
+  Body,
+  Controller,
+  Get,
+  Param,
+  Post,
+  Query,
+  UseGuards,
+} from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard.js';
@@ -40,12 +49,16 @@ export class AttendanceController {
   @ApiOperation({ summary: 'Resumen mensual de asistencia de un curso' })
   async getCourseMonth(
     @Param('courseId') courseId: string,
-    @Query('year') year: number,
-    @Query('month') month: number,
+    @Query('year') year: string,
+    @Query('month') month: string,
     @CurrentUser() user: JwtPayload,
   ) {
     await this.courses.assertAccess(courseId, user);
-    return this.attendance.getCourseMonthSummary(courseId, year, month);
+    return this.attendance.getCourseMonthSummary(
+      courseId,
+      this.parseIntQuery(year, 'year'),
+      this.parseIntQuery(month, 'month'),
+    );
   }
 
   @Get('student/:studentId')
@@ -81,6 +94,18 @@ export class AttendanceController {
     @CurrentUser() user: JwtPayload,
   ) {
     await this.courses.assertAccess(courseId, user);
-    return this.attendance.getCourseMatrix(courseId, Number(year), Number(month));
+    return this.attendance.getCourseMatrix(
+      courseId,
+      this.parseIntQuery(year, 'year'),
+      this.parseIntQuery(month, 'month'),
+    );
+  }
+
+  private parseIntQuery(value: string, field: string): number {
+    const parsed = Number(value);
+    if (!Number.isInteger(parsed)) {
+      throw new BadRequestException(`${field} debe ser numérico`);
+    }
+    return parsed;
   }
 }
