@@ -27,32 +27,36 @@ export class AttendanceController {
 
   @Get('course/:courseId')
   @ApiOperation({ summary: 'Asistencia de un curso en una fecha' })
-  getByCourseDate(
+  async getByCourseDate(
     @Param('courseId') courseId: string,
     @Query('date') date: string,
     @CurrentUser() user: JwtPayload,
   ) {
-    void this.courses.assertAccess(courseId, user);
+    await this.courses.assertAccess(courseId, user);
     return this.attendance.getByCourseDate(courseId, date);
   }
 
   @Get('course/:courseId/month')
   @ApiOperation({ summary: 'Resumen mensual de asistencia de un curso' })
-  getCourseMonth(
+  async getCourseMonth(
     @Param('courseId') courseId: string,
     @Query('year') year: number,
     @Query('month') month: number,
+    @CurrentUser() user: JwtPayload,
   ) {
+    await this.courses.assertAccess(courseId, user);
     return this.attendance.getCourseMonthSummary(courseId, year, month);
   }
 
   @Get('student/:studentId')
   @ApiOperation({ summary: 'Historial de asistencia de un alumno' })
-  getByStudent(
+  async getByStudent(
     @Param('studentId') studentId: string,
+    @CurrentUser() user: JwtPayload,
     @Query('from') from?: string,
     @Query('to') to?: string,
   ) {
+    await this.attendance.assertCanAccessStudent(studentId, user);
     return this.attendance.getByStudent(studentId, from, to);
   }
 
@@ -62,17 +66,21 @@ export class AttendanceController {
     @Param('schoolId') schoolId: string,
     @Query('from') from: string,
     @Query('to') to: string,
+    @CurrentUser() user: JwtPayload,
   ) {
+    this.courses.assertSchoolAdminAccess(schoolId, user);
     return this.attendance.getSchoolStats(schoolId, from, to);
   }
 
   @Get('course/:courseId/matrix')
   @ApiOperation({ summary: 'Matriz alumno×día del mes — backbone del dashboard Power BI' })
-  getCourseMatrix(
+  async getCourseMatrix(
     @Param('courseId') courseId: string,
     @Query('year') year: string,
     @Query('month') month: string,
+    @CurrentUser() user: JwtPayload,
   ) {
+    await this.courses.assertAccess(courseId, user);
     return this.attendance.getCourseMatrix(courseId, Number(year), Number(month));
   }
 }

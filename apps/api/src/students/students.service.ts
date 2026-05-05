@@ -1,8 +1,15 @@
-import { ConflictException, Injectable, NotFoundException } from '@nestjs/common';
+import {
+  ConflictException,
+  ForbiddenException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import * as QRCode from 'qrcode';
+import { SystemRole } from '@prisma/client';
 
 import { PrismaService } from '../prisma/prisma.service.js';
 import type { CreateStudentDto } from './dto/create-student.dto.js';
+import type { JwtPayload } from '../common/decorators/current-user.decorator.js';
 
 @Injectable()
 export class StudentsService {
@@ -52,7 +59,8 @@ export class StudentsService {
     return Buffer.from(base64, 'base64');
   }
 
-  async create(dto: CreateStudentDto) {
+  async create(dto: CreateStudentDto, actor: JwtPayload) {
+    await this.assertCanAccessCourse(dto.courseId, actor);
     const exists = await this.prisma.student.findUnique({
       where: { schoolId_rut: { schoolId: dto.schoolId, rut: dto.rut } },
     });
@@ -62,18 +70,22 @@ export class StudentsService {
   }
 
   /** Bulk import. Skips existing RUTs and duplicate enrollment numbers. Returns per-row result. */
-  async importBulk(dto: {
-    schoolId: string;
-    courseId: string;
-    rows: Array<{
-      rut: string;
-      firstName: string;
-      lastName: string;
-      secondLastName?: string;
-      birthDate?: string;
-      enrollmentNumber: number;
-    }>;
-  }) {
+  async importBulk(
+    dto: {
+      schoolId: string;
+      courseId: string;
+      rows: Array<{
+        rut: string;
+        firstName: string;
+        lastName: string;
+        secondLastName?: string;
+        birthDate?: string;
+        enrollmentNumber: number;
+      }>;
+    },
+    actor: JwtPayload,
+  ) {
+    await this.assertCanAccessCourse(dto.courseId, actor);
     const course = await this.prisma.course.findFirst({
       where: { id: dto.courseId, schoolId: dto.schoolId },
       select: { id: true },
@@ -139,14 +151,16 @@ export class StudentsService {
     return { total: dto.rows.length, created, skipped: errors.length, errors };
   }
 
-  async withdraw(id: string) {
+  async withdraw(id: string, actor: JwtPayload) {
+    await this.assertCanAccessStudent(id, actor);
     return this.prisma.student.update({
       where: { id },
       data: { active: false, withdrawnAt: new Date() },
     });
   }
 
-  async listGuardians(studentId: string) {
+  async listGuardians(studentId: string, actor: JwtPayload) {
+    await this.assertCanAccessStudent(studentId, actor);
     return this.prisma.guardianship.findMany({
       where: { studentId },
       include: {
@@ -168,7 +182,9 @@ export class StudentsService {
   async addGuardian(
     studentId: string,
     dto: { guardianId: string; relation?: string; isPrimary?: boolean },
+    actor: JwtPayload,
   ) {
+    await this.assertCanAccessStudent(studentId, actor);
     const student = await this.prisma.student.findUnique({
       where: { id: studentId },
       select: { id: true },
@@ -194,7 +210,8 @@ export class StudentsService {
     });
   }
 
-  async removeGuardian(studentId: string, guardianId: string) {
+  async removeGuardian(studentId: string, guardianId: string, actor: JwtPayload) {
+    await this.assertCanAccessStudent(studentId, actor);
     await this.prisma.guardianship.delete({
       where: { guardianId_studentId: { guardianId, studentId } },
     });
@@ -219,5 +236,52 @@ export class StudentsService {
 
     const attendanceRate = total > 0 ? (present + late) / total : 0;
     return { total, present, absent, late, justified, attendanceRate };
+  }
+
+  async assertCanAccessStudent(studentId: string, user: JwtPayload): Promise<void> {
+    const student = await this.prisma.student.findUnique({
+      where: { id: studentId },
+      select: {
+        schoolId: true,
+        courseId: true,
+        guardianships: { select: { guardianId: true } },
+      },
+    });
+    if (!student) throw new NotFoundException('Alumno no encontrado');
+
+    if (user.roles.includes(SystemRole.SUPER_ADMIN)) return;
+    if (this.isSchoolAdmin(user, student.schoolId)) return;
+    if (user.roles.includes(SystemRole.APODERADO)) {
+      if (student.guardianships.some((g) => g.guardianId === user.sub)) return;
+    }
+    if (user.roles.includes(SystemRole.PROFESOR)) {
+      await this.assertCanAccessCourse(student.courseId, user);
+      return;
+    }
+    throw new ForbiddenException('Sin acceso a este alumno');
+  }
+
+  async assertCanAccessCourse(courseId: string, user: JwtPayload): Promise<void> {
+    const course = await this.prisma.course.findUnique({
+      where: { id: courseId },
+      select: { schoolId: true },
+    });
+    if (!course) throw new NotFoundException('Curso no encontrado');
+
+    if (user.roles.includes(SystemRole.SUPER_ADMIN)) return;
+    if (this.isSchoolAdmin(user, course.schoolId)) return;
+    if (user.roles.includes(SystemRole.PROFESOR)) {
+      const assigned = await this.prisma.courseTeacher.findUnique({
+        where: { courseId_userId: { courseId, userId: user.sub } },
+        select: { id: true },
+      });
+      if (assigned) return;
+    }
+    throw new ForbiddenException('Sin acceso a este curso');
+  }
+
+  private isSchoolAdmin(user: JwtPayload, schoolId: string): boolean {
+    if (user.schoolId !== schoolId) return false;
+    return [SystemRole.DIRECTOR, SystemRole.UTP].some((role) => user.roles.includes(role));
   }
 }

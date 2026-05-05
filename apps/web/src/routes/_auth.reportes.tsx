@@ -4,7 +4,7 @@ import { Download } from 'lucide-react';
 import { useState } from 'react';
 import { toast } from 'sonner';
 
-import { api } from '@/lib/api';
+import { api, downloadBlob } from '@/lib/api';
 import { useEffectiveSchoolId } from '@/stores/school.store';
 
 export const Route = createFileRoute('/_auth/reportes')({
@@ -12,23 +12,6 @@ export const Route = createFileRoute('/_auth/reportes')({
 });
 
 type Course = { id: string; name: string; code: string };
-
-const BASE = import.meta.env.VITE_API_BASE_URL ?? '/api/v1';
-
-async function downloadReport(path: string, filename: string) {
-  const token = localStorage.getItem('access_token');
-  const res = await fetch(`${BASE}${path}`, {
-    headers: { Authorization: `Bearer ${token ?? ''}` },
-  });
-  if (!res.ok) throw new Error('Error al generar reporte');
-  const blob = await res.blob();
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = filename;
-  a.click();
-  URL.revokeObjectURL(url);
-}
 
 function ReportsPage() {
   const schoolId = useEffectiveSchoolId();
@@ -73,7 +56,7 @@ function ReportsPage() {
     }
     setLoading(type);
     try {
-      await downloadReport(path, filename);
+      await downloadBlob(path, filename);
       toast.success('Reporte descargado');
     } catch (e) {
       toast.error((e as Error).message);

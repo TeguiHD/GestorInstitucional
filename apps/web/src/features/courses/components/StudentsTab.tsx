@@ -2,8 +2,9 @@ import { useQuery } from '@tanstack/react-query';
 import { Link } from '@tanstack/react-router';
 import { ExternalLink, QrCode, Shield, ShieldOff } from 'lucide-react';
 import { useState } from 'react';
+import { toast } from 'sonner';
 
-import { api } from '@/lib/api';
+import { api, downloadBlob } from '@/lib/api';
 import { cn } from '@/lib/cn';
 
 type StudentStat = {
@@ -321,14 +322,19 @@ export function StudentsTab({ courseId }: { courseId: string }) {
                       >
                         <ExternalLink className="size-3.5" />
                       </Link>
-                      <a
-                        href={`/api/v1/students/${student.id}/qr`}
-                        download={`qr-${student.rut}.png`}
+                      <button
+                        type="button"
+                        onClick={() =>
+                          void downloadBlob(
+                            `/students/${student.id}/qr`,
+                            `qr-${student.rut}.png`,
+                          ).catch((e: Error) => toast.error(e.message))
+                        }
                         className="size-8 flex items-center justify-center rounded-lg text-muted-foreground hover:text-primary hover:bg-muted transition"
                         title="Descargar QR"
                       >
                         <QrCode className="size-3.5" />
-                      </a>
+                      </button>
                     </div>
                   </td>
                 </tr>

@@ -1,8 +1,9 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Link } from '@tanstack/react-router';
 import { CheckCircle2, Clock, Download, FileText, XCircle } from 'lucide-react';
+import { toast } from 'sonner';
 
-import { api } from '@/lib/api';
+import { api, downloadBlob } from '@/lib/api';
 import { cn } from '@/lib/cn';
 import { useUser } from '@/stores/auth.store';
 
@@ -150,13 +151,18 @@ export function JustificationsTab({
           </div>
           <div className="flex items-center gap-2 shrink-0">
             {j.fileUrl && (
-              <a
-                href={`/api/v1/justifications/${j.id}/file`}
+              <button
+                type="button"
+                onClick={() =>
+                  void downloadBlob(`/justifications/${j.id}/file`, `justificacion-${j.id}`).catch(
+                    (e: Error) => toast.error(e.message),
+                  )
+                }
                 className="size-8 flex items-center justify-center rounded-lg text-muted-foreground hover:text-primary hover:bg-muted transition"
                 title="Descargar archivo"
               >
                 <Download className="size-4" />
-              </a>
+              </button>
             )}
             <span
               className={cn(

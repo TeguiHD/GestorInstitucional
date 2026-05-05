@@ -1,5 +1,5 @@
-import { Injectable, Logger, NotFoundException } from '@nestjs/common';
-import type { AttendanceStatus } from '@prisma/client';
+import { ForbiddenException, Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { SystemRole, type AttendanceStatus } from '@prisma/client';
 
 import { CalendarService } from '../calendar/calendar.service.js';
 import { MailService } from '../mail/mail.service.js';
@@ -7,6 +7,7 @@ import { WhatsAppService } from '../mail/whatsapp.service.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { AuditService } from '../audit/audit.service.js';
 import type { RecordAttendanceDto } from './dto/record-attendance.dto.js';
+import type { JwtPayload } from '../common/decorators/current-user.decorator.js';
 
 @Injectable()
 export class AttendanceService {
@@ -288,5 +289,40 @@ export class AttendanceService {
     });
 
     return { students: studentStats, dates, matrix };
+  }
+
+  async assertCanAccessStudent(studentId: string, user: JwtPayload): Promise<void> {
+    const student = await this.prisma.student.findUnique({
+      where: { id: studentId },
+      select: {
+        schoolId: true,
+        courseId: true,
+        guardianships: { select: { guardianId: true } },
+      },
+    });
+    if (!student) throw new NotFoundException('Alumno no encontrado');
+
+    if (user.roles.includes(SystemRole.SUPER_ADMIN)) return;
+    if (
+      user.schoolId === student.schoolId &&
+      [SystemRole.DIRECTOR, SystemRole.UTP].some((role) => user.roles.includes(role))
+    ) {
+      return;
+    }
+    if (
+      user.roles.includes(SystemRole.APODERADO) &&
+      student.guardianships.some((g) => g.guardianId === user.sub)
+    ) {
+      return;
+    }
+    if (user.roles.includes(SystemRole.PROFESOR)) {
+      const assigned = await this.prisma.courseTeacher.findUnique({
+        where: { courseId_userId: { courseId: student.courseId, userId: user.sub } },
+        select: { id: true },
+      });
+      if (assigned) return;
+    }
+
+    throw new ForbiddenException('Sin acceso a este alumno');
   }
 }

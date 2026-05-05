@@ -17,6 +17,7 @@ import { JwtAuthGuard } from '../common/guards/jwt-auth.guard.js';
 import { RolesGuard } from '../common/guards/roles.guard.js';
 import { Roles } from '../common/decorators/roles.decorator.js';
 import { CurrentUser, type JwtPayload } from '../common/decorators/current-user.decorator.js';
+import { CoursesService } from '../courses/courses.service.js';
 import { AlertsService } from './alerts.service.js';
 
 class UpsertAlertRuleDto {
@@ -32,19 +33,28 @@ class UpsertAlertRuleDto {
 @ApiBearerAuth()
 @Controller('alerts')
 export class AlertsController {
-  constructor(private readonly alerts: AlertsService) {}
+  constructor(
+    private readonly alerts: AlertsService,
+    private readonly courses: CoursesService,
+  ) {}
 
   @Get('school/:schoolId/rules')
   @Roles(SystemRole.SUPER_ADMIN, SystemRole.DIRECTOR, SystemRole.UTP)
   @ApiOperation({ summary: 'Listar reglas de alerta del colegio' })
-  listRules(@Param('schoolId') schoolId: string) {
+  listRules(@Param('schoolId') schoolId: string, @CurrentUser() user: JwtPayload) {
+    this.courses.assertSchoolAdminAccess(schoolId, user);
     return this.alerts.listRules(schoolId);
   }
 
   @Put('school/:schoolId/rules')
   @Roles(SystemRole.SUPER_ADMIN, SystemRole.DIRECTOR)
   @ApiOperation({ summary: 'Crear o actualizar regla de alerta' })
-  upsertRule(@Param('schoolId') schoolId: string, @Body() dto: UpsertAlertRuleDto) {
+  upsertRule(
+    @Param('schoolId') schoolId: string,
+    @Body() dto: UpsertAlertRuleDto,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    this.courses.assertSchoolAdminAccess(schoolId, user);
     return this.alerts.upsertRule({ schoolId, ...dto });
   }
 
@@ -68,7 +78,8 @@ export class AlertsController {
   @HttpCode(HttpStatus.OK)
   @Roles(SystemRole.SUPER_ADMIN, SystemRole.DIRECTOR)
   @ApiOperation({ summary: 'Ejecutar alertas manualmente (test/admin)' })
-  trigger(@Param('schoolId') schoolId: string) {
+  trigger(@Param('schoolId') schoolId: string, @CurrentUser() user: JwtPayload) {
+    this.courses.assertSchoolAdminAccess(schoolId, user);
     return this.alerts.triggerManual(schoolId);
   }
 }

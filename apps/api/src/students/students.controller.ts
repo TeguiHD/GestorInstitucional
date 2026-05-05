@@ -44,8 +44,8 @@ export class StudentsController {
 
   @Get()
   @ApiOperation({ summary: 'Alumnos por curso' })
-  findByCourse(@Query('courseId') courseId: string, @CurrentUser() user: JwtPayload) {
-    void this.courses.assertAccess(courseId, user);
+  async findByCourse(@Query('courseId') courseId: string, @CurrentUser() user: JwtPayload) {
+    await this.courses.assertAccess(courseId, user);
     return this.students.findByCourse(courseId);
   }
 
@@ -57,13 +57,15 @@ export class StudentsController {
 
   @Get(':id')
   @ApiOperation({ summary: 'Alumno por ID' })
-  findOne(@Param('id') id: string) {
+  async findOne(@Param('id') id: string, @CurrentUser() user: JwtPayload) {
+    await this.students.assertCanAccessStudent(id, user);
     return this.students.findById(id);
   }
 
   @Get(':id/qr')
   @ApiOperation({ summary: 'Código QR del alumno (PNG) para registro rápido de asistencia' })
-  async getQr(@Param('id') id: string, @Res() res: FastifyReply) {
+  async getQr(@Param('id') id: string, @CurrentUser() user: JwtPayload, @Res() res: FastifyReply) {
+    await this.students.assertCanAccessStudent(id, user);
     const buf = await this.students.getQrCode(id);
     void res.header('Content-Type', 'image/png');
     void res.header('Content-Disposition', `inline; filename="qr-${id}.png"`);
@@ -73,7 +75,13 @@ export class StudentsController {
 
   @Get(':id/stats')
   @ApiOperation({ summary: 'Estadísticas de asistencia individual' })
-  getStats(@Param('id') id: string, @Query('from') from?: string, @Query('to') to?: string) {
+  async getStats(
+    @Param('id') id: string,
+    @CurrentUser() user: JwtPayload,
+    @Query('from') from?: string,
+    @Query('to') to?: string,
+  ) {
+    await this.students.assertCanAccessStudent(id, user);
     return this.students.getStats(
       id,
       from ? new Date(from) : undefined,
@@ -84,42 +92,50 @@ export class StudentsController {
   @Post()
   @Roles(SystemRole.SUPER_ADMIN, SystemRole.DIRECTOR, SystemRole.UTP)
   @ApiOperation({ summary: 'Matricular alumno' })
-  create(@Body() dto: CreateStudentDto) {
-    return this.students.create(dto);
+  create(@Body() dto: CreateStudentDto, @CurrentUser() user: JwtPayload) {
+    return this.students.create(dto, user);
   }
 
   @Post('import')
   @Roles(SystemRole.SUPER_ADMIN, SystemRole.DIRECTOR, SystemRole.UTP)
   @ApiOperation({ summary: 'Importar alumnos masivo (desde Excel parseado en cliente)' })
-  importBulk(@Body() dto: ImportStudentsDto) {
-    return this.students.importBulk(dto);
+  importBulk(@Body() dto: ImportStudentsDto, @CurrentUser() user: JwtPayload) {
+    return this.students.importBulk(dto, user);
   }
 
   @Get(':id/guardians')
   @Roles(SystemRole.SUPER_ADMIN, SystemRole.DIRECTOR, SystemRole.UTP)
   @ApiOperation({ summary: 'Listar apoderados de un alumno' })
-  listGuardians(@Param('id') id: string) {
-    return this.students.listGuardians(id);
+  listGuardians(@Param('id') id: string, @CurrentUser() user: JwtPayload) {
+    return this.students.listGuardians(id, user);
   }
 
   @Post(':id/guardians')
   @Roles(SystemRole.SUPER_ADMIN, SystemRole.DIRECTOR, SystemRole.UTP)
   @ApiOperation({ summary: 'Vincular apoderado a alumno' })
-  addGuardian(@Param('id') id: string, @Body() dto: AddGuardianDto) {
-    return this.students.addGuardian(id, dto);
+  addGuardian(
+    @Param('id') id: string,
+    @Body() dto: AddGuardianDto,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return this.students.addGuardian(id, dto, user);
   }
 
   @Delete(':id/guardians/:guardianId')
   @Roles(SystemRole.SUPER_ADMIN, SystemRole.DIRECTOR, SystemRole.UTP)
   @ApiOperation({ summary: 'Desvincular apoderado de alumno' })
-  removeGuardian(@Param('id') id: string, @Param('guardianId') guardianId: string) {
-    return this.students.removeGuardian(id, guardianId);
+  removeGuardian(
+    @Param('id') id: string,
+    @Param('guardianId') guardianId: string,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return this.students.removeGuardian(id, guardianId, user);
   }
 
   @Delete(':id')
   @Roles(SystemRole.SUPER_ADMIN, SystemRole.DIRECTOR, SystemRole.UTP)
   @ApiOperation({ summary: 'Dar de baja alumno (soft)' })
-  withdraw(@Param('id') id: string) {
-    return this.students.withdraw(id);
+  withdraw(@Param('id') id: string, @CurrentUser() user: JwtPayload) {
+    return this.students.withdraw(id, user);
   }
 }

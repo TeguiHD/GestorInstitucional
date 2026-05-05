@@ -5,6 +5,7 @@ import { SystemRole } from '@prisma/client';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard.js';
 import { RolesGuard } from '../common/guards/roles.guard.js';
 import { Roles } from '../common/decorators/roles.decorator.js';
+import { CurrentUser, type JwtPayload } from '../common/decorators/current-user.decorator.js';
 import { CoursesService } from './courses.service.js';
 import { CreateCourseDto } from './dto/create-course.dto.js';
 
@@ -17,38 +18,50 @@ export class CoursesController {
 
   @Get()
   @ApiOperation({ summary: 'Listar cursos de un colegio' })
-  findAll(@Query('schoolId') schoolId: string, @Query('year') year?: number) {
-    return this.courses.findAll(schoolId, year);
+  findAll(
+    @Query('schoolId') schoolId: string,
+    @Query('year') year: number | undefined,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return this.courses.findAll(schoolId, year, user);
   }
 
   @Get(':id')
   @ApiOperation({ summary: 'Detalle de curso (alumnos + profesores)' })
-  findOne(@Param('id') id: string) {
-    return this.courses.findOne(id);
+  findOne(@Param('id') id: string, @CurrentUser() user: JwtPayload) {
+    return this.courses.findOne(id, user);
   }
 
   @Post()
   @Roles(SystemRole.SUPER_ADMIN, SystemRole.DIRECTOR, SystemRole.UTP)
   @ApiOperation({ summary: 'Crear curso' })
-  create(@Body() dto: CreateCourseDto) {
+  create(@Body() dto: CreateCourseDto, @CurrentUser() user: JwtPayload) {
+    this.courses.assertSchoolAdminAccess(dto.schoolId, user);
     return this.courses.create(dto);
   }
 
   @Post(':id/teachers')
   @Roles(SystemRole.SUPER_ADMIN, SystemRole.DIRECTOR, SystemRole.UTP)
   @ApiOperation({ summary: 'Asignar profesor a curso' })
-  assignTeacher(
+  async assignTeacher(
     @Param('id') courseId: string,
     @Body('userId') userId: string,
     @Body('isHead') isHead: boolean,
+    @CurrentUser() user: JwtPayload,
   ) {
+    await this.courses.assertAccess(courseId, user);
     return this.courses.assignTeacher(courseId, userId, isHead);
   }
 
   @Delete(':id/teachers/:userId')
   @Roles(SystemRole.SUPER_ADMIN, SystemRole.DIRECTOR, SystemRole.UTP)
   @ApiOperation({ summary: 'Quitar profesor de curso' })
-  removeTeacher(@Param('id') courseId: string, @Param('userId') userId: string) {
+  async removeTeacher(
+    @Param('id') courseId: string,
+    @Param('userId') userId: string,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    await this.courses.assertAccess(courseId, user);
     return this.courses.removeTeacher(courseId, userId);
   }
 }

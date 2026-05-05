@@ -17,7 +17,7 @@ import { useEffect, useRef, useState } from 'react';
 import { toast } from 'sonner';
 
 import { useUser } from '@/stores/auth.store';
-import { api } from '@/lib/api';
+import { api, downloadBlob } from '@/lib/api';
 import { attendanceQueue } from '@/lib/attendance-queue';
 import { useAttendanceSync } from '@/hooks/useAttendanceSync';
 import { cn } from '@/lib/cn';
@@ -428,22 +428,32 @@ export function CourseDetailPage() {
               <QrCode className="size-3.5" />
               QR
             </button>
-            <a
-              href={`/api/v1/reports/course/${courseId}/excel?year=${year}&month=${month}`}
+            <button
+              type="button"
+              onClick={() =>
+                void downloadBlob(
+                  `/reports/course/${courseId}/excel?year=${year}&month=${month}`,
+                  `asistencia-${year}-${String(month).padStart(2, '0')}.xlsx`,
+                ).catch((e: Error) => toast.error(e.message))
+              }
               className="flex items-center gap-1.5 text-xs px-3 py-2 rounded-lg bg-white/15 hover:bg-white/25 text-white transition"
-              download
             >
               <Download className="size-3.5" />
               Excel
-            </a>
-            <a
-              href={`/api/v1/reports/course/${courseId}/pdf?year=${year}&month=${month}`}
+            </button>
+            <button
+              type="button"
+              onClick={() =>
+                void downloadBlob(
+                  `/reports/course/${courseId}/pdf?year=${year}&month=${month}`,
+                  `informe-${year}-${String(month).padStart(2, '0')}.pdf`,
+                ).catch((e: Error) => toast.error(e.message))
+              }
               className="flex items-center gap-1.5 text-xs px-3 py-2 rounded-lg bg-white/15 hover:bg-white/25 text-white transition"
-              download
             >
               <FileText className="size-3.5" />
               PDF
-            </a>
+            </button>
           </div>
         </div>
 
@@ -665,14 +675,19 @@ export function CourseDetailPage() {
                           </button>
                         </td>
                         <td className="px-2 py-3 text-center">
-                          <a
-                            href={`/api/v1/students/${student.id}/qr`}
-                            download={`qr-${student.rut}.png`}
+                          <button
+                            type="button"
+                            onClick={() =>
+                              void downloadBlob(
+                                `/students/${student.id}/qr`,
+                                `qr-${student.rut}.png`,
+                              ).catch((e: Error) => toast.error(e.message))
+                            }
                             className="inline-flex items-center justify-center size-8 rounded-lg text-muted-foreground hover:text-primary hover:bg-muted transition"
                             title="Descargar QR"
                           >
                             <QrCode className="size-4" />
-                          </a>
+                          </button>
                         </td>
                       </tr>
                     );

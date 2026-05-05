@@ -16,6 +16,7 @@ import {
   IsBoolean,
   IsEmail,
   IsEnum,
+  IsArray,
   IsOptional,
   IsString,
   MaxLength,
@@ -96,6 +97,8 @@ class UpdateUserDto {
 
 class UpdateRolesDto {
   @ApiProperty({ enum: SystemRole, isArray: true })
+  @IsArray()
+  @IsEnum(SystemRole, { each: true })
   roles!: SystemRole[];
 
   @ApiProperty()
@@ -140,8 +143,8 @@ export class UsersController {
   @Get(':id')
   @Roles(SystemRole.SUPER_ADMIN, SystemRole.DIRECTOR, SystemRole.UTP)
   @ApiOperation({ summary: 'Usuario por ID' })
-  findOne(@Param('id') id: string) {
-    return this.users.findById(id);
+  findOne(@Param('id') id: string, @CurrentUser() actor: JwtPayload) {
+    return this.users.findByIdForActor(id, actor);
   }
 
   @Get()
@@ -149,51 +152,59 @@ export class UsersController {
   @ApiQuery({ name: 'schoolId', required: true })
   @ApiQuery({ name: 'roles', required: false, isArray: true, enum: SystemRole })
   @ApiOperation({ summary: 'Listar usuarios de un colegio' })
-  findAll(@Query('schoolId') schoolId: string, @Query('roles') roles?: SystemRole[]) {
-    return this.users.findBySchool(schoolId, roles);
+  findAll(
+    @Query('schoolId') schoolId: string,
+    @CurrentUser() actor: JwtPayload,
+    @Query('roles') roles?: SystemRole[],
+  ) {
+    return this.users.findBySchoolForActor(schoolId, actor, roles);
   }
 
   @Post()
   @Roles(SystemRole.SUPER_ADMIN, SystemRole.DIRECTOR)
   @ApiOperation({ summary: 'Crear usuario con rol (genera contraseña temporal)' })
-  create(@Body() dto: CreateUserDto) {
-    return this.users.createUser(dto);
+  create(@Body() dto: CreateUserDto, @CurrentUser() actor: JwtPayload) {
+    return this.users.createUser(dto, actor);
   }
 
   @Patch(':id')
   @Roles(SystemRole.SUPER_ADMIN, SystemRole.DIRECTOR)
   @ApiOperation({ summary: 'Actualizar nombre o estado de usuario' })
-  update(@Param('id') id: string, @Body() dto: UpdateUserDto) {
-    return this.users.updateUser(id, dto);
+  update(@Param('id') id: string, @Body() dto: UpdateUserDto, @CurrentUser() actor: JwtPayload) {
+    return this.users.updateUser(id, dto, actor);
   }
 
   @Patch(':id/roles')
   @Roles(SystemRole.SUPER_ADMIN, SystemRole.DIRECTOR)
   @ApiOperation({ summary: 'Reemplazar roles de usuario en un colegio' })
-  updateRoles(@Param('id') id: string, @Body() dto: UpdateRolesDto) {
-    return this.users.updateRoles(id, dto.schoolId, dto.roles);
+  updateRoles(
+    @Param('id') id: string,
+    @Body() dto: UpdateRolesDto,
+    @CurrentUser() actor: JwtPayload,
+  ) {
+    return this.users.updateRoles(id, dto.schoolId, dto.roles, actor);
   }
 
   @Post(':id/unlock')
   @HttpCode(HttpStatus.OK)
   @Roles(SystemRole.SUPER_ADMIN, SystemRole.DIRECTOR)
   @ApiOperation({ summary: 'Desbloquear cuenta (resetea failedLogins)' })
-  unlock(@Param('id') id: string) {
-    return this.users.unlockUser(id);
+  unlock(@Param('id') id: string, @CurrentUser() actor: JwtPayload) {
+    return this.users.unlockUser(id, actor);
   }
 
   @Post(':id/reset-password')
   @HttpCode(HttpStatus.OK)
   @Roles(SystemRole.SUPER_ADMIN, SystemRole.DIRECTOR)
   @ApiOperation({ summary: 'Resetear contraseña (genera temporal)' })
-  resetPassword(@Param('id') id: string) {
-    return this.users.resetPassword(id);
+  resetPassword(@Param('id') id: string, @CurrentUser() actor: JwtPayload) {
+    return this.users.resetPassword(id, actor);
   }
 
   @Delete(':id')
   @Roles(SystemRole.SUPER_ADMIN, SystemRole.DIRECTOR)
   @ApiOperation({ summary: 'Soft-delete usuario' })
   remove(@Param('id') id: string, @CurrentUser() actor: JwtPayload) {
-    return this.users.softDelete(id, actor.sub);
+    return this.users.softDelete(id, actor);
   }
 }

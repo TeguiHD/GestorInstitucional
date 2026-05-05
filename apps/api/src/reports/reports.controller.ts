@@ -1,9 +1,19 @@
-import { Controller, Get, Param, Query, Res, UseGuards } from '@nestjs/common';
+import {
+  BadRequestException,
+  Controller,
+  Get,
+  Param,
+  ParseIntPipe,
+  Query,
+  Res,
+  UseGuards,
+} from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import type { FastifyReply } from 'fastify';
 
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard.js';
 import { CurrentUser, type JwtPayload } from '../common/decorators/current-user.decorator.js';
+import { CoursesService } from '../courses/courses.service.js';
 import { ReportsService } from './reports.service.js';
 
 @ApiTags('reports')
@@ -11,17 +21,22 @@ import { ReportsService } from './reports.service.js';
 @ApiBearerAuth()
 @Controller('reports')
 export class ReportsController {
-  constructor(private readonly reports: ReportsService) {}
+  constructor(
+    private readonly reports: ReportsService,
+    private readonly courses: CoursesService,
+  ) {}
 
   @Get('course/:courseId/excel')
   @ApiOperation({ summary: 'Exportar asistencia mensual — formato Excel (replica plantilla CSSP)' })
   async getCourseExcel(
     @Param('courseId') courseId: string,
-    @Query('year') year: number,
-    @Query('month') month: number,
+    @Query('year', ParseIntPipe) year: number,
+    @Query('month', ParseIntPipe) month: number,
     @CurrentUser() user: JwtPayload,
     @Res() res: FastifyReply,
   ) {
+    this.assertYearMonth(year, month);
+    await this.courses.assertAccess(courseId, user);
     const buffer = await this.reports.generateCourseExcel(courseId, year, month, user.sub);
     void res.header(
       'Content-Type',
@@ -39,11 +54,13 @@ export class ReportsController {
   @ApiOperation({ summary: 'Exportar informe mensual en PDF formal' })
   async getCoursePdf(
     @Param('courseId') courseId: string,
-    @Query('year') year: number,
-    @Query('month') month: number,
+    @Query('year', ParseIntPipe) year: number,
+    @Query('month', ParseIntPipe) month: number,
     @CurrentUser() user: JwtPayload,
     @Res() res: FastifyReply,
   ) {
+    this.assertYearMonth(year, month);
+    await this.courses.assertAccess(courseId, user);
     const buffer = await this.reports.generateCoursePdf(courseId, year, month, user.sub);
     void res.header('Content-Type', 'application/pdf');
     void res.header(
@@ -58,11 +75,13 @@ export class ReportsController {
   @ApiOperation({ summary: 'PDF mensual estilo MINEDUC — landscape A4 con grilla día×alumno' })
   async getMonthlyGridPdf(
     @Param('courseId') courseId: string,
-    @Query('year') year: number,
-    @Query('month') month: number,
+    @Query('year', ParseIntPipe) year: number,
+    @Query('month', ParseIntPipe) month: number,
     @CurrentUser() user: JwtPayload,
     @Res() res: FastifyReply,
   ) {
+    this.assertYearMonth(year, month);
+    await this.courses.assertAccess(courseId, user);
     const buffer = await this.reports.generateMonthlyGridPdf(
       courseId,
       Number(year),
@@ -86,6 +105,8 @@ export class ReportsController {
     @CurrentUser() user: JwtPayload,
     @Res() res: FastifyReply,
   ) {
+    this.assertIsoDate(weekStart, 'weekStart');
+    await this.courses.assertAccess(courseId, user);
     const buffer = await this.reports.generateWeeklyExcel(courseId, weekStart, user.sub);
     void res.header(
       'Content-Type',
@@ -100,11 +121,14 @@ export class ReportsController {
   @ApiOperation({ summary: 'Reporte semestral Excel (1 o 2) — 6 hojas mensuales + resumen' })
   async getSemesterExcel(
     @Param('courseId') courseId: string,
-    @Query('year') year: number,
-    @Query('semester') semester: number,
+    @Query('year', ParseIntPipe) year: number,
+    @Query('semester', ParseIntPipe) semester: number,
     @CurrentUser() user: JwtPayload,
     @Res() res: FastifyReply,
   ) {
+    this.assertYear(year);
+    this.assertSemester(semester);
+    await this.courses.assertAccess(courseId, user);
     const buffer = await this.reports.generateSemesterExcel(
       courseId,
       year,
@@ -127,11 +151,14 @@ export class ReportsController {
   @ApiOperation({ summary: 'Informe semestral PDF consolidado' })
   async getSemesterPdf(
     @Param('courseId') courseId: string,
-    @Query('year') year: number,
-    @Query('semester') semester: number,
+    @Query('year', ParseIntPipe) year: number,
+    @Query('semester', ParseIntPipe) semester: number,
     @CurrentUser() user: JwtPayload,
     @Res() res: FastifyReply,
   ) {
+    this.assertYear(year);
+    this.assertSemester(semester);
+    await this.courses.assertAccess(courseId, user);
     const buffer = await this.reports.generateSemesterPdf(
       courseId,
       year,
@@ -145,5 +172,26 @@ export class ReportsController {
     );
     void res.header('Cache-Control', 'no-store');
     void res.send(buffer);
+  }
+
+  private assertYearMonth(year: number, month: number) {
+    this.assertYear(year);
+    if (month < 1 || month > 12) throw new BadRequestException('month debe estar entre 1 y 12');
+  }
+
+  private assertYear(year: number) {
+    if (year < 2020 || year > 2100) throw new BadRequestException('year fuera de rango');
+  }
+
+  private assertSemester(semester: number) {
+    if (semester !== 1 && semester !== 2) {
+      throw new BadRequestException('semester debe ser 1 o 2');
+    }
+  }
+
+  private assertIsoDate(value: string, field: string) {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+      throw new BadRequestException(`${field} debe usar formato YYYY-MM-DD`);
+    }
   }
 }

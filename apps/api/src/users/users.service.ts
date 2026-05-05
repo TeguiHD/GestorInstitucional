@@ -1,11 +1,17 @@
 import * as crypto from 'node:crypto';
 
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
-import type { SystemRole, UserStatus } from '@prisma/client';
+import {
+  BadRequestException,
+  ForbiddenException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
+import { SystemRole, type UserStatus } from '@prisma/client';
 
 import { PasswordService } from '../auth/services/password.service.js';
 import { MailService } from '../mail/mail.service.js';
 import { PrismaService } from '../prisma/prisma.service.js';
+import type { JwtPayload } from '../common/decorators/current-user.decorator.js';
 
 @Injectable()
 export class UsersService {
@@ -57,9 +63,24 @@ export class UsersService {
     });
   }
 
-  async softDelete(id: string, actorId?: string) {
-    if (actorId && actorId === id)
+  async findByIdForActor(id: string, actor: JwtPayload) {
+    const user = await this.findById(id);
+    this.assertCanReadUser(
+      actor,
+      user.schoolRoles.map((role) => role.schoolId),
+    );
+    return user;
+  }
+
+  async findBySchoolForActor(schoolId: string, actor: JwtPayload, roles?: SystemRole[]) {
+    this.assertCanAccessSchool(actor, schoolId);
+    return this.findBySchool(schoolId, roles);
+  }
+
+  async softDelete(id: string, actor?: JwtPayload) {
+    if (actor && actor.sub === id)
       throw new BadRequestException('No puedes eliminar tu propia cuenta');
+    if (actor) await this.assertCanManageUser(actor, id);
     return this.prisma.user.update({
       where: { id },
       data: { deletedAt: new Date(), status: 'INACTIVE' },
@@ -69,9 +90,11 @@ export class UsersService {
   async updateUser(
     id: string,
     dto: { firstName?: string; lastName?: string; phone?: string; status?: UserStatus },
+    actor?: JwtPayload,
   ) {
     const user = await this.prisma.user.findUnique({ where: { id, deletedAt: null } });
     if (!user) throw new NotFoundException('Usuario no encontrado');
+    if (actor) await this.assertCanManageUser(actor, id);
     return this.prisma.user.update({
       where: { id },
       data: {
@@ -84,9 +107,14 @@ export class UsersService {
     });
   }
 
-  async updateRoles(userId: string, schoolId: string, roles: SystemRole[]) {
+  async updateRoles(userId: string, schoolId: string, roles: SystemRole[], actor?: JwtPayload) {
     const user = await this.prisma.user.findUnique({ where: { id: userId, deletedAt: null } });
     if (!user) throw new NotFoundException('Usuario no encontrado');
+    if (actor) {
+      this.assertCanAccessSchool(actor, schoolId);
+      this.assertCanAssignRoles(actor, roles);
+      await this.assertCanManageUser(actor, userId);
+    }
     // Delete existing roles for this school, then recreate
     await this.prisma.userSchoolRole.deleteMany({ where: { userId, schoolId } });
     if (roles.length) {
@@ -97,9 +125,10 @@ export class UsersService {
     return this.findById(userId);
   }
 
-  async unlockUser(id: string) {
+  async unlockUser(id: string, actor?: JwtPayload) {
     const user = await this.prisma.user.findUnique({ where: { id, deletedAt: null } });
     if (!user) throw new NotFoundException('Usuario no encontrado');
+    if (actor) await this.assertCanManageUser(actor, id);
     await this.prisma.user.update({
       where: { id },
       data: { failedLogins: 0, lockedUntil: null, status: 'ACTIVE' },
@@ -107,14 +136,21 @@ export class UsersService {
     return { ok: true };
   }
 
-  async createUser(dto: {
-    email: string;
-    firstName: string;
-    lastName: string;
-    schoolId: string;
-    role: SystemRole;
-    sendWelcomeEmail?: boolean;
-  }) {
+  async createUser(
+    dto: {
+      email: string;
+      firstName: string;
+      lastName: string;
+      schoolId: string;
+      role: SystemRole;
+      sendWelcomeEmail?: boolean;
+    },
+    actor?: JwtPayload,
+  ) {
+    if (actor) {
+      this.assertCanAccessSchool(actor, dto.schoolId);
+      this.assertCanAssignRoles(actor, [dto.role]);
+    }
     const exists = await this.prisma.user.findUnique({ where: { email: dto.email.toLowerCase() } });
     if (exists) {
       const hasRole = await this.prisma.userSchoolRole.findUnique({
@@ -223,10 +259,45 @@ export class UsersService {
     return { ...user, isExisting: false, tempPassword };
   }
 
-  async resetPassword(userId: string): Promise<{ tempPassword: string }> {
+  async resetPassword(userId: string, actor?: JwtPayload): Promise<{ tempPassword: string }> {
+    if (actor) await this.assertCanManageUser(actor, userId);
     const tempPassword = crypto.randomBytes(6).toString('base64url');
     const passwordHash = await this.passwords.hash(tempPassword);
     await this.prisma.user.update({ where: { id: userId }, data: { passwordHash } });
     return { tempPassword };
+  }
+
+  private assertCanAccessSchool(actor: JwtPayload, schoolId: string) {
+    if (actor.roles.includes('SUPER_ADMIN')) return;
+    if (actor.schoolId === schoolId) return;
+    throw new ForbiddenException('Sin acceso a este colegio');
+  }
+
+  private assertCanAssignRoles(actor: JwtPayload, roles: SystemRole[]) {
+    if (actor.roles.includes(SystemRole.SUPER_ADMIN)) return;
+    if (roles.includes(SystemRole.SUPER_ADMIN)) {
+      throw new ForbiddenException('Solo SUPER_ADMIN puede asignar SUPER_ADMIN');
+    }
+  }
+
+  private assertCanReadUser(actor: JwtPayload, targetSchoolIds: string[]) {
+    if (actor.roles.includes(SystemRole.SUPER_ADMIN)) return;
+    if (targetSchoolIds.includes(actor.schoolId)) return;
+    throw new ForbiddenException('Sin acceso a este usuario');
+  }
+
+  private async assertCanManageUser(actor: JwtPayload, targetUserId: string) {
+    if (actor.roles.includes(SystemRole.SUPER_ADMIN)) return;
+    const roles = await this.prisma.userSchoolRole.findMany({
+      where: { userId: targetUserId },
+      select: { schoolId: true, role: true },
+    });
+    this.assertCanReadUser(
+      actor,
+      roles.map((role) => role.schoolId),
+    );
+    if (roles.some((role) => role.role === SystemRole.SUPER_ADMIN)) {
+      throw new ForbiddenException('Solo SUPER_ADMIN puede administrar SUPER_ADMIN');
+    }
   }
 }

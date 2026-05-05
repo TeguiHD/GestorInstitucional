@@ -49,6 +49,31 @@ async function request<T>(path: string, opts: RequestOptions = {}): Promise<T> {
   return res.json() as Promise<T>;
 }
 
+export async function downloadBlob(path: string, filename: string): Promise<void> {
+  const token = localStorage.getItem('access_token');
+  const headers: Record<string, string> = {};
+  if (token) headers['Authorization'] = `Bearer ${token}`;
+
+  const res = await fetch(`${BASE}${path}`, { headers, credentials: 'include' });
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    const message =
+      typeof (data as { message?: unknown }).message === 'string'
+        ? (data as { message: string }).message
+        : res.statusText;
+    throw new ApiError(res.status, message, data);
+  }
+
+  const url = URL.createObjectURL(await res.blob());
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
+
 export const api = {
   get: <T>(path: string, signal?: AbortSignal) => request<T>(path, signal ? { signal } : {}),
   post: <T>(path: string, body?: unknown, authToken?: string) =>
