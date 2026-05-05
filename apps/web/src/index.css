@@ -58,9 +58,16 @@
   --color-destructive: #f87171;
 }
 
-html, body { min-height: 100%; }
-html { color-scheme: light; }
-html.dark { color-scheme: dark; }
+html,
+body {
+  min-height: 100%;
+}
+html {
+  color-scheme: light;
+}
+html.dark {
+  color-scheme: dark;
+}
 
 body {
   background-color: var(--color-background);
@@ -73,6 +80,15 @@ body {
 *:focus-visible {
   outline: 2px solid var(--color-ring);
   outline-offset: 2px;
+}
+
+input:-webkit-autofill,
+input:-webkit-autofill:hover,
+input:-webkit-autofill:focus {
+  -webkit-box-shadow: 0 0 0 1000px var(--color-background) inset;
+  -webkit-text-fill-color: var(--color-foreground);
+  caret-color: var(--color-foreground);
+  transition: background-color 9999s ease-out;
 }
 
 /* Theme toggle — circle reveal animation */
@@ -109,12 +125,29 @@ body {
 }
 
 @keyframes shake {
-  0%, 100% { transform: translateX(0); }
-  15%       { transform: translateX(-6px); }
-  30%       { transform: translateX(6px); }
-  45%       { transform: translateX(-4px); }
-  60%       { transform: translateX(4px); }
-  75%       { transform: translateX(-2px); }
-  90%       { transform: translateX(2px); }
+  0%,
+  100% {
+    transform: translateX(0);
+  }
+  15% {
+    transform: translateX(-6px);
+  }
+  30% {
+    transform: translateX(6px);
+  }
+  45% {
+    transform: translateX(-4px);
+  }
+  60% {
+    transform: translateX(4px);
+  }
+  75% {
+    transform: translateX(-2px);
+  }
+  90% {
+    transform: translateX(2px);
+  }
 }
-.animate-shake { animation: shake 0.5s ease-in-out; }
+.animate-shake {
+  animation: shake 0.5s ease-in-out;
+}

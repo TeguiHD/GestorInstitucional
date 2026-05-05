@@ -1,4 +1,10 @@
-import { ForbiddenException, Injectable, Logger, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ForbiddenException,
+  Injectable,
+  Logger,
+  NotFoundException,
+} from '@nestjs/common';
 import { SystemRole, type AttendanceStatus } from '@prisma/client';
 
 import { CalendarService } from '../calendar/calendar.service.js';
@@ -24,6 +30,7 @@ export class AttendanceService {
   /** Bulk upsert daily attendance for a course. Idempotent — safe to call multiple times. */
   async recordBulk(dto: RecordAttendanceDto, recordedById: string): Promise<{ upserted: number }> {
     const date = new Date(dto.date);
+    await this.assertEntriesBelongToCourse(dto);
 
     const upserts = dto.entries.map((entry) =>
       this.prisma.attendanceRecord.upsert({
@@ -62,6 +69,27 @@ export class AttendanceService {
     );
 
     return { upserted: dto.entries.length };
+  }
+
+  private async assertEntriesBelongToCourse(dto: RecordAttendanceDto) {
+    const seen = new Set<string>();
+    for (const entry of dto.entries) {
+      if (seen.has(entry.studentId)) {
+        throw new BadRequestException('No se permiten alumnos duplicados en la asistencia');
+      }
+      seen.add(entry.studentId);
+    }
+
+    const students = await this.prisma.student.findMany({
+      where: { courseId: dto.courseId, active: true },
+      select: { id: true },
+    });
+    const allowedStudentIds = new Set(students.map((student) => student.id));
+    const invalidEntry = dto.entries.find((entry) => !allowedStudentIds.has(entry.studentId));
+
+    if (invalidEntry) {
+      throw new BadRequestException('La asistencia contiene alumnos fuera del curso');
+    }
   }
 
   private async notifyGuardiansAbsence(dto: RecordAttendanceDto, date: Date) {

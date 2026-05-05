@@ -160,7 +160,9 @@ function LoginPage() {
           }}
         />
         <div className="relative flex items-center gap-3">
-          <img src="/logo-cssp.png" alt="CSSP" className="size-14 object-contain drop-shadow-lg" />
+          <span className="flex size-16 items-center justify-center rounded-xl border border-white/30 bg-white p-2 shadow-lg">
+            <img src="/logo-cssp.png" alt="CSSP" className="size-full object-contain" />
+          </span>
           <div>
             <p className="text-sm font-semibold tracking-wide opacity-90">CSSP · 2026</p>
             <p className="text-xs opacity-70">Colegio San Sebastián de Paine</p>
@@ -193,18 +195,19 @@ function LoginPage() {
       </aside>
 
       {/* Form panel */}
-      <main className="flex items-center justify-center p-6 lg:p-10">
+      <main className="flex items-center justify-center bg-muted/20 p-6 lg:p-10">
         <div className="w-full max-w-md">
           <div className="lg:hidden flex flex-col items-center mb-6 gap-2">
             <img
               src="/logo-cssp.png"
               alt="CSSP"
-              className="size-16 object-contain drop-shadow-md"
+              className="size-20 rounded-xl border border-border bg-white object-contain p-2 shadow-sm"
             />
             <h1 className="text-lg font-bold">Asistencia CSSP</h1>
           </div>
 
-          <div className="bg-background border border-border rounded-2xl shadow-sm overflow-hidden">
+          <div className="bg-background border border-border rounded-xl shadow-sm overflow-hidden">
+            <LoginBrandHeader />
             {step === 'credentials' && (
               <form
                 key={shakeKey}
@@ -461,6 +464,22 @@ const inputCls =
 
 const primaryBtn =
   'inline-flex w-full items-center justify-center gap-2 rounded-lg bg-primary text-primary-foreground px-4 py-2.5 text-sm font-semibold transition hover:bg-[var(--color-primary-hover)] active:bg-[var(--color-primary-active)] disabled:opacity-50 disabled:cursor-not-allowed';
+
+function LoginBrandHeader() {
+  return (
+    <div className="border-b border-border bg-accent/70 px-7 py-5">
+      <div className="flex items-center gap-3">
+        <span className="flex size-14 shrink-0 items-center justify-center rounded-xl border border-border bg-white p-1.5 shadow-sm">
+          <img src="/logo-cssp.png" alt="CSSP" className="size-full object-contain" />
+        </span>
+        <div className="min-w-0">
+          <p className="text-sm font-bold text-accent-foreground">CSSP</p>
+          <p className="truncate text-xs text-muted-foreground">Colegio San Sebastián de Paine</p>
+        </div>
+      </div>
+    </div>
+  );
+}
 
 function Field({
   label,

@@ -12,6 +12,7 @@ import {
   BookOpen,
   CheckSquare,
   BarChart3,
+  ShieldAlert,
 } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { toast } from 'sonner';
@@ -33,7 +34,7 @@ type Student = {
   enrollmentNumber: number;
   rut: string;
 };
-type AttendanceEntry = { studentId: string; status: string; note?: string };
+type AttendanceEntry = { studentId: string; status: StatusKey; note?: string };
 type AttendanceRecord = { student: Student; status: string; note?: string; id: string };
 type Insight = {
   type: string;
@@ -56,18 +57,21 @@ type Course = {
   }[];
 };
 
-const STATUS_CONFIG: Record<string, { label: string; bg: string; text: string; short: string }> = {
+type StatusKey = 'PRESENT' | 'ABSENT' | 'LATE' | 'JUSTIFIED';
+type StatusConfig = { label: string; bg: string; text: string; short: string };
+
+const STATUS_CONFIG: Record<StatusKey, StatusConfig> = {
   PRESENT: {
     label: 'Presente',
     bg: 'bg-green-100  dark:bg-green-900/30',
     text: 'text-green-700  dark:text-green-400',
-    short: '✓',
+    short: 'P',
   },
   ABSENT: {
     label: 'Ausente',
     bg: 'bg-red-100    dark:bg-red-900/30',
     text: 'text-red-700    dark:text-red-400',
-    short: '✗',
+    short: 'A',
   },
   LATE: {
     label: 'Atraso',
@@ -81,6 +85,13 @@ const STATUS_CONFIG: Record<string, { label: string; bg: string; text: string; s
     text: 'text-yellow-700 dark:text-yellow-400',
     short: 'J',
   },
+};
+
+const UNMARKED_CONFIG: StatusConfig = {
+  label: 'Sin marcar',
+  bg: 'bg-slate-100 dark:bg-slate-800',
+  text: 'text-slate-600 dark:text-slate-300',
+  short: '--',
 };
 
 const STATUS_CYCLE = ['PRESENT', 'ABSENT', 'LATE', 'JUSTIFIED'] as const;
@@ -157,7 +168,7 @@ export function CourseDetailPage() {
   const [activeTab, setActiveTab] = useState<Tab>('asistencia');
 
   const [selectedDate, setSelectedDate] = useState(() => new Date().toISOString().split('T')[0]!);
-  const [localStatus, setLocalStatus] = useState<Record<string, string>>({});
+  const [localStatus, setLocalStatus] = useState<Record<string, StatusKey>>({});
   const [showQr, setShowQr] = useState(false);
   const [sheetFor, setSheetFor] = useState<string | null>(null);
   const longPressTimer = useRef<number | null>(null);
@@ -186,9 +197,9 @@ export function CourseDetailPage() {
 
   useEffect(() => {
     if (!records) return;
-    const map: Record<string, string> = {};
+    const map: Record<string, StatusKey> = {};
     records.forEach((r) => {
-      map[r.student.id] = r.status;
+      if (r.status in STATUS_CONFIG) map[r.student.id] = r.status as StatusKey;
     });
     setLocalStatus(map);
   }, [records]);
@@ -283,8 +294,8 @@ export function CourseDetailPage() {
 
   const cycleStatus = (studentId: string) => {
     setLocalStatus((prev) => {
-      const current = prev[studentId] ?? 'PRESENT';
-      const idx = STATUS_CYCLE.indexOf(current as (typeof STATUS_CYCLE)[number]);
+      const current = prev[studentId];
+      const idx = current ? STATUS_CYCLE.indexOf(current) : -1;
       const next = STATUS_CYCLE[(idx + 1) % STATUS_CYCLE.length]!;
       return { ...prev, [studentId]: next };
     });
@@ -315,21 +326,26 @@ export function CourseDetailPage() {
     longPressFired.current = true;
   };
 
-  const markAll = (status: string) => {
-    const all: Record<string, string> = {};
-    course?.students.forEach((s) => {
-      all[s.id] = status;
-    });
-    setLocalStatus(all);
-  };
+  const courseStudents = course?.students ?? [];
+  const courseStatusValues = courseStudents
+    .map((student) => localStatus[student.id])
+    .filter((status): status is StatusKey => Boolean(status));
 
   const handleSave = () => {
-    const entries = Object.entries(localStatus).map(([studentId, status]) => ({
-      studentId,
-      status,
-    }));
+    const entries = courseStudents
+      .map((student) => {
+        const status = localStatus[student.id];
+        return status ? { studentId: student.id, status } : null;
+      })
+      .filter((entry): entry is AttendanceEntry => entry !== null);
+
     if (entries.length === 0) {
       toast.info('Sin cambios');
+      return;
+    }
+    if (entries.length !== courseStudents.length) {
+      const pending = courseStudents.length - entries.length;
+      toast.warning(`Faltan ${pending} alumno${pending !== 1 ? 's' : ''} por marcar`);
       return;
     }
     saveMutation.mutate(entries);
@@ -348,11 +364,13 @@ export function CourseDetailPage() {
     setLocalStatus({});
   };
 
-  const presentCount = Object.values(localStatus).filter(
-    (s) => s === 'PRESENT' || s === 'LATE',
-  ).length;
-  const total = course?.students.length ?? 0;
-  const rate = total > 0 ? presentCount / total : 0;
+  const presentCount = courseStatusValues.filter((s) => s === 'PRESENT' || s === 'LATE').length;
+  const total = courseStudents.length;
+  const markedCount = courseStatusValues.length;
+  const pendingStudents = Math.max(total - markedCount, 0);
+  const completionRate = total > 0 ? markedCount / total : 0;
+  const attendanceRate = markedCount > 0 ? presentCount / markedCount : 0;
+  const canSaveAttendance = total > 0 && pendingStudents === 0 && !saveMutation.isPending;
 
   const headTeacher = course?.teachers.find((t) => t.isHead) ?? course?.teachers[0];
 
@@ -579,38 +597,40 @@ export function CourseDetailPage() {
           </div>
 
           {/* Progress bar */}
-          <div className="rounded-xl border border-border bg-background p-4 flex items-center gap-4">
-            <div className="flex-1 h-2.5 rounded-full bg-muted overflow-hidden">
-              <div
-                className="h-full rounded-full transition-all duration-300"
-                style={{
-                  width: `${rate * 100}%`,
-                  backgroundColor: rate >= 0.9 ? '#22c55e' : rate >= 0.7 ? '#f59e0b' : '#ef4444',
-                }}
-              />
+          <div className="rounded-xl border border-border bg-background p-4 space-y-3">
+            <div className="flex items-center gap-4">
+              <div className="flex-1 h-2.5 rounded-full bg-muted overflow-hidden">
+                <div
+                  className="h-full rounded-full bg-primary transition-all duration-300"
+                  style={{ width: `${completionRate * 100}%` }}
+                />
+              </div>
+              <span className="text-sm font-semibold tabular-nums">
+                {markedCount}/{total}
+              </span>
+              <span className="text-sm text-muted-foreground">
+                {(completionRate * 100).toFixed(0)}%
+              </span>
             </div>
-            <span className="text-sm font-semibold tabular-nums">
-              {presentCount}/{total}
-            </span>
-            <span className="text-sm text-muted-foreground">{(rate * 100).toFixed(0)}%</span>
+            <div className="flex flex-wrap items-center gap-2 text-xs">
+              <span className="rounded-full bg-green-100 px-2.5 py-1 font-medium text-green-700 dark:bg-green-900/30 dark:text-green-400">
+                {presentCount} presentes
+              </span>
+              <span className="rounded-full bg-slate-100 px-2.5 py-1 font-medium text-slate-600 dark:bg-slate-800 dark:text-slate-300">
+                {pendingStudents} sin marcar
+              </span>
+              <span className="text-muted-foreground">
+                {(attendanceRate * 100).toFixed(0)}% asistencia marcada
+              </span>
+            </div>
           </div>
 
-          {/* Mark all */}
-          <div className="flex items-center gap-2 flex-wrap text-sm">
-            <span className="text-muted-foreground text-xs">Marcar todos:</span>
-            {Object.entries(STATUS_CONFIG).map(([s, cfg]) => (
-              <button
-                key={s}
-                onClick={() => markAll(s)}
-                className={cn(
-                  'px-2.5 py-1 rounded-lg text-xs font-medium transition',
-                  cfg.bg,
-                  cfg.text,
-                )}
-              >
-                {cfg.label}
-              </button>
-            ))}
+          <div className="flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800 dark:border-amber-900/60 dark:bg-amber-900/20 dark:text-amber-300">
+            <ShieldAlert className="mt-0.5 size-4 shrink-0" />
+            <span>
+              Registro individual obligatorio. La asistencia se guarda cuando todos los alumnos
+              tienen estado.
+            </span>
           </div>
 
           {/* Student list */}
@@ -632,9 +652,9 @@ export function CourseDetailPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {course?.students.map((student) => {
-                    const status = localStatus[student.id] ?? 'PRESENT';
-                    const cfg = STATUS_CONFIG[status] ?? STATUS_CONFIG['PRESENT']!;
+                  {courseStudents.map((student) => {
+                    const status = localStatus[student.id];
+                    const cfg = status ? STATUS_CONFIG[status] : UNMARKED_CONFIG;
                     return (
                       <tr
                         key={student.id}
@@ -664,11 +684,11 @@ export function CourseDetailPage() {
                             onPointerCancel={cancelLongPress}
                             onContextMenu={(e) => e.preventDefault()}
                             className={cn(
-                              'inline-flex items-center justify-center min-h-[44px] w-24 rounded-xl text-xs font-semibold transition-all hover:opacity-90 active:scale-95 select-none touch-none',
+                              'inline-flex min-h-[44px] w-24 select-none items-center justify-center rounded-lg text-xs font-semibold transition-all hover:opacity-90 active:scale-95 touch-none',
                               cfg.bg,
                               cfg.text,
                             )}
-                            title="Tap = ciclar · Mantén presionado = elegir"
+                            title="Cambiar estado"
                           >
                             <span className="hidden sm:inline">{cfg.label}</span>
                             <span className="sm:hidden text-sm">{cfg.short}</span>
@@ -730,6 +750,11 @@ export function CourseDetailPage() {
 
           {/* Save */}
           <div className="flex items-center justify-end gap-3">
+            {pendingStudents > 0 && (
+              <span className="text-xs text-muted-foreground">
+                Faltan {pendingStudents} por marcar
+              </span>
+            )}
             {!online && (
               <span className="text-xs text-amber-600 dark:text-amber-400 flex items-center gap-1.5">
                 <span className="inline-block size-2 rounded-full bg-amber-500 animate-pulse" />
@@ -743,14 +768,16 @@ export function CourseDetailPage() {
             )}
             <button
               onClick={handleSave}
-              disabled={saveMutation.isPending}
+              disabled={!canSaveAttendance}
               className="rounded-lg bg-primary text-primary-foreground px-6 py-2.5 text-sm font-medium transition hover:opacity-90 disabled:opacity-50"
             >
               {saveMutation.isPending
                 ? 'Guardando…'
-                : online
-                  ? 'Guardar asistencia'
-                  : 'Guardar (offline)'}
+                : pendingStudents > 0
+                  ? 'Completar asistencia'
+                  : online
+                    ? 'Guardar asistencia'
+                    : 'Guardar (offline)'}
             </button>
           </div>
         </div>
@@ -760,6 +787,10 @@ export function CourseDetailPage() {
       {showQr && (
         <QrScanner
           onScan={(id) => {
+            if (!courseStudents.some((student) => student.id === id)) {
+              toast.error('QR no corresponde a este curso');
+              return;
+            }
             setLocalStatus((p) => ({ ...p, [id]: 'PRESENT' }));
             toast.success('Alumno marcado presente');
           }}
@@ -770,7 +801,7 @@ export function CourseDetailPage() {
       {/* Long-press status sheet */}
       {sheetFor &&
         (() => {
-          const student = course?.students.find((s) => s.id === sheetFor);
+          const student = courseStudents.find((s) => s.id === sheetFor);
           if (!student) return null;
           return (
             <div
@@ -788,22 +819,25 @@ export function CourseDetailPage() {
                   </p>
                 </div>
                 <div className="grid grid-cols-2 gap-2">
-                  {Object.entries(STATUS_CONFIG).map(([s, cfg]) => (
-                    <button
-                      key={s}
-                      onClick={() => {
-                        setLocalStatus((p) => ({ ...p, [sheetFor]: s }));
-                        setSheetFor(null);
-                      }}
-                      className={cn(
-                        'min-h-[56px] rounded-xl font-semibold text-sm transition active:scale-95',
-                        cfg.bg,
-                        cfg.text,
-                      )}
-                    >
-                      {cfg.label}
-                    </button>
-                  ))}
+                  {STATUS_CYCLE.map((s) => {
+                    const cfg = STATUS_CONFIG[s];
+                    return (
+                      <button
+                        key={s}
+                        onClick={() => {
+                          setLocalStatus((p) => ({ ...p, [sheetFor]: s }));
+                          setSheetFor(null);
+                        }}
+                        className={cn(
+                          'min-h-[56px] rounded-lg font-semibold text-sm transition active:scale-95',
+                          cfg.bg,
+                          cfg.text,
+                        )}
+                      >
+                        {cfg.label}
+                      </button>
+                    );
+                  })}
                 </div>
                 <button
                   onClick={() => setSheetFor(null)}
