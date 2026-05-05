@@ -32,7 +32,7 @@ export class LoginDto {
   @ApiPropertyOptional({ description: 'Token de dispositivo recordado (64-char hex)' })
   @IsOptional()
   @IsString()
-  @MaxLength(64)
+  @Matches(/^[a-f0-9]{64}$/i, { message: 'deviceToken inválido' })
   deviceToken?: string;
 
   @ApiPropertyOptional({

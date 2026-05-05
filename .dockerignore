@@ -1,0 +1,46 @@
+.git
+.gitignore
+.worktrees
+.turbo
+.cache
+node_modules
+**/node_modules
+dist
+build
+coverage
+playwright-report
+test-results
+*.tsbuildinfo
+
+# Secrets and local environment
+.env
+.env.*
+!.env.example
+*.local
+SECRETS.local
+SECRETS.local.*
+*.pem
+*.key
+*.crt
+*.p12
+
+# Institutional source data / local notes
+Cursos
+*.xlsx
+*.xls
+*.docx
+docs/superpowers/plans
+observaciones.txt
+requerimientos.txt
+requerimientos2.txt
+impulsate.html
+5Mayo2026.txt
+.codex
+
+# Editor / OS
+.vscode
+.idea
+.DS_Store
+Thumbs.db
+*.swp
+*~

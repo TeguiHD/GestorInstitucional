@@ -1,0 +1,107 @@
+version: '3.9'
+
+# Production compose — Caddy (datos project) acts as reverse proxy
+# Requires external network: docker network create caddy-shared
+# Requires: docker network connect caddy-shared datos-caddy-1
+
+services:
+  db:
+    image: mariadb:11.4
+    container_name: asistencia_db
+    restart: always
+    environment:
+      MARIADB_ROOT_PASSWORD: ${DB_ROOT_PASSWORD:?required}
+      MARIADB_DATABASE: ${DB_NAME:?required}
+      MARIADB_USER: ${DB_USER:?required}
+      MARIADB_PASSWORD: ${DB_PASSWORD:?required}
+    volumes:
+      - db_data:/var/lib/mysql
+      - ./mariadb/init.sql:/docker-entrypoint-initdb.d/00_init.sql:ro
+    command: >
+      --character-set-server=utf8mb4
+      --collation-server=utf8mb4_unicode_ci
+      --default-authentication-plugin=mysql_native_password
+      --innodb-buffer-pool-size=512M
+      --max-connections=200
+      --skip-networking=OFF
+    networks:
+      - internal
+    healthcheck:
+      test: ['CMD', 'healthcheck.sh', '--connect', '--innodb_initialized']
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  api:
+    build:
+      context: ../../
+      dockerfile: apps/api/Dockerfile
+      target: runner
+    image: asistencia-api:latest
+    container_name: asistencia_api
+    restart: always
+    depends_on:
+      db:
+        condition: service_healthy
+    env_file: ../../.env
+    environment:
+      NODE_ENV: production
+      DB_HOST: db
+    volumes:
+      - uploads:/app/uploads
+    init: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    networks:
+      - internal
+      - caddy-shared
+    healthcheck:
+      test:
+        [
+          'CMD',
+          'node',
+          '-e',
+          "require('http').get('http://127.0.0.1:4000/api/v1/health',r=>process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1))",
+        ]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 120s
+
+  web:
+    build:
+      context: ../../
+      dockerfile: apps/web/Dockerfile
+      args:
+        VITE_API_BASE_URL: /api/v1
+    image: asistencia-web:latest
+    container_name: asistencia_web
+    restart: always
+    init: true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - SETGID
+      - SETUID
+      - NET_BIND_SERVICE
+    security_opt:
+      - no-new-privileges:true
+    networks:
+      - caddy-shared
+
+volumes:
+  db_data:
+    name: asistencia_db_prod
+  uploads:
+    name: asistencia_uploads
+
+networks:
+  internal:
+    driver: bridge
+    internal: true
+  caddy-shared:
+    external: true

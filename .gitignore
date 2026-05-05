@@ -13,6 +13,8 @@ out/
 # Environment & secrets (NEVER commit)
 .env
 .env.local
+.env.*
+!.env.example
 .env.*.local
 *.local
 SECRETS.local
@@ -28,6 +30,19 @@ logs/
 npm-debug.log*
 yarn-debug.log*
 pnpm-debug.log*
+
+# Institutional source data / local notes
+Cursos/
+*.xlsx
+*.xls
+*.docx
+docs/superpowers/plans/
+observaciones.txt
+requerimientos.txt
+requerimientos2.txt
+impulsate.html
+5Mayo2026.txt
+.codex
 
 # Editor / OS
 .vscode/

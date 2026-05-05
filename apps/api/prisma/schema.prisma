@@ -96,6 +96,25 @@ enum AuditAction {
   PERMISSION_CHANGE
 }
 
+enum GradePeriod {
+  P1
+  P2
+  E1
+  P3
+  P4
+  E2
+  NF
+}
+
+enum EnrollmentStatus {
+  ACTIVE
+  WITHDRAWN
+  TRANSFERRED_OUT
+  TRANSFERRED_IN
+  RE_ENROLLED
+  GRADUATED
+}
+
 // =============================================================================
 // SCHOOL (multi-tenant root)
 // =============================================================================
@@ -107,6 +126,7 @@ model School {
   address   String?  @db.VarChar(300)
   phone     String?  @db.VarChar(30)
   logoUrl   String?  @db.VarChar(500)
+  rbd       String?  @db.VarChar(10)
   active    Boolean  @default(true)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -117,6 +137,7 @@ model School {
   permissions  SchoolPermission[]
   calendarDays SchoolCalendarDay[]
   alertRules   AlertRule[]
+  subjects     Subject[]
 
   @@map("schools")
 }
@@ -151,6 +172,12 @@ model User {
   justificationsReviewed AttendanceJustification[] @relation("JustifReviewer")
   auditEvents           AuditEvent[]
   trustedDevices        TrustedDevice[]
+  notifications         Notification[]
+  guardianContacts      GuardianContact[]
+  gradesRecorded        Grade[]           @relation("GradeRecordedBy")
+  subjectsTeaching      Subject[]         @relation("SubjectTeacher")
+  scheduleSlots         ScheduleSlot[]    @relation("SlotTeacher")
+  enrollmentEvents      EnrollmentEvent[] @relation("EnrollmentRecordedBy")
 
   @@index([email])
   @@index([deletedAt])
@@ -241,6 +268,23 @@ model TrustedDevice {
   @@map("trusted_devices")
 }
 
+model Notification {
+  id        String    @id @default(uuid()) @db.Char(36)
+  userId    String    @db.Char(36)
+  type      String    @db.VarChar(40)
+  title     String    @db.VarChar(200)
+  body      String    @db.VarChar(500)
+  link      String?   @db.VarChar(500)
+  readAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, readAt])
+  @@index([userId, createdAt])
+  @@map("notifications")
+}
+
 // =============================================================================
 // COURSES
 // =============================================================================
@@ -257,10 +301,12 @@ model Course {
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
 
-  school      School             @relation(fields: [schoolId], references: [id], onDelete: Cascade)
-  teachers    CourseTeacher[]
-  students    Student[]
-  attendance  AttendanceRecord[]
+  school         School             @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+  teachers       CourseTeacher[]
+  students       Student[]
+  attendance     AttendanceRecord[]
+  subjects       Subject[]
+  scheduleSlots  ScheduleSlot[]
 
   @@unique([schoolId, code, year])
   @@index([schoolId])
@@ -299,13 +345,16 @@ model Student {
   enrollmentNumber Int
   active           Boolean   @default(true)
   withdrawnAt      DateTime?
+  enrolledAt       DateTime  @default(now())
   createdAt        DateTime  @default(now())
   updatedAt        DateTime  @updatedAt
 
   school        School             @relation(fields: [schoolId], references: [id], onDelete: Cascade)
   course        Course             @relation(fields: [courseId], references: [id])
-  guardianships Guardianship[]
-  attendance    AttendanceRecord[]
+  guardianships     Guardianship[]
+  attendance        AttendanceRecord[]
+  grades            Grade[]
+  enrollmentHistory EnrollmentEvent[]
 
   @@unique([schoolId, rut])
   @@unique([courseId, enrollmentNumber])
@@ -320,6 +369,10 @@ model Guardianship {
   studentId   String   @db.Char(36)
   relation    String   @db.VarChar(40) // "Padre", "Madre", "Tutor"
   isPrimary   Boolean  @default(false)
+  notifyAbsences     Boolean  @default(true)
+  notifyLate         Boolean  @default(true)
+  notifyWeeklyDigest Boolean  @default(false)
+  notifyUntil DateTime?
   createdAt   DateTime @default(now())
 
   guardian User    @relation(fields: [guardianId], references: [id], onDelete: Cascade)
@@ -328,6 +381,23 @@ model Guardianship {
   @@unique([guardianId, studentId])
   @@index([studentId])
   @@map("guardianships")
+}
+
+model GuardianContact {
+  id          String   @id @default(uuid()) @db.Char(36)
+  userId      String   @db.Char(36)
+  type        String   @db.VarChar(20)
+  phone       String   @db.VarChar(30)
+  label       String?  @db.VarChar(80)
+  isWhatsApp  Boolean  @default(false)
+  priority    Int      @default(0)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("guardian_contacts")
 }
 
 // =============================================================================
@@ -495,4 +565,111 @@ model AuditEvent {
   @@index([entity, entityId])
   @@index([createdAt])
   @@map("audit_events")
+}
+
+// =============================================================================
+// SUBJECTS + GRADES
+// =============================================================================
+
+model Subject {
+  id           String   @id @default(uuid()) @db.Char(36)
+  schoolId     String   @db.Char(36)
+  courseId     String   @db.Char(36)
+  name         String   @db.VarChar(120)
+  code         String   @db.VarChar(20)
+  teacherId    String?  @db.Char(36)
+  semester     Int      @default(0)
+  hoursPerWeek Int      @default(4)
+  active       Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  school         School         @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+  course         Course         @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  teacher        User?          @relation("SubjectTeacher", fields: [teacherId], references: [id], onDelete: SetNull)
+  grades         Grade[]
+  scheduleSlots  ScheduleSlot[]
+
+  @@unique([courseId, code])
+  @@index([courseId])
+  @@index([schoolId])
+  @@map("subjects")
+}
+
+model Grade {
+  id           String      @id @default(uuid()) @db.Char(36)
+  studentId    String      @db.Char(36)
+  subjectId    String      @db.Char(36)
+  period       GradePeriod
+  value        Decimal     @db.Decimal(4, 1)
+  comment      String?     @db.VarChar(200)
+  recordedById String      @db.Char(36)
+  createdAt    DateTime    @default(now())
+  updatedAt    DateTime    @updatedAt
+
+  student      Student @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  subject      Subject @relation(fields: [subjectId], references: [id], onDelete: Cascade)
+  recordedBy   User    @relation("GradeRecordedBy", fields: [recordedById], references: [id])
+
+  @@unique([studentId, subjectId, period])
+  @@index([subjectId])
+  @@index([studentId])
+  @@map("grades")
+}
+
+// =============================================================================
+// HORARIOS
+// =============================================================================
+
+model ScheduleSlot {
+  id          String   @id @default(uuid()) @db.Char(36)
+  courseId    String   @db.Char(36)
+  subjectId   String   @db.Char(36)
+  teacherId   String   @db.Char(36)
+  dayOfWeek   Int      // 1=Lunes, 2=Martes, 3=Miércoles, 4=Jueves, 5=Viernes
+  slotNumber  Int      // 1–8 (bloque dentro del día)
+  startTime   String   @db.VarChar(5)
+  endTime     String   @db.VarChar(5)
+  roomNumber  String?  @db.VarChar(20)
+  year        Int
+  semester    Int
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  course  Course  @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  subject Subject @relation(fields: [subjectId], references: [id], onDelete: Cascade)
+  teacher User    @relation("SlotTeacher", fields: [teacherId], references: [id])
+
+  @@unique([courseId, dayOfWeek, slotNumber, year, semester])
+  @@index([courseId])
+  @@index([teacherId])
+  @@map("schedule_slots")
+}
+
+// =============================================================================
+// ENROLLMENT LIFECYCLE
+// =============================================================================
+
+model EnrollmentEvent {
+  id                    String           @id @default(uuid()) @db.Char(36)
+  studentId             String           @db.Char(36)
+  courseId              String           @db.Char(36)
+  schoolId              String           @db.Char(36)
+  status                EnrollmentStatus
+  effectiveDate         DateTime         @db.Date
+  reason                String?          @db.VarChar(200)
+  transferredToCourseId String?          @db.Char(36)
+  transferredToSchool   String?          @db.VarChar(200)
+  externalGrades        Json?
+  recordedById          String           @db.Char(36)
+  createdAt             DateTime         @default(now())
+
+  student      Student  @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  recordedBy   User     @relation("EnrollmentRecordedBy", fields: [recordedById], references: [id])
+
+  @@index([studentId])
+  @@index([courseId])
+  @@index([schoolId])
+  @@index([effectiveDate])
+  @@map("enrollment_events")
 }

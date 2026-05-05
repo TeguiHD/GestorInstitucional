@@ -15,7 +15,6 @@ import {
 } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { toast } from 'sonner';
-import * as XLSX from 'xlsx';
 
 import { useUser } from '@/stores/auth.store';
 import { api } from '@/lib/api';
@@ -104,6 +103,51 @@ const TABS: { id: Tab; label: string; icon: React.FC<{ className?: string }> }[]
   { id: 'estadisticas', label: 'Estadísticas', icon: BarChart3 },
 ];
 
+function parseDelimited(text: string): string[][] {
+  const rows: string[][] = [];
+  let cell = '';
+  let row: string[] = [];
+  let inQuotes = false;
+  const delimiter = text.includes(';') ? ';' : text.includes('\t') ? '\t' : ',';
+
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    const next = text[i + 1];
+
+    if (ch === '"' && next === '"') {
+      cell += '"';
+      i++;
+      continue;
+    }
+    if (ch === '"') {
+      inQuotes = !inQuotes;
+      continue;
+    }
+    if (!inQuotes && ch === delimiter) {
+      row.push(cell.trim());
+      cell = '';
+      continue;
+    }
+    if (!inQuotes && (ch === '\n' || ch === '\r')) {
+      if (ch === '\r' && next === '\n') i++;
+      row.push(cell.trim());
+      if (row.some(Boolean)) rows.push(row);
+      row = [];
+      cell = '';
+      continue;
+    }
+    cell += ch;
+  }
+
+  row.push(cell.trim());
+  if (row.some(Boolean)) rows.push(row);
+  return rows;
+}
+
+function normalizeRut(raw: string): string {
+  return raw.replace(/\./g, '').replace(/\s/g, '').toUpperCase();
+}
+
 export function CourseDetailPage() {
   const { courseId } = useParams({ from: '/_auth/cursos/$courseId' });
   const qc = useQueryClient();
@@ -170,92 +214,48 @@ export function CourseDetailPage() {
 
   const handleFilePick = async (file: File) => {
     try {
-      const buf = await file.arrayBuffer();
-      const wb = XLSX.read(buf, { type: 'array' });
-      const ws = wb.Sheets[wb.SheetNames[0]!]!;
-
-      const raw = XLSX.utils.sheet_to_json<unknown[]>(ws, { header: 1, raw: false }) as unknown[][];
-      const headerRowIdx = raw.findIndex(
-        (row) =>
-          Array.isArray(row) &&
-          row.some((cell) => typeof cell === 'string' && /nombres y apellidos/i.test(cell)),
-      );
-
-      if (headerRowIdx !== -1) {
-        const studentRows = raw.slice(headerRowIdx + 1).filter((row) => {
-          if (!Array.isArray(row)) return false;
-          const n = row[1];
-          const name = row[2];
-          return (
-            typeof name === 'string' &&
-            name.trim().length > 2 &&
-            Number.isFinite(Number(n)) &&
-            Number(n) > 0
-          );
-        });
-
-        const normalized: ImportRow[] = studentRows.map((row) => {
-          const enrollmentNumber = Number((row as unknown[])[1]);
-          const fullName = String((row as unknown[])[2])
-            .trim()
-            .toUpperCase();
-          const parts = fullName.split(/\s+/);
-          const lastName = parts[0] ?? '';
-          const secondLastName = parts.length > 2 ? (parts[1] ?? '') : undefined;
-          const firstNameWords = parts.slice(parts.length > 2 ? 2 : 1);
-          const firstName = firstNameWords
-            .map((w) => w.charAt(0) + w.slice(1).toLowerCase())
-            .join(' ');
-          const rut = `0000000${enrollmentNumber}-0`;
-          return {
-            rut,
-            firstName,
-            lastName: lastName.charAt(0) + lastName.slice(1).toLowerCase(),
-            secondLastName: secondLastName
-              ? secondLastName.charAt(0) + secondLastName.slice(1).toLowerCase()
-              : undefined,
-            enrollmentNumber,
-          };
-        });
-
-        if (normalized.length === 0) {
-          toast.error('No se encontraron alumnos en el archivo.');
-          return;
-        }
-        toast.info('Formato CSSP detectado — RUTs temporales asignados.', { duration: 8000 });
-        setImportPreview(normalized);
+      if (file.size > 1024 * 1024) {
+        toast.error('El archivo CSV supera 1 MB.');
         return;
       }
 
-      const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(ws, { raw: false });
+      const rows = parseDelimited(await file.text());
+      const header = rows[0]?.map((cell) => cell.toLowerCase().trim()) ?? [];
+      const indexOf = (...names: string[]) =>
+        header.findIndex((cell) => names.some((name) => cell === name || cell.includes(name)));
+
+      const rutIdx = indexOf('rut', 'run');
+      const firstNameIdx = indexOf('firstname', 'first_name', 'nombres', 'nombre');
+      const lastNameIdx = indexOf('lastname', 'last_name', 'apellido paterno', 'apellido');
+      const secondLastNameIdx = indexOf('secondlastname', 'second_last_name', 'apellido materno');
+      const birthDateIdx = indexOf('birthdate', 'fecha de nacimiento', 'fecha nacimiento');
+      const enrollmentIdx = indexOf('enrollmentnumber', 'n°', 'nº', 'numero', 'n lista');
+
+      if (rutIdx === -1 || firstNameIdx === -1 || lastNameIdx === -1) {
+        toast.error('CSV inválido. Columnas requeridas: rut, firstName, lastName.');
+        return;
+      }
+
       const normalized: ImportRow[] = rows
+        .slice(1)
         .map((r, i) => {
-          const rut = String(r['rut'] ?? r['RUT'] ?? r['Rut'] ?? '')
-            .replace(/\./g, '')
-            .replace(/\s/g, '')
-            .toLowerCase();
-          const enrollmentNumber = Number(
-            r['enrollmentNumber'] ?? r['N°'] ?? r['Nº'] ?? r['numero'] ?? i + 1,
-          );
+          const enrollmentNumber =
+            enrollmentIdx >= 0 && Number.isFinite(Number(r[enrollmentIdx]))
+              ? Number(r[enrollmentIdx])
+              : i + 1;
           return {
-            rut,
-            firstName: String(
-              r['firstName'] ?? r['nombre'] ?? r['Nombre'] ?? r['Nombres'] ?? '',
-            ).trim(),
-            lastName: String(
-              r['lastName'] ?? r['apellido'] ?? r['Apellido'] ?? r['ApellidoPaterno'] ?? '',
-            ).trim(),
+            rut: normalizeRut(r[rutIdx] ?? ''),
+            firstName: (r[firstNameIdx] ?? '').trim(),
+            lastName: (r[lastNameIdx] ?? '').trim(),
             secondLastName:
-              (r['secondLastName'] ?? r['ApellidoMaterno'])
-                ? String(r['secondLastName'] ?? r['ApellidoMaterno']).trim()
-                : undefined,
-            birthDate: r['birthDate'] ? String(r['birthDate']) : undefined,
-            enrollmentNumber: Number.isFinite(enrollmentNumber) ? enrollmentNumber : i + 1,
+              secondLastNameIdx >= 0 ? (r[secondLastNameIdx] ?? '').trim() || undefined : undefined,
+            birthDate: birthDateIdx >= 0 ? (r[birthDateIdx] ?? '').trim() || undefined : undefined,
+            enrollmentNumber,
           };
         })
         .filter((r) => r.rut && r.firstName && r.lastName);
       if (normalized.length === 0) {
-        toast.error('Sin filas válidas. Columnas esperadas: rut, firstName, lastName');
+        toast.error('Sin filas válidas.');
         return;
       }
       setImportPreview(normalized);
@@ -413,7 +413,7 @@ export function CourseDetailPage() {
             <input
               ref={fileInputRef}
               type="file"
-              accept=".xlsx,.xls,.csv"
+              accept=".csv,text/csv"
               className="hidden"
               onChange={(e) => {
                 const f = e.target.files?.[0];

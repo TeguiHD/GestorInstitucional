@@ -99,7 +99,9 @@ export class TokenService {
     const newHash = this.hashToken(newRawToken);
     const ttlMs = this.parseTtlToMs(this.config.get('jwt.refreshTtl', { infer: true }));
 
-    const schoolId = stored.userId; // will be overridden below — placeholder
+    const schoolId = user.schoolRoles[0]?.schoolId;
+    if (!schoolId) throw new UnauthorizedException('Usuario sin colegio asignado');
+
     const payload: Omit<JwtPayload, 'iat' | 'exp'> = {
       sub: user.id,
       email: user.email,

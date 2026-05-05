@@ -2,8 +2,10 @@ import { plainToInstance } from 'class-transformer';
 import {
   IsBoolean,
   IsEnum,
+  IsIn,
   IsInt,
   IsString,
+  Matches,
   Max,
   Min,
   MinLength,
@@ -62,6 +64,7 @@ class EnvironmentVariables {
 
   @IsString()
   @MinLength(64, { message: 'TOTP_ENC_KEY must be 32-byte hex (64 hex chars)' })
+  @Matches(/^[a-fA-F0-9]{64}$/, { message: 'TOTP_ENC_KEY must be 32-byte hex' })
   TOTP_ENC_KEY!: string;
 
   @IsString()
@@ -98,6 +101,7 @@ class EnvironmentVariables {
   COOKIE_SECURE: boolean = false;
 
   @IsString()
+  @IsIn(['strict', 'lax', 'none'])
   COOKIE_SAMESITE: string = 'lax';
 
   @IsString()
@@ -141,8 +145,51 @@ export function validateConfig(config: Record<string, unknown>) {
     enableImplicitConversion: true,
   });
   const errors = validateSync(validatedConfig, { skipMissingProperties: false });
-  if (errors.length > 0) {
-    throw new Error(`Config validation error:\n${errors.toString()}`);
+
+  const nodeEnv = String(config['NODE_ENV'] ?? Environment.Development);
+  const corsOrigins = String(config['CORS_ORIGINS'] ?? '')
+    .split(',')
+    .map((s) => s.trim());
+  const forbiddenSecretValues = new Set([
+    '',
+    'replace_with_64byte_random',
+    'replace_with_different_64byte_random',
+    'change_me',
+    'change_me_strong_password',
+    '0000000000000000000000000000000000000000000000000000000000000000',
+  ]);
+  const productionErrors: string[] = [];
+
+  if (nodeEnv === Environment.Production) {
+    if (forbiddenSecretValues.has(String(config['JWT_ACCESS_SECRET'] ?? ''))) {
+      productionErrors.push('JWT_ACCESS_SECRET must be rotated');
+    }
+    if (forbiddenSecretValues.has(String(config['JWT_REFRESH_SECRET'] ?? ''))) {
+      productionErrors.push('JWT_REFRESH_SECRET must be rotated');
+    }
+    if (String(config['COOKIE_SECURE']) !== 'true') {
+      productionErrors.push('COOKIE_SECURE must be true');
+    }
+    if (forbiddenSecretValues.has(String(config['TOTP_ENC_KEY'] ?? ''))) {
+      productionErrors.push('TOTP_ENC_KEY must be rotated');
+    }
+    if (!String(config['API_PUBLIC_URL'] ?? '').startsWith('https://')) {
+      productionErrors.push('API_PUBLIC_URL must use HTTPS');
+    }
+    if (
+      corsOrigins.length === 0 ||
+      corsOrigins.some((origin) => !origin || origin === '*' || !origin.startsWith('https://'))
+    ) {
+      productionErrors.push('CORS_ORIGINS must be explicit HTTPS origins, never wildcard');
+    }
+  }
+
+  if (errors.length > 0 || productionErrors.length > 0) {
+    throw new Error(
+      `Config validation error:\n${[errors.toString(), ...productionErrors]
+        .filter(Boolean)
+        .join('\n')}`,
+    );
   }
   return validatedConfig;
 }

@@ -4,6 +4,7 @@
 FROM node:22-alpine AS deps
 WORKDIR /app
 
+RUN apk add --no-cache openssl
 RUN npm install -g pnpm@9
 
 COPY package.json pnpm-workspace.yaml pnpm-lock.yaml ./
@@ -19,6 +20,7 @@ RUN pnpm install --frozen-lockfile
 FROM node:22-alpine AS builder
 WORKDIR /app
 
+RUN apk add --no-cache openssl
 RUN npm install -g pnpm@9
 
 COPY --from=deps /app/node_modules ./node_modules
@@ -38,6 +40,7 @@ WORKDIR /app
 
 ENV NODE_ENV=production
 
+RUN apk add --no-cache openssl
 RUN addgroup --system --gid 1001 nodejs && adduser --system --uid 1001 appuser
 
 RUN npm install -g pnpm@9
@@ -61,6 +64,9 @@ RUN PRISMA_DIR=/app/node_modules/.pnpm/@prisma+client@5.22.0_prisma@5.22.0/node_
        "$PRISMA_DIR/libquery_engine-linux-musl.so.node"
 COPY --from=builder /app/apps/api/prisma ./apps/api/prisma
 COPY apps/api/assets ./apps/api/assets
+
+RUN find /app/node_modules/.pnpm -maxdepth 1 -name '@prisma+engines@5.22.0*' -exec chown -R appuser:nodejs {} + && \
+    chown -R appuser:nodejs /app/node_modules/.pnpm/@prisma+client@5.22.0_prisma@5.22.0/node_modules/.prisma
 
 USER appuser
 EXPOSE 4000

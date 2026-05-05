@@ -39,16 +39,17 @@ export class AuthController {
   @Public()
   @Post('login')
   @HttpCode(HttpStatus.OK)
-  @Throttle({ default: { ttl: seconds(300), limit: 10 } })
+  @Throttle({ default: { ttl: seconds(300), limit: 5 } })
   @ApiOperation({ summary: 'Login con email + contraseña (+ TOTP si activo)' })
   async login(@Body() dto: LoginDto, @Req() req: FastifyRequest) {
     return this.auth.login(dto, req.ip, req.headers['user-agent']);
   }
 
-  @Public()
   @Post('register')
   @HttpCode(HttpStatus.CREATED)
-  @ApiOperation({ summary: 'Registrar nuevo usuario (SUPER_ADMIN only en prod)' })
+  @Roles(SystemRole.SUPER_ADMIN)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Registrar nuevo usuario (SUPER_ADMIN)' })
   register(@Body() dto: RegisterDto) {
     return this.auth.register(dto);
   }
@@ -56,6 +57,7 @@ export class AuthController {
   @Public()
   @Post('refresh')
   @HttpCode(HttpStatus.OK)
+  @Throttle({ default: { ttl: seconds(300), limit: 10 } })
   @ApiOperation({ summary: 'Rotar refresh token' })
   refresh(@Body('refreshToken') token: string, @Req() req: FastifyRequest) {
     return this.auth.refresh(token, req.ip, req.headers['user-agent']);

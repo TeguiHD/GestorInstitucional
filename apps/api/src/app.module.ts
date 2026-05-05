@@ -39,7 +39,15 @@ import { AlertsModule } from './alerts/alerts.module.js';
         return {
           pinoHttp: {
             level: config.get('logging.level', { infer: true }),
-            redact: ['req.headers.authorization', 'req.headers.cookie'],
+            redact: [
+              'req.headers.authorization',
+              'req.headers.cookie',
+              'req.body.password',
+              'req.body.refreshToken',
+              'req.body.totpCode',
+              'req.body.deviceToken',
+              'res.headers["set-cookie"]',
+            ],
             ...(isDev
               ? {
                   transport: {

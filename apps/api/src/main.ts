@@ -19,6 +19,7 @@ async function bootstrap() {
   app.useLogger(app.get(Logger));
 
   const config = app.get(ConfigService<AppConfig, true>);
+  const isProd = config.get('nodeEnv', { infer: true }) === 'production';
 
   // ---------- Security ----------
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -33,10 +34,11 @@ async function bootstrap() {
         fontSrc: ["'self'"],
         objectSrc: ["'none'"],
         frameAncestors: ["'none'"],
-        upgradeInsecureRequests: [],
+        ...(isProd ? { upgradeInsecureRequests: [] } : {}),
       },
     },
     crossOriginEmbedderPolicy: false,
+    referrerPolicy: { policy: 'strict-origin-when-cross-origin' },
   });
 
   const allowedOrigins = config.get('cors.origins', { infer: true });
