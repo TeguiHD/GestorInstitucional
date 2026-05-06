@@ -3,6 +3,13 @@ import DOMPurify from 'dompurify';
 
 const BASE = import.meta.env.VITE_API_BASE_URL ?? '/api/v1';
 
+// Module-level token store — avoids circular dep with auth.store
+let _accessToken: string | null = null;
+
+export function setAccessToken(token: string | null): void {
+  _accessToken = token;
+}
+
 type RequestOptions = {
   method?: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
   body?: unknown;
@@ -22,7 +29,7 @@ export class ApiError extends Error {
 }
 
 async function request<T>(path: string, opts: RequestOptions = {}): Promise<T> {
-  const token = opts.authToken ?? localStorage.getItem('access_token');
+  const token = opts.authToken ?? _accessToken;
   const headers: Record<string, string> = { 'Content-Type': 'application/json' };
   if (token) headers['Authorization'] = `Bearer ${token}`;
 
@@ -50,7 +57,7 @@ async function request<T>(path: string, opts: RequestOptions = {}): Promise<T> {
 }
 
 export async function downloadBlob(path: string, filename: string): Promise<void> {
-  const token = localStorage.getItem('access_token');
+  const token = _accessToken;
   const headers: Record<string, string> = {};
   if (token) headers['Authorization'] = `Bearer ${token}`;
 

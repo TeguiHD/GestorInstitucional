@@ -106,15 +106,14 @@ function LoginPage() {
       const data = await api.post<{
         success: boolean;
         accessToken?: string;
-        refreshToken?: string;
         message?: string;
       }>('/auth/2fa/verify', { code: totpCode }, setupToken);
       if (!data.success) {
         showError(data.message ?? 'Código inválido');
         return;
       }
-      if (data.accessToken && data.refreshToken) {
-        setTokens(data.accessToken, data.refreshToken);
+      if (data.accessToken) {
+        setTokens(data.accessToken);
         toast.success('Autenticador configurado correctamente');
         void navigate({ to: '/' });
       }

@@ -1,7 +1,7 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 
-import { api, ApiError } from '@/lib/api';
+import { api, setAccessToken } from '@/lib/api';
 
 export type AuthUser = {
   sub: string;
@@ -13,9 +13,12 @@ export type AuthUser = {
 
 type AuthState = {
   user: AuthUser | null;
+  // accessToken lives in memory only (not persisted) — refresh token is an httpOnly cookie
   accessToken: string | null;
-  refreshToken: string | null;
   isLoading: boolean;
+
+  setTokens: (access: string) => void;
+  clearAuth: () => void;
 
   login: (
     email: string,
@@ -29,9 +32,8 @@ type AuthState = {
     | { requiresTotp: false; requiresTotpSetup: true; setupToken: string }
   >;
   logout: () => Promise<void>;
-  refresh: () => Promise<void>;
-  setTokens: (access: string, refresh: string) => void;
-  clearAuth: () => void;
+  // Silently restore session from httpOnly cookie — call on app init
+  init: () => Promise<void>;
 };
 
 export const useAuthStore = create<AuthState>()(
@@ -39,33 +41,31 @@ export const useAuthStore = create<AuthState>()(
     (set, get) => ({
       user: null,
       accessToken: null,
-      refreshToken: null,
       isLoading: false,
 
-      setTokens: (accessToken, refreshToken) => {
-        localStorage.setItem('access_token', accessToken);
-        localStorage.setItem('refresh_token', refreshToken);
-        // Decode payload without verifying signature (API already verified it)
+      setTokens: (accessToken) => {
+        setAccessToken(accessToken); // sync to api.ts module variable
         try {
           const payload = JSON.parse(atob(accessToken.split('.')[1]!)) as AuthUser;
-          set({ user: payload, accessToken, refreshToken });
+          set({ user: payload, accessToken });
         } catch {
-          set({ accessToken, refreshToken });
+          set({ accessToken });
         }
       },
 
       clearAuth: () => {
+        setAccessToken(null);
+        // Remove legacy localStorage keys from previous implementation
         localStorage.removeItem('access_token');
         localStorage.removeItem('refresh_token');
-        set({ user: null, accessToken: null, refreshToken: null });
+        set({ user: null, accessToken: null });
       },
 
       login: async (email, password, totpCode, deviceToken, rememberDevice) => {
         set({ isLoading: true });
         try {
           const data = await api.post<{
-            accessToken: string;
-            refreshToken: string;
+            accessToken?: string;
             setupToken?: string;
             requiresTotp: boolean;
             requiresTotpSetup: boolean;
@@ -83,7 +83,7 @@ export const useAuthStore = create<AuthState>()(
           }
           if (data.requiresTotp) return { requiresTotp: true, requiresTotpSetup: false };
 
-          get().setTokens(data.accessToken, data.refreshToken);
+          if (data.accessToken) get().setTokens(data.accessToken);
           return data.deviceToken
             ? {
                 requiresTotp: false as const,
@@ -97,36 +97,41 @@ export const useAuthStore = create<AuthState>()(
       },
 
       logout: async () => {
-        const { refreshToken, clearAuth } = get();
+        const { clearAuth } = get();
         try {
-          await api.post('/auth/logout', { refreshToken });
+          // Cookie is sent automatically via credentials: 'include'
+          await api.post('/auth/logout', {});
         } catch {
-          // Logout even if server request fails
+          // Logout locally even if server request fails
         } finally {
           clearAuth();
         }
       },
 
-      refresh: async () => {
-        const { refreshToken, setTokens, clearAuth } = get();
-        if (!refreshToken) {
-          clearAuth();
-          return;
-        }
+      init: async () => {
+        if (get().accessToken) return; // already have a token in memory
         try {
-          const data = await api.post<{ accessToken: string; refreshToken: string }>(
-            '/auth/refresh',
-            { refreshToken },
-          );
-          setTokens(data.accessToken, data.refreshToken);
-        } catch (e) {
-          if (e instanceof ApiError && e.status === 401) clearAuth();
+          // Cookie sent automatically; server rotates and returns new accessToken
+          const data = await api.post<{ accessToken: string }>('/auth/refresh', {});
+          get().setTokens(data.accessToken);
+        } catch {
+          get().clearAuth();
         }
       },
     }),
     {
       name: 'auth',
-      partialize: (s) => ({ refreshToken: s.refreshToken, user: s.user }),
+      // Only persist user for fast initial render — accessToken stays in memory
+      partialize: (s) => ({ user: s.user }),
+      onRehydrateStorage: () => (state) => {
+        // Sync any existing access_token from old localStorage on first load
+        const legacy = localStorage.getItem('access_token');
+        if (legacy && state && !state.accessToken) {
+          state.setTokens(legacy);
+          localStorage.removeItem('access_token');
+          localStorage.removeItem('refresh_token');
+        }
+      },
     },
   ),
 );

@@ -4,6 +4,7 @@ import { useRef, useState } from 'react';
 import { toast } from 'sonner';
 
 import { api } from '@/lib/api';
+import { useAuthStore } from '@/stores/auth.store';
 
 type Child = {
   id: string;
@@ -116,7 +117,7 @@ function ChildDetail({ child }: { child: Child }) {
       fd.append('recordId', v.recordId);
       fd.append('reason', v.reason);
       fd.append('file', v.file);
-      const token = localStorage.getItem('access_token');
+      const token = useAuthStore.getState().accessToken;
       const res = await fetch('/api/v1/justifications/upload', {
         method: 'POST',
         headers: token ? { Authorization: `Bearer ${token}` } : {},
