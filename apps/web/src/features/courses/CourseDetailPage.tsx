@@ -183,6 +183,12 @@ export function CourseDetailPage() {
     enabled: activeTab === 'asistencia',
   });
 
+  const { data: attendanceRoster } = useQuery<Student[]>({
+    queryKey: ['course-students', courseId, selectedDate],
+    queryFn: () => api.get(`/students?courseId=${courseId}&date=${selectedDate}`),
+    enabled: activeTab === 'asistencia',
+  });
+
   const dateObj = new Date(selectedDate + 'T12:00:00');
   const year = dateObj.getFullYear();
   const month = dateObj.getMonth() + 1;
@@ -216,6 +222,7 @@ export function CourseDetailPage() {
       if (res.errors.length > 0) console.table(res.errors);
       setImportPreview(null);
       void qc.invalidateQueries({ queryKey: ['course', courseId] });
+      void qc.invalidateQueries({ queryKey: ['course-students', courseId] });
     },
     onError: (e: unknown) => toast.error(`Error al importar: ${(e as Error).message}`),
   });
@@ -277,6 +284,7 @@ export function CourseDetailPage() {
       api.post('/attendance', { courseId, date: selectedDate, entries }),
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: ['attendance', courseId, selectedDate] });
+      void qc.invalidateQueries({ queryKey: ['course-students', courseId, selectedDate] });
       const count = Object.keys(localStatus).length;
       toast.success('Asistencia guardada', {
         description: `${count} alumno${count !== 1 ? 's' : ''} — ${dateObj.toLocaleDateString('es-CL', { weekday: 'long', day: '2-digit', month: 'long' })}`,
@@ -323,7 +331,8 @@ export function CourseDetailPage() {
     longPressFired.current = true;
   };
 
-  const courseStudents = course?.students ?? [];
+  const courseStudents =
+    activeTab === 'asistencia' ? (attendanceRoster ?? []) : (course?.students ?? []);
   const courseStatusValues = courseStudents
     .map((student) => localStatus[student.id])
     .filter((status): status is StatusKey => Boolean(status));

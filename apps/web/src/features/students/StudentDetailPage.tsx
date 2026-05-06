@@ -88,7 +88,8 @@ export function StudentDetailPage() {
   const currentUser = useUser();
   const effectiveSchoolId = useEffectiveSchoolId();
   const isAdmin =
-    currentUser?.roles.some((r) => ['SUPER_ADMIN', 'DIRECTOR', 'UTP'].includes(r)) ?? false;
+    currentUser?.roles.some((r) => ['SUPER_ADMIN', 'DIRECTOR', 'UTP', 'INSPECTORIA'].includes(r)) ??
+    false;
 
   const [period, setPeriod] = useState<Period>('month');
   const [showAddGuardian, setShowAddGuardian] = useState(false);

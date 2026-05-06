@@ -1,6 +1,15 @@
 import { Body, Controller, Delete, Get, Param, Post, Query, UseGuards } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
-import { IsBoolean, IsOptional, IsString, MaxLength } from 'class-validator';
+import { Type } from 'class-transformer';
+import {
+  IsBoolean,
+  IsDateString,
+  IsInt,
+  IsOptional,
+  IsString,
+  MaxLength,
+  Min,
+} from 'class-validator';
 import { ApiProperty } from '@nestjs/swagger';
 import { SystemRole } from '@prisma/client';
 
@@ -31,6 +40,34 @@ class AddGuardianDto {
   isPrimary?: boolean;
 }
 
+class EnrollmentMovementDto {
+  @ApiProperty({ required: false, description: 'Fecha efectiva YYYY-MM-DD' })
+  @IsOptional()
+  @IsDateString()
+  effectiveDate?: string;
+
+  @ApiProperty({ required: false })
+  @IsOptional()
+  @IsString()
+  @MaxLength(200)
+  reason?: string;
+}
+
+class ReEnrollStudentDto extends EnrollmentMovementDto {
+  @ApiProperty({ required: false })
+  @IsOptional()
+  @IsString()
+  @MaxLength(36)
+  courseId?: string;
+
+  @ApiProperty({ required: false })
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  enrollmentNumber?: number;
+}
+
 @ApiTags('students')
 @UseGuards(JwtAuthGuard, RolesGuard)
 @ApiBearerAuth()
@@ -43,9 +80,13 @@ export class StudentsController {
 
   @Get()
   @ApiOperation({ summary: 'Alumnos por curso' })
-  async findByCourse(@Query('courseId') courseId: string, @CurrentUser() user: JwtPayload) {
+  async findByCourse(
+    @Query('courseId') courseId: string,
+    @CurrentUser() user: JwtPayload,
+    @Query('date') date?: string,
+  ) {
     await this.courses.assertAccess(courseId, user);
-    return this.students.findByCourse(courseId);
+    return this.students.findByCourse(courseId, date);
   }
 
   @Get('my-children')
@@ -84,29 +125,35 @@ export class StudentsController {
     );
   }
 
+  @Get(':id/enrollment-events')
+  @ApiOperation({ summary: 'Historial de matrícula/retiro del alumno' })
+  enrollmentEvents(@Param('id') id: string, @CurrentUser() user: JwtPayload) {
+    return this.students.enrollmentEvents(id, user);
+  }
+
   @Post()
-  @Roles(SystemRole.SUPER_ADMIN, SystemRole.DIRECTOR, SystemRole.UTP)
+  @Roles(SystemRole.SUPER_ADMIN, SystemRole.DIRECTOR, SystemRole.UTP, SystemRole.INSPECTORIA)
   @ApiOperation({ summary: 'Matricular alumno' })
   create(@Body() dto: CreateStudentDto, @CurrentUser() user: JwtPayload) {
     return this.students.create(dto, user);
   }
 
   @Post('import')
-  @Roles(SystemRole.SUPER_ADMIN, SystemRole.DIRECTOR, SystemRole.UTP)
+  @Roles(SystemRole.SUPER_ADMIN, SystemRole.DIRECTOR, SystemRole.UTP, SystemRole.INSPECTORIA)
   @ApiOperation({ summary: 'Importar alumnos masivo (desde Excel parseado en cliente)' })
   importBulk(@Body() dto: ImportStudentsDto, @CurrentUser() user: JwtPayload) {
     return this.students.importBulk(dto, user);
   }
 
   @Get(':id/guardians')
-  @Roles(SystemRole.SUPER_ADMIN, SystemRole.DIRECTOR, SystemRole.UTP)
+  @Roles(SystemRole.SUPER_ADMIN, SystemRole.DIRECTOR, SystemRole.UTP, SystemRole.INSPECTORIA)
   @ApiOperation({ summary: 'Listar apoderados de un alumno' })
   listGuardians(@Param('id') id: string, @CurrentUser() user: JwtPayload) {
     return this.students.listGuardians(id, user);
   }
 
   @Post(':id/guardians')
-  @Roles(SystemRole.SUPER_ADMIN, SystemRole.DIRECTOR, SystemRole.UTP)
+  @Roles(SystemRole.SUPER_ADMIN, SystemRole.DIRECTOR, SystemRole.UTP, SystemRole.INSPECTORIA)
   @ApiOperation({ summary: 'Vincular apoderado a alumno' })
   addGuardian(
     @Param('id') id: string,
@@ -117,7 +164,7 @@ export class StudentsController {
   }
 
   @Delete(':id/guardians/:guardianId')
-  @Roles(SystemRole.SUPER_ADMIN, SystemRole.DIRECTOR, SystemRole.UTP)
+  @Roles(SystemRole.SUPER_ADMIN, SystemRole.DIRECTOR, SystemRole.UTP, SystemRole.INSPECTORIA)
   @ApiOperation({ summary: 'Desvincular apoderado de alumno' })
   removeGuardian(
     @Param('id') id: string,
@@ -142,9 +189,35 @@ export class StudentsController {
   }
 
   @Delete(':id')
-  @Roles(SystemRole.SUPER_ADMIN, SystemRole.DIRECTOR, SystemRole.UTP)
+  @Roles(SystemRole.SUPER_ADMIN, SystemRole.DIRECTOR, SystemRole.UTP, SystemRole.INSPECTORIA)
   @ApiOperation({ summary: 'Dar de baja alumno (soft)' })
-  withdraw(@Param('id') id: string, @CurrentUser() user: JwtPayload) {
-    return this.students.withdraw(id, user);
+  withdraw(
+    @Param('id') id: string,
+    @CurrentUser() user: JwtPayload,
+    @Body() dto: EnrollmentMovementDto = {},
+  ) {
+    return this.students.withdraw(id, user, dto);
+  }
+
+  @Post(':id/withdraw')
+  @Roles(SystemRole.SUPER_ADMIN, SystemRole.DIRECTOR, SystemRole.UTP, SystemRole.INSPECTORIA)
+  @ApiOperation({ summary: 'Dar de baja alumno con fecha efectiva' })
+  withdrawWithDate(
+    @Param('id') id: string,
+    @CurrentUser() user: JwtPayload,
+    @Body() dto: EnrollmentMovementDto,
+  ) {
+    return this.students.withdraw(id, user, dto);
+  }
+
+  @Post(':id/re-enroll')
+  @Roles(SystemRole.SUPER_ADMIN, SystemRole.DIRECTOR, SystemRole.UTP, SystemRole.INSPECTORIA)
+  @ApiOperation({ summary: 'Reingresar alumno retirado' })
+  reEnroll(
+    @Param('id') id: string,
+    @CurrentUser() user: JwtPayload,
+    @Body() dto: ReEnrollStudentDto,
+  ) {
+    return this.students.reEnroll(id, user, dto);
   }
 }

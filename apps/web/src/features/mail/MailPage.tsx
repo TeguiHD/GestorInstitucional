@@ -174,8 +174,8 @@ export function MailPage() {
           <span>
             Las audiencias se construyen automáticamente desde los roles del sistema:{' '}
             <strong className="text-foreground">Apoderados</strong> → usuarios con rol APODERADO ·{' '}
-            <strong className="text-foreground">Staff</strong> → DIRECTOR + UTP + PROFESOR · Para
-            agregar destinatarios, crea usuarios en la sección{' '}
+            <strong className="text-foreground">Staff</strong> → DIRECTOR + UTP + INSPECTORIA +
+            PROFESOR · Para agregar destinatarios, crea usuarios en la sección{' '}
             <strong className="text-foreground">Usuarios</strong> con el rol correspondiente.
           </span>
         </div>

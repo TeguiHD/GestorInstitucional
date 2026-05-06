@@ -41,14 +41,15 @@ type User = {
   twoFactorEnabled?: boolean;
 };
 
-type SystemRole = 'SUPER_ADMIN' | 'DIRECTOR' | 'UTP' | 'PROFESOR' | 'APODERADO';
+type SystemRole = 'SUPER_ADMIN' | 'DIRECTOR' | 'UTP' | 'INSPECTORIA' | 'PROFESOR' | 'APODERADO';
 
-const ROLES: SystemRole[] = ['DIRECTOR', 'UTP', 'PROFESOR', 'APODERADO'];
+const ROLES: SystemRole[] = ['DIRECTOR', 'UTP', 'INSPECTORIA', 'PROFESOR', 'APODERADO'];
 
 const ROLE_LABELS: Record<string, string> = {
   SUPER_ADMIN: 'Super Admin',
   DIRECTOR: 'Director/a',
   UTP: 'UTP',
+  INSPECTORIA: 'Inspectoría',
   PROFESOR: 'Profesor/a',
   APODERADO: 'Apoderado/a',
 };
@@ -57,6 +58,7 @@ const ROLE_COLORS: Record<string, string> = {
   SUPER_ADMIN: 'bg-purple-100 text-purple-700 dark:bg-purple-900/40 dark:text-purple-300',
   DIRECTOR: 'bg-green-100 text-green-700 dark:bg-green-900/40 dark:text-green-300',
   UTP: 'bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-300',
+  INSPECTORIA: 'bg-cyan-100 text-cyan-700 dark:bg-cyan-900/40 dark:text-cyan-300',
   PROFESOR: 'bg-orange-100 text-orange-700 dark:bg-orange-900/40 dark:text-orange-300',
   APODERADO: 'bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-300',
 };
@@ -65,6 +67,7 @@ const ROLE_INITIALS_BG: Record<string, string> = {
   SUPER_ADMIN: 'bg-purple-500',
   DIRECTOR: 'bg-green-600',
   UTP: 'bg-blue-500',
+  INSPECTORIA: 'bg-cyan-600',
   PROFESOR: 'bg-orange-500',
   APODERADO: 'bg-gray-400',
 };
@@ -623,7 +626,7 @@ function UsersPage() {
         <span>
           <strong className="text-foreground">Categorías de correo masivo</strong> — se generan
           automáticamente según el rol: "Todos los apoderados" = rol Apoderado/a · "Solo staff" =
-          Director/a + UTP + Profesor/a · "Toda la comunidad" = todos.
+          Director/a + UTP + Inspectoría + Profesor/a · "Toda la comunidad" = todos.
         </span>
       </div>
 

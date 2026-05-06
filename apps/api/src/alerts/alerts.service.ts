@@ -36,7 +36,7 @@ export class AlertsService {
         threshold: dto.threshold ?? null,
         windowDays: dto.windowDays ?? 30,
         enabled: dto.enabled ?? true,
-        notifyRoles: JSON.stringify(dto.notifyRoles ?? ['DIRECTOR', 'UTP']),
+        notifyRoles: JSON.stringify(dto.notifyRoles ?? ['DIRECTOR', 'UTP', 'INSPECTORIA']),
       },
       create: {
         schoolId: dto.schoolId,
@@ -44,7 +44,7 @@ export class AlertsService {
         threshold: dto.threshold ?? null,
         windowDays: dto.windowDays ?? 30,
         enabled: dto.enabled ?? true,
-        notifyRoles: JSON.stringify(dto.notifyRoles ?? ['DIRECTOR', 'UTP']),
+        notifyRoles: JSON.stringify(dto.notifyRoles ?? ['DIRECTOR', 'UTP', 'INSPECTORIA']),
       },
     });
   }

@@ -95,6 +95,8 @@ export class CoursesService {
 
   isSchoolAdmin(user: JwtPayload, schoolId: string): boolean {
     if (user.schoolId !== schoolId) return false;
-    return [SystemRole.DIRECTOR, SystemRole.UTP].some((role) => user.roles.includes(role));
+    return [SystemRole.DIRECTOR, SystemRole.UTP, SystemRole.INSPECTORIA].some((role) =>
+      user.roles.includes(role),
+    );
   }
 }

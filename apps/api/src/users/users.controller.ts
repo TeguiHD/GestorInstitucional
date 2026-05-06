@@ -108,6 +108,20 @@ class UpdateRolesDto {
   schoolId!: string;
 }
 
+class ChangeOwnPasswordDto {
+  @ApiProperty()
+  @IsString()
+  @MinLength(1)
+  @MaxLength(128)
+  currentPassword!: string;
+
+  @ApiProperty()
+  @IsString()
+  @MinLength(12)
+  @MaxLength(128)
+  newPassword!: string;
+}
+
 @ApiTags('schools')
 @UseGuards(JwtAuthGuard, RolesGuard)
 @ApiBearerAuth()
@@ -140,6 +154,13 @@ export class UsersController {
     return this.users.findById(user.sub);
   }
 
+  @Post('me/password')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Cambiar contraseña propia' })
+  changeOwnPassword(@Body() dto: ChangeOwnPasswordDto, @CurrentUser() user: JwtPayload) {
+    return this.users.changeOwnPassword(user.sub, dto);
+  }
+
   @Get('trash')
   @Roles(SystemRole.SUPER_ADMIN)
   @ApiOperation({ summary: 'Papelera de usuarios (SUPER_ADMIN)' })
@@ -149,14 +170,14 @@ export class UsersController {
   }
 
   @Get(':id')
-  @Roles(SystemRole.SUPER_ADMIN, SystemRole.DIRECTOR, SystemRole.UTP)
+  @Roles(SystemRole.SUPER_ADMIN, SystemRole.DIRECTOR, SystemRole.UTP, SystemRole.INSPECTORIA)
   @ApiOperation({ summary: 'Usuario por ID' })
   findOne(@Param('id') id: string, @CurrentUser() actor: JwtPayload) {
     return this.users.findByIdForActor(id, actor);
   }
 
   @Get()
-  @Roles(SystemRole.SUPER_ADMIN, SystemRole.DIRECTOR, SystemRole.UTP)
+  @Roles(SystemRole.SUPER_ADMIN, SystemRole.DIRECTOR, SystemRole.UTP, SystemRole.INSPECTORIA)
   @ApiQuery({ name: 'schoolId', required: true })
   @ApiQuery({ name: 'roles', required: false, isArray: true, enum: SystemRole })
   @ApiOperation({ summary: 'Listar usuarios de un colegio' })

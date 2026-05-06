@@ -5,7 +5,7 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { SystemRole } from '@prisma/client';
+import { EnrollmentStatus, SystemRole } from '@prisma/client';
 
 import { PrismaService } from '../prisma/prisma.service.js';
 import type { CreateStudentDto } from './dto/create-student.dto.js';
@@ -16,9 +16,15 @@ import { isValidRut, normalizeRut } from './rut.js';
 export class StudentsService {
   constructor(private readonly prisma: PrismaService) {}
 
-  async findByCourse(courseId: string) {
+  async findByCourse(courseId: string, date?: string) {
+    const attendanceDate = date ? this.parseDateOnly(date) : undefined;
     return this.prisma.student.findMany({
-      where: { courseId, active: true },
+      where: {
+        courseId,
+        ...(attendanceDate
+          ? this.activeOnDateWhere(attendanceDate)
+          : { active: true, firstName: { not: '[Eliminado]' } }),
+      },
       orderBy: [{ enrollmentNumber: 'asc' }],
     });
   }
@@ -55,9 +61,29 @@ export class StudentsService {
     const exists = await this.prisma.student.findUnique({
       where: { schoolId_rut: { schoolId: dto.schoolId, rut } },
     });
-    if (exists) throw new ConflictException('RUT ya registrado en este colegio');
+    if (exists) {
+      if (!exists.active) throw new ConflictException('RUT retirado: usa reingreso');
+      throw new ConflictException('RUT ya registrado en este colegio');
+    }
 
-    return this.prisma.student.create({ data: { ...dto, rut } });
+    const effectiveDate = this.startOfDay(new Date());
+    return this.prisma.$transaction(async (tx) => {
+      const student = await tx.student.create({
+        data: { ...dto, rut, enrolledAt: effectiveDate },
+      });
+      await tx.enrollmentEvent.create({
+        data: {
+          studentId: student.id,
+          schoolId: student.schoolId,
+          courseId: student.courseId,
+          status: EnrollmentStatus.ACTIVE,
+          effectiveDate,
+          reason: 'Matrícula inicial',
+          recordedById: actor.sub,
+        },
+      });
+      return student;
+    });
   }
 
   /** Bulk import. Skips existing RUTs and duplicate enrollment numbers. Returns per-row result. */
@@ -83,15 +109,17 @@ export class StudentsService {
     });
     if (!course) throw new NotFoundException('Curso no pertenece al colegio');
 
+    const normalizedInputRuts = dto.rows.map((r) => normalizeRut(r.rut));
     const existing = await this.prisma.student.findMany({
-      where: { schoolId: dto.schoolId, rut: { in: dto.rows.map((r) => r.rut) } },
-      select: { rut: true },
+      where: { schoolId: dto.schoolId, rut: { in: normalizedInputRuts } },
+      select: { id: true, rut: true, active: true },
     });
-    const existingRuts = new Set(existing.map((e) => e.rut));
+    const activeExistingRuts = new Set(existing.filter((e) => e.active).map((e) => e.rut));
+    const inactiveByRut = new Map(existing.filter((e) => !e.active).map((e) => [e.rut, e]));
 
     const usedNums = await this.prisma.student.findMany({
-      where: { courseId: dto.courseId, active: true },
-      select: { enrollmentNumber: true },
+      where: { courseId: dto.courseId },
+      select: { id: true, enrollmentNumber: true, active: true },
     });
     const takenNums = new Set(usedNums.map((s) => s.enrollmentNumber));
 
@@ -100,6 +128,13 @@ export class StudentsService {
       (typeof dto.rows)[number] & {
         schoolId: string;
         courseId: string;
+        parsedBirthDate: Date | null;
+      }
+    > = [];
+    const toReactivate: Array<
+      (typeof dto.rows)[number] & {
+        id: string;
+        rut: string;
         parsedBirthDate: Date | null;
       }
     > = [];
@@ -117,11 +152,16 @@ export class StudentsService {
         errors.push({ row: i + 1, rut, reason: 'RUT duplicado en archivo' });
         return;
       }
-      if (existingRuts.has(rut)) {
+      if (activeExistingRuts.has(rut)) {
         errors.push({ row: i + 1, rut, reason: 'RUT ya matriculado' });
         return;
       }
-      if (takenNums.has(row.enrollmentNumber) || seenNums.has(row.enrollmentNumber)) {
+      const inactive = inactiveByRut.get(rut);
+      const numberTakenByOther =
+        usedNums.some(
+          (s) => s.enrollmentNumber === row.enrollmentNumber && s.id !== inactive?.id,
+        ) || seenNums.has(row.enrollmentNumber);
+      if ((!inactive && takenNums.has(row.enrollmentNumber)) || numberTakenByOther) {
         errors.push({
           row: i + 1,
           rut,
@@ -149,6 +189,10 @@ export class StudentsService {
       }
       seenRuts.add(rut);
       seenNums.add(row.enrollmentNumber);
+      if (inactive) {
+        toReactivate.push({ ...row, id: inactive.id, rut, parsedBirthDate });
+        return;
+      }
       toCreate.push({
         ...row,
         rut,
@@ -159,7 +203,8 @@ export class StudentsService {
     });
 
     let created = 0;
-    if (toCreate.length > 0) {
+    let reactivated = 0;
+    if (toCreate.length > 0 || toReactivate.length > 0) {
       const result = await this.prisma.$transaction(async (tx) => {
         // Re-check inside transaction to prevent race condition
         const stillExisting = await tx.student.findMany({
@@ -168,31 +213,168 @@ export class StudentsService {
         });
         const stillExistingRuts = new Set(stillExisting.map((e) => e.rut));
         const safe = toCreate.filter((r) => !stillExistingRuts.has(r.rut));
-        if (safe.length === 0) return { count: 0 };
-        return tx.student.createMany({
-          data: safe.map((r) => ({
-            schoolId: r.schoolId,
-            courseId: r.courseId,
-            rut: r.rut,
-            firstName: r.firstName.trim(),
-            lastName: r.lastName.trim(),
-            secondLastName: r.secondLastName?.trim() ?? null,
-            birthDate: r.parsedBirthDate,
-            enrollmentNumber: r.enrollmentNumber,
+        const createdStudents =
+          safe.length === 0
+            ? []
+            : await Promise.all(
+                safe.map((r) =>
+                  tx.student.create({
+                    data: {
+                      schoolId: r.schoolId,
+                      courseId: r.courseId,
+                      rut: r.rut,
+                      firstName: r.firstName.trim(),
+                      lastName: r.lastName.trim(),
+                      secondLastName: r.secondLastName?.trim() ?? null,
+                      birthDate: r.parsedBirthDate,
+                      enrollmentNumber: r.enrollmentNumber,
+                      enrolledAt: this.startOfDay(new Date()),
+                    },
+                  }),
+                ),
+              );
+        const reactivatedStudents = await Promise.all(
+          toReactivate.map((r) =>
+            tx.student.update({
+              where: { id: r.id },
+              data: {
+                courseId: dto.courseId,
+                firstName: r.firstName.trim(),
+                lastName: r.lastName.trim(),
+                secondLastName: r.secondLastName?.trim() ?? null,
+                birthDate: r.parsedBirthDate,
+                enrollmentNumber: r.enrollmentNumber,
+                active: true,
+                withdrawnAt: null,
+                enrolledAt: this.startOfDay(new Date()),
+              },
+            }),
+          ),
+        );
+        const events = [
+          ...createdStudents.map((student) => ({
+            studentId: student.id,
+            schoolId: student.schoolId,
+            courseId: student.courseId,
+            status: EnrollmentStatus.ACTIVE,
+            effectiveDate: this.startOfDay(new Date()),
+            reason: 'Importación masiva',
+            recordedById: actor.sub,
           })),
-        });
+          ...reactivatedStudents.map((student) => ({
+            studentId: student.id,
+            schoolId: student.schoolId,
+            courseId: student.courseId,
+            status: EnrollmentStatus.RE_ENROLLED,
+            effectiveDate: this.startOfDay(new Date()),
+            reason: 'Reingreso por importación masiva',
+            recordedById: actor.sub,
+          })),
+        ];
+        if (events.length > 0) await tx.enrollmentEvent.createMany({ data: events });
+        return { created: createdStudents.length, reactivated: reactivatedStudents.length };
       });
-      created = result.count;
+      created = result.created;
+      reactivated = result.reactivated;
     }
 
-    return { total: dto.rows.length, created, skipped: errors.length, errors };
+    return { total: dto.rows.length, created, reactivated, skipped: errors.length, errors };
   }
 
-  async withdraw(id: string, actor: JwtPayload) {
+  async withdraw(
+    id: string,
+    actor: JwtPayload,
+    dto: { effectiveDate?: string; reason?: string } = {},
+  ) {
     await this.assertCanAccessStudent(id, actor);
-    return this.prisma.student.update({
-      where: { id },
-      data: { active: false, withdrawnAt: new Date() },
+    const effectiveDate = this.parseDateOnly(dto.effectiveDate);
+    const student = await this.prisma.student.findUnique({ where: { id } });
+    if (!student) throw new NotFoundException('Alumno no encontrado');
+    if (!student.active) throw new BadRequestException('El alumno ya está retirado');
+
+    return this.prisma.$transaction(async (tx) => {
+      const updated = await tx.student.update({
+        where: { id },
+        data: { active: false, withdrawnAt: effectiveDate },
+      });
+      await tx.enrollmentEvent.create({
+        data: {
+          studentId: id,
+          schoolId: student.schoolId,
+          courseId: student.courseId,
+          status: EnrollmentStatus.WITHDRAWN,
+          effectiveDate,
+          reason: dto.reason?.trim() || null,
+          recordedById: actor.sub,
+        },
+      });
+      return updated;
+    });
+  }
+
+  async reEnroll(
+    id: string,
+    actor: JwtPayload,
+    dto: { courseId?: string; enrollmentNumber?: number; effectiveDate?: string; reason?: string },
+  ) {
+    await this.assertCanAccessStudent(id, actor);
+    const effectiveDate = this.parseDateOnly(dto.effectiveDate);
+    const student = await this.prisma.student.findUnique({ where: { id } });
+    if (!student) throw new NotFoundException('Alumno no encontrado');
+    if (student.active) throw new BadRequestException('El alumno ya está activo');
+    if (student.firstName === '[Eliminado]' || student.rut.startsWith('P-')) {
+      throw new BadRequestException('El alumno fue purgado y no puede reactivarse');
+    }
+
+    const courseId = dto.courseId ?? student.courseId;
+    const enrollmentNumber = dto.enrollmentNumber ?? student.enrollmentNumber;
+    const course = await this.prisma.course.findFirst({
+      where: { id: courseId, schoolId: student.schoolId, active: true },
+      select: { id: true },
+    });
+    if (!course) throw new NotFoundException('Curso no pertenece al colegio');
+    const numberOwner = await this.prisma.student.findUnique({
+      where: { courseId_enrollmentNumber: { courseId, enrollmentNumber } },
+      select: { id: true, active: true },
+    });
+    if (numberOwner && numberOwner.id !== id) {
+      throw new ConflictException(`N° lista ${enrollmentNumber} ocupado`);
+    }
+
+    return this.prisma.$transaction(async (tx) => {
+      const updated = await tx.student.update({
+        where: { id },
+        data: {
+          courseId,
+          enrollmentNumber,
+          active: true,
+          withdrawnAt: null,
+          enrolledAt: effectiveDate,
+        },
+      });
+      await tx.enrollmentEvent.create({
+        data: {
+          studentId: id,
+          schoolId: student.schoolId,
+          courseId,
+          status: EnrollmentStatus.RE_ENROLLED,
+          effectiveDate,
+          reason: dto.reason?.trim() || null,
+          recordedById: actor.sub,
+        },
+      });
+      return updated;
+    });
+  }
+
+  async enrollmentEvents(id: string, actor: JwtPayload) {
+    await this.assertCanAccessStudent(id, actor);
+    return this.prisma.enrollmentEvent.findMany({
+      where: { studentId: id },
+      include: {
+        recordedBy: { select: { id: true, firstName: true, lastName: true, email: true } },
+      },
+      orderBy: [{ effectiveDate: 'desc' }, { createdAt: 'desc' }],
     });
   }
 
@@ -304,7 +486,7 @@ export class StudentsService {
     }
     return this.prisma.student.update({
       where: { id },
-      data: { active: true, withdrawnAt: null },
+      data: { active: true, withdrawnAt: null, enrolledAt: this.startOfDay(new Date()) },
       select: { id: true, firstName: true, lastName: true, rut: true },
     });
   }
@@ -378,6 +560,28 @@ export class StudentsService {
 
   private isSchoolAdmin(user: JwtPayload, schoolId: string): boolean {
     if (user.schoolId !== schoolId) return false;
-    return [SystemRole.DIRECTOR, SystemRole.UTP].some((role) => user.roles.includes(role));
+    return [SystemRole.DIRECTOR, SystemRole.UTP, SystemRole.INSPECTORIA].some((role) =>
+      user.roles.includes(role),
+    );
+  }
+
+  private activeOnDateWhere(date: Date) {
+    return {
+      enrolledAt: { lte: date },
+      firstName: { not: '[Eliminado]' },
+      OR: [{ withdrawnAt: null }, { withdrawnAt: { gt: date } }],
+    };
+  }
+
+  private parseDateOnly(value?: string): Date {
+    const raw = value ? new Date(`${value}T00:00:00.000Z`) : new Date();
+    if (Number.isNaN(raw.getTime())) throw new BadRequestException('Fecha inválida');
+    return this.startOfDay(raw);
+  }
+
+  private startOfDay(date: Date): Date {
+    const d = new Date(date);
+    d.setHours(0, 0, 0, 0);
+    return d;
   }
 }

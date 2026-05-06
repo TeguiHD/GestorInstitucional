@@ -15,7 +15,7 @@ export function DashboardPage() {
 
   if (
     roles.includes('PROFESOR') &&
-    !roles.some((r) => ['SUPER_ADMIN', 'DIRECTOR', 'UTP'].includes(r))
+    !roles.some((r) => ['SUPER_ADMIN', 'DIRECTOR', 'UTP', 'INSPECTORIA'].includes(r))
   ) {
     return <ProfesorDashboard />;
   }

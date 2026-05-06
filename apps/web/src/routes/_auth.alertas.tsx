@@ -136,7 +136,7 @@ function AlertasPage() {
       threshold: isNaN(threshold) ? undefined : threshold,
       windowDays: parseInt(form.windowDays, 10) || 30,
       enabled: form.enabled,
-      notifyRoles: ['DIRECTOR', 'UTP'],
+      notifyRoles: ['DIRECTOR', 'UTP', 'INSPECTORIA'],
     });
   }
 

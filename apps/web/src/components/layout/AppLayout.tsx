@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { useMutation, useQuery } from '@tanstack/react-query';
 import { api } from '@/lib/api';
 import { Link, useMatchRoute, useRouter } from '@tanstack/react-router';
 import {
@@ -7,14 +7,20 @@ import {
   Bell,
   BookOpen,
   Calendar,
+  CalendarDays,
+  Camera,
+  CheckCircle2,
   FileCheck,
   Heart,
+  KeyRound,
   LayoutDashboard,
   LogOut,
   Mail,
   Menu,
   Shield,
+  ShieldCheck,
   Trash2,
+  UserCircle,
   Users,
   X,
 } from 'lucide-react';
@@ -71,6 +77,27 @@ const TRIGGER_LABELS: Record<string, string> = {
   COURSE_BELOW_THRESHOLD: 'Curso bajo umbral',
   STUDENT_CONSECUTIVE_ABSENCES: 'Ausencias consecutivas',
   TEACHER_NO_RECORD: 'Sin registro docente',
+};
+
+const ROLE_LABELS: Record<string, string> = {
+  SUPER_ADMIN: 'Super admin',
+  DIRECTOR: 'Director',
+  UTP: 'UTP',
+  INSPECTORIA: 'Inspectoría',
+  PROFESOR: 'Profesor/a',
+  APODERADO: 'Apoderado/a',
+};
+
+type Profile = {
+  id: string;
+  email: string;
+  firstName: string;
+  lastName: string;
+  status: string;
+  lastLoginAt: string | null;
+  createdAt: string;
+  schoolRoles: { schoolId: string; role: string }[];
+  twoFactorEnabled: boolean;
 };
 
 function NotificationBell({ schoolId }: { schoolId?: string }) {
@@ -145,10 +172,208 @@ function NotificationBell({ schoolId }: { schoolId?: string }) {
   );
 }
 
+function formatDateTime(value: string | null): string {
+  if (!value) return 'Nunca';
+  return new Date(value).toLocaleString('es-CL', {
+    day: '2-digit',
+    month: 'short',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+}
+
+function ProfilePanel({
+  open,
+  onClose,
+  fallbackEmail,
+  fallbackRoleLabel,
+}: {
+  open: boolean;
+  onClose: () => void;
+  fallbackEmail: string | undefined;
+  fallbackRoleLabel: string;
+}) {
+  const [currentPassword, setCurrentPassword] = useState('');
+  const [newPassword, setNewPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+
+  const { data: profile } = useQuery<Profile>({
+    queryKey: ['me'],
+    queryFn: () => api.get('/users/me'),
+    enabled: open,
+  });
+
+  const passwordMutation = useMutation({
+    mutationFn: () => {
+      if (newPassword !== confirmPassword) throw new Error('Las contraseñas no coinciden');
+      return api.post('/users/me/password', { currentPassword, newPassword });
+    },
+    onSuccess: () => {
+      setCurrentPassword('');
+      setNewPassword('');
+      setConfirmPassword('');
+      toast.success('Contraseña actualizada');
+    },
+    onError: (e: unknown) => toast.error((e as Error).message),
+  });
+
+  if (!open) return null;
+
+  const email = profile?.email ?? fallbackEmail ?? '';
+  const initials =
+    profile?.firstName || profile?.lastName
+      ? `${profile.firstName[0] ?? ''}${profile.lastName[0] ?? ''}`.toUpperCase()
+      : (email[0]?.toUpperCase() ?? 'U');
+  const roles = profile?.schoolRoles.map((r) => ROLE_LABELS[r.role] ?? r.role) ?? [
+    fallbackRoleLabel,
+  ];
+
+  return (
+    <div className="fixed inset-0 z-50">
+      <div className="absolute inset-0 bg-black/40" onClick={onClose} />
+      <div className="absolute inset-x-3 top-6 mx-auto max-w-md overflow-hidden rounded-lg border border-border bg-background shadow-2xl sm:top-12">
+        <div className="flex items-center justify-between border-b border-border px-4 py-3">
+          <div className="flex items-center gap-2">
+            <UserCircle className="size-4 text-muted-foreground" />
+            <p className="text-sm font-semibold">Perfil</p>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="size-8 rounded-lg text-muted-foreground hover:bg-muted hover:text-foreground"
+            aria-label="Cerrar perfil"
+          >
+            <X className="mx-auto size-4" />
+          </button>
+        </div>
+
+        <div className="max-h-[calc(100vh-7rem)] overflow-y-auto p-4">
+          <div className="flex items-center gap-3">
+            <div className="relative size-16 rounded-full bg-primary/15 text-primary grid place-items-center text-lg font-semibold">
+              {initials}
+              <span className="absolute -bottom-1 -right-1 grid size-6 place-items-center rounded-full border border-border bg-background text-muted-foreground">
+                <Camera className="size-3" />
+              </span>
+            </div>
+            <div className="min-w-0">
+              <p className="truncate text-sm font-semibold">
+                {profile ? `${profile.firstName} ${profile.lastName}`.trim() || email : email}
+              </p>
+              <p className="truncate text-xs text-muted-foreground">{email}</p>
+              <div className="mt-1 flex flex-wrap gap-1">
+                {roles.map((role) => (
+                  <span key={role} className="rounded-full bg-muted px-2 py-0.5 text-[10px]">
+                    {role}
+                  </span>
+                ))}
+              </div>
+            </div>
+          </div>
+
+          <div className="mt-4 grid gap-2 text-sm">
+            <ProfileRow icon={Mail} label="Correo" value={email} />
+            <ProfileRow
+              icon={CheckCircle2}
+              label="Estado"
+              value={profile?.status === 'ACTIVE' ? 'Activo' : (profile?.status ?? 'Cargando')}
+            />
+            <ProfileRow
+              icon={CalendarDays}
+              label="Creado"
+              value={formatDateTime(profile?.createdAt ?? null)}
+            />
+            <ProfileRow
+              icon={ShieldCheck}
+              label="2FA"
+              value={profile?.twoFactorEnabled ? 'Activado' : 'No requerido/No activado'}
+            />
+            <ProfileRow
+              icon={LogOut}
+              label="Último acceso"
+              value={formatDateTime(profile?.lastLoginAt ?? null)}
+            />
+          </div>
+
+          <form
+            className="mt-5 space-y-3 border-t border-border pt-4"
+            onSubmit={(e) => {
+              e.preventDefault();
+              passwordMutation.mutate();
+            }}
+          >
+            <div className="flex items-center gap-2 text-sm font-semibold">
+              <KeyRound className="size-4 text-muted-foreground" />
+              Contraseña
+            </div>
+            <input
+              type="password"
+              value={currentPassword}
+              onChange={(e) => setCurrentPassword(e.target.value)}
+              placeholder="Contraseña actual"
+              className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm"
+              autoComplete="current-password"
+            />
+            <input
+              type="password"
+              value={newPassword}
+              onChange={(e) => setNewPassword(e.target.value)}
+              placeholder="Nueva contraseña"
+              className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm"
+              autoComplete="new-password"
+            />
+            <input
+              type="password"
+              value={confirmPassword}
+              onChange={(e) => setConfirmPassword(e.target.value)}
+              placeholder="Repetir nueva contraseña"
+              className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm"
+              autoComplete="new-password"
+            />
+            <button
+              type="submit"
+              disabled={
+                passwordMutation.isPending ||
+                !currentPassword ||
+                newPassword.length < 12 ||
+                !confirmPassword
+              }
+              className="w-full rounded-lg bg-primary px-3 py-2 text-sm font-medium text-primary-foreground disabled:opacity-50"
+            >
+              {passwordMutation.isPending ? 'Guardando...' : 'Actualizar contraseña'}
+            </button>
+          </form>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ProfileRow({
+  icon: Icon,
+  label,
+  value,
+}: {
+  icon: React.FC<{ className?: string }>;
+  label: string;
+  value: string;
+}) {
+  return (
+    <div className="flex items-center gap-3 rounded-lg bg-muted/50 px-3 py-2">
+      <Icon className="size-4 shrink-0 text-muted-foreground" />
+      <div className="min-w-0">
+        <p className="text-[10px] uppercase tracking-wider text-muted-foreground">{label}</p>
+        <p className="truncate text-xs font-medium">{value}</p>
+      </div>
+    </div>
+  );
+}
+
 type Props = { children: React.ReactNode };
 
 export function AppLayout({ children }: Props) {
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [profileOpen, setProfileOpen] = useState(false);
   const logout = useAuthStore((s) => s.logout);
   const user = useUser();
   const online = useOnlineStatus();
@@ -163,7 +388,9 @@ export function AppLayout({ children }: Props) {
   const roles = user?.roles ?? [];
   const isAdmin = roles.includes('SUPER_ADMIN') || roles.includes('DIRECTOR');
   const isGuardian = roles.includes('APODERADO');
-  const isStaff = roles.some((r) => ['SUPER_ADMIN', 'DIRECTOR', 'UTP', 'PROFESOR'].includes(r));
+  const isStaff = roles.some((r) =>
+    ['SUPER_ADMIN', 'DIRECTOR', 'UTP', 'INSPECTORIA', 'PROFESOR'].includes(r),
+  );
 
   const visible = (item: NavItem): boolean => {
     if (item.superAdminOnly && !roles.includes('SUPER_ADMIN')) return false;
@@ -176,14 +403,7 @@ export function AppLayout({ children }: Props) {
   const roleLabel = (() => {
     const first = roles[0];
     if (!first) return '';
-    const map: Record<string, string> = {
-      SUPER_ADMIN: 'Super admin',
-      DIRECTOR: 'Director',
-      UTP: 'UTP',
-      PROFESOR: 'Profesor/a',
-      APODERADO: 'Apoderado/a',
-    };
-    return map[first] ?? first;
+    return ROLE_LABELS[first] ?? first;
   })();
 
   return (
@@ -243,7 +463,11 @@ export function AppLayout({ children }: Props) {
         </nav>
 
         <div className="border-t border-border p-3 space-y-2">
-          <div className="flex items-center gap-3 rounded-lg px-2 py-2 bg-muted/50">
+          <button
+            type="button"
+            onClick={() => setProfileOpen(true)}
+            className="flex w-full items-center gap-3 rounded-lg bg-muted/50 px-2 py-2 text-left transition hover:bg-muted"
+          >
             <div className="size-8 rounded-full bg-primary/15 text-primary grid place-items-center text-sm font-semibold">
               {user?.email?.[0]?.toUpperCase() ?? '·'}
             </div>
@@ -251,7 +475,7 @@ export function AppLayout({ children }: Props) {
               <p className="text-xs font-semibold truncate">{user?.email}</p>
               <p className="text-[10px] text-muted-foreground">{roleLabel}</p>
             </div>
-          </div>
+          </button>
           <button
             onClick={() => void handleLogout()}
             className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm font-medium text-destructive hover:bg-destructive/10 transition"
@@ -287,6 +511,12 @@ export function AppLayout({ children }: Props) {
         )}
         <main className="flex-1 overflow-x-hidden overflow-y-auto p-4 lg:p-6">{children}</main>
       </div>
+      <ProfilePanel
+        open={profileOpen}
+        onClose={() => setProfileOpen(false)}
+        fallbackEmail={user?.email}
+        fallbackRoleLabel={roleLabel}
+      />
     </div>
   );
 }

@@ -137,7 +137,10 @@ export class MailController {
           status: 'ACTIVE',
           deletedAt: null,
           schoolRoles: {
-            some: { schoolId, role: { in: ['DIRECTOR', 'UTP', 'PROFESOR', 'SUPER_ADMIN'] } },
+            some: {
+              schoolId,
+              role: { in: ['DIRECTOR', 'UTP', 'INSPECTORIA', 'PROFESOR', 'SUPER_ADMIN'] },
+            },
           },
         },
         select: { email: true, firstName: true, lastName: true },

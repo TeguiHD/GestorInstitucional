@@ -37,17 +37,20 @@ export class ReportsService {
     month: number,
     requestedById: string,
   ): Promise<Buffer> {
+    const from = new Date(year, month - 1, 1);
+    const to = new Date(year, month, 0);
+
     const course = await this.prisma.course.findUniqueOrThrow({
       where: { id: courseId },
       include: {
         school: true,
         teachers: { include: { user: true }, where: { isHead: true }, take: 1 },
-        students: { where: { active: true }, orderBy: { enrollmentNumber: 'asc' } },
+        students: {
+          where: this.activeDuringPeriodWhere(from, to),
+          orderBy: { enrollmentNumber: 'asc' },
+        },
       },
     });
-
-    const from = new Date(year, month - 1, 1);
-    const to = new Date(year, month, 0);
 
     const records = await this.prisma.attendanceRecord.findMany({
       where: { courseId, date: { gte: from, lte: to } },
@@ -99,17 +102,20 @@ export class ReportsService {
     month: number,
     requestedById: string,
   ): Promise<Buffer> {
+    const from = new Date(year, month - 1, 1);
+    const to = new Date(year, month, 0);
+
     const course = await this.prisma.course.findUniqueOrThrow({
       where: { id: courseId },
       include: {
         school: true,
         teachers: { include: { user: true }, where: { isHead: true }, take: 1 },
-        students: { where: { active: true }, orderBy: { enrollmentNumber: 'asc' } },
+        students: {
+          where: this.activeDuringPeriodWhere(from, to),
+          orderBy: { enrollmentNumber: 'asc' },
+        },
       },
     });
-
-    const from = new Date(year, month - 1, 1);
-    const to = new Date(year, month, 0);
 
     const records = await this.prisma.attendanceRecord.findMany({
       where: { courseId, date: { gte: from, lte: to } },
@@ -276,17 +282,21 @@ export class ReportsService {
     month: number,
     requestedById: string,
   ): Promise<Buffer> {
+    const from = new Date(year, month - 1, 1);
+    const to = new Date(year, month, 0);
+
     const course = await this.prisma.course.findUniqueOrThrow({
       where: { id: courseId },
       include: {
         school: true,
         teachers: { include: { user: true }, where: { isHead: true }, take: 1 },
-        students: { where: { active: true }, orderBy: { enrollmentNumber: 'asc' } },
+        students: {
+          where: this.activeDuringPeriodWhere(from, to),
+          orderBy: { enrollmentNumber: 'asc' },
+        },
       },
     });
 
-    const from = new Date(year, month - 1, 1);
-    const to = new Date(year, month, 0);
     const daysInMonth = to.getDate();
 
     const records = await this.prisma.attendanceRecord.findMany({
@@ -436,7 +446,7 @@ export class ReportsService {
         if (isWeekend) {
           doc.rect(x, y, DAY_W, ROW_H).fill('#E8EDF1');
         }
-        const sym = recordMap.get(s.id)?.get(d);
+        const sym = this.attendanceSymbolFor(s, date, recordMap.get(s.id)?.get(d));
         if (sym) {
           let bg = '#FFFFFF';
           let fg = '#000';
@@ -549,7 +559,10 @@ export class ReportsService {
       include: {
         school: true,
         teachers: { include: { user: true }, where: { isHead: true }, take: 1 },
-        students: { where: { active: true }, orderBy: { enrollmentNumber: 'asc' } },
+        students: {
+          where: this.activeDuringPeriodWhere(start, end),
+          orderBy: { enrollmentNumber: 'asc' },
+        },
       },
     });
 
@@ -650,7 +663,7 @@ export class ReportsService {
         justified = 0;
       days.forEach((d, di) => {
         const key = d.toISOString().split('T')[0]!;
-        const sym = recordMap.get(student.id)?.get(key);
+        const sym = this.attendanceSymbolFor(student, d, recordMap.get(student.id)?.get(key));
         const cell = ws.getCell(r, 3 + di);
         cell.border = borderAll;
         cell.alignment = centerMid;
@@ -723,13 +736,18 @@ export class ReportsService {
     requestedById: string,
   ): Promise<Buffer> {
     const months = semester === 1 ? [1, 2, 3, 4, 5, 6] : [7, 8, 9, 10, 11, 12];
+    const semFrom = new Date(year, months[0]! - 1, 1);
+    const semTo = new Date(year, months[months.length - 1]!, 0, 23, 59, 59);
 
     const course = await this.prisma.course.findUniqueOrThrow({
       where: { id: courseId },
       include: {
         school: true,
         teachers: { include: { user: true }, where: { isHead: true }, take: 1 },
-        students: { where: { active: true }, orderBy: { enrollmentNumber: 'asc' } },
+        students: {
+          where: this.activeDuringPeriodWhere(semFrom, semTo),
+          orderBy: { enrollmentNumber: 'asc' },
+        },
       },
     });
 
@@ -747,8 +765,6 @@ export class ReportsService {
     for (const s of course.students) summary.set(s.id, { p: 0, a: 0, j: 0, byMonth: [] });
 
     // Single query for all semester months — group in memory by month
-    const semFrom = new Date(year, months[0]! - 1, 1);
-    const semTo = new Date(year, months[months.length - 1]!, 0, 23, 59, 59);
     const allRecords = await this.prisma.attendanceRecord.findMany({
       where: { courseId, date: { gte: semFrom, lte: semTo } },
       select: { studentId: true, date: true, status: true },
@@ -862,13 +878,18 @@ export class ReportsService {
     requestedById: string,
   ): Promise<Buffer> {
     const months = Array.from({ length: 12 }, (_, i) => i + 1);
+    const yearFrom = new Date(year, 0, 1);
+    const yearTo = new Date(year, 11, 31, 23, 59, 59);
 
     const course = await this.prisma.course.findUniqueOrThrow({
       where: { id: courseId },
       include: {
         school: true,
         teachers: { include: { user: true }, where: { isHead: true }, take: 1 },
-        students: { where: { active: true }, orderBy: { enrollmentNumber: 'asc' } },
+        students: {
+          where: this.activeDuringPeriodWhere(yearFrom, yearTo),
+          orderBy: { enrollmentNumber: 'asc' },
+        },
       },
     });
 
@@ -1002,13 +1023,18 @@ export class ReportsService {
   ): Promise<Buffer> {
     const months = semester === 1 ? [1, 2, 3, 4, 5, 6] : [7, 8, 9, 10, 11, 12];
     const semLabel = semester === 1 ? '1er Semestre' : '2do Semestre';
+    const semFrom = new Date(year, months[0]! - 1, 1);
+    const semTo = new Date(year, months[months.length - 1]!, 0, 23, 59, 59);
 
     const course = await this.prisma.course.findUniqueOrThrow({
       where: { id: courseId },
       include: {
         school: true,
         teachers: { include: { user: true }, where: { isHead: true }, take: 1 },
-        students: { where: { active: true }, orderBy: { enrollmentNumber: 'asc' } },
+        students: {
+          where: this.activeDuringPeriodWhere(semFrom, semTo),
+          orderBy: { enrollmentNumber: 'asc' },
+        },
       },
     });
 
@@ -1016,8 +1042,6 @@ export class ReportsService {
     for (const s of course.students) perStudent.set(s.id, { p: 0, a: 0, l: 0, j: 0 });
 
     // Single query for all semester months
-    const semFrom = new Date(year, months[0]! - 1, 1);
-    const semTo = new Date(year, months[months.length - 1]!, 0, 23, 59, 59);
     const allSemRecords = await this.prisma.attendanceRecord.findMany({
       where: { courseId, date: { gte: semFrom, lte: semTo } },
       select: { studentId: true, status: true },
@@ -1168,12 +1192,18 @@ export class ReportsService {
   }
 
   async generateAnnualPdf(courseId: string, year: number, requestedById: string): Promise<Buffer> {
+    const yearFrom = new Date(year, 0, 1);
+    const yearTo = new Date(year, 11, 31, 23, 59, 59);
+
     const course = await this.prisma.course.findUniqueOrThrow({
       where: { id: courseId },
       include: {
         school: true,
         teachers: { include: { user: true }, where: { isHead: true }, take: 1 },
-        students: { where: { active: true }, orderBy: { enrollmentNumber: 'asc' } },
+        students: {
+          where: this.activeDuringPeriodWhere(yearFrom, yearTo),
+          orderBy: { enrollmentNumber: 'asc' },
+        },
       },
     });
 
@@ -1345,6 +1375,8 @@ export class ReportsService {
           firstName: string;
           lastName: string;
           secondLastName: string | null;
+          enrolledAt: Date;
+          withdrawnAt: Date | null;
         }>;
       };
       year: number;
@@ -1572,7 +1604,7 @@ export class ReportsService {
         }
 
         const key = date.toISOString().split('T')[0]!;
-        const sym = records.get(student.id)?.get(key);
+        const sym = this.attendanceSymbolFor(student, date, records.get(student.id)?.get(key));
         if (!sym) continue;
 
         cell.value = sym;
@@ -1657,5 +1689,30 @@ export class ReportsService {
       ws.getCell(r, 3).font = { size: 10 };
       r++;
     }
+  }
+
+  private activeDuringPeriodWhere(from: Date, to: Date) {
+    return {
+      enrolledAt: { lte: to },
+      firstName: { not: '[Eliminado]' },
+      OR: [{ withdrawnAt: null }, { withdrawnAt: { gte: from } }],
+    };
+  }
+
+  private attendanceSymbolFor(
+    student: { enrolledAt: Date; withdrawnAt: Date | null },
+    date: Date,
+    recordedSymbol?: string,
+  ): string {
+    const current = this.startOfDay(date);
+    if (this.startOfDay(student.enrolledAt) > current) return '';
+    if (student.withdrawnAt && this.startOfDay(student.withdrawnAt) <= current) return '-';
+    return recordedSymbol ?? '';
+  }
+
+  private startOfDay(date: Date): Date {
+    const d = new Date(date);
+    d.setHours(0, 0, 0, 0);
+    return d;
   }
 }

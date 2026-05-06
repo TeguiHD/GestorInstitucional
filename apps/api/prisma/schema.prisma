@@ -27,6 +27,7 @@ enum SystemRole {
   SUPER_ADMIN
   DIRECTOR
   UTP
+  INSPECTORIA
   PROFESOR
   APODERADO
 }
@@ -75,10 +76,10 @@ enum MailCategory {
 }
 
 enum AlertTrigger {
-  STUDENT_BELOW_THRESHOLD     // student attendance < threshold
-  COURSE_BELOW_THRESHOLD      // course avg < threshold
+  STUDENT_BELOW_THRESHOLD // student attendance < threshold
+  COURSE_BELOW_THRESHOLD // course avg < threshold
   STUDENT_CONSECUTIVE_ABSENCES // N consecutive absences
-  TEACHER_NO_RECORD           // teacher hasn't recorded attendance in N days
+  TEACHER_NO_RECORD // teacher hasn't recorded attendance in N days
 }
 
 enum AuditAction {
@@ -131,14 +132,14 @@ model School {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  users               UserSchoolRole[]
-  courses             Course[]
-  students            Student[]
-  permissions         SchoolPermission[]
-  calendarDays        SchoolCalendarDay[]
-  alertRules          AlertRule[]
-  subjects            Subject[]
-  retentionSnapshots  RetentionSnapshot[]
+  users              UserSchoolRole[]
+  courses            Course[]
+  students           Student[]
+  permissions        SchoolPermission[]
+  calendarDays       SchoolCalendarDay[]
+  alertRules         AlertRule[]
+  subjects           Subject[]
+  retentionSnapshots RetentionSnapshot[]
 
   @@map("schools")
 }
@@ -163,22 +164,22 @@ model User {
   updatedAt    DateTime   @updatedAt
   deletedAt    DateTime?
 
-  schoolRoles    UserSchoolRole[]
-  totpSecrets    TotpSecret[]
-  refreshTokens  RefreshToken[]
-  courseTeacher  CourseTeacher[]
-  guardianships  Guardianship[]
-  attendanceLogs        AttendanceRecord[]        @relation("RecordedBy")
+  schoolRoles            UserSchoolRole[]
+  totpSecrets            TotpSecret[]
+  refreshTokens          RefreshToken[]
+  courseTeacher          CourseTeacher[]
+  guardianships          Guardianship[]
+  attendanceLogs         AttendanceRecord[]        @relation("RecordedBy")
   justificationsUploaded AttendanceJustification[] @relation("JustifUploader")
   justificationsReviewed AttendanceJustification[] @relation("JustifReviewer")
-  auditEvents           AuditEvent[]
-  trustedDevices        TrustedDevice[]
-  notifications         Notification[]
-  guardianContacts      GuardianContact[]
-  gradesRecorded        Grade[]           @relation("GradeRecordedBy")
-  subjectsTeaching      Subject[]         @relation("SubjectTeacher")
-  scheduleSlots         ScheduleSlot[]    @relation("SlotTeacher")
-  enrollmentEvents      EnrollmentEvent[] @relation("EnrollmentRecordedBy")
+  auditEvents            AuditEvent[]
+  trustedDevices         TrustedDevice[]
+  notifications          Notification[]
+  guardianContacts       GuardianContact[]
+  gradesRecorded         Grade[]                   @relation("GradeRecordedBy")
+  subjectsTeaching       Subject[]                 @relation("SubjectTeacher")
+  scheduleSlots          ScheduleSlot[]            @relation("SlotTeacher")
+  enrollmentEvents       EnrollmentEvent[]         @relation("EnrollmentRecordedBy")
 
   @@index([email])
   @@index([deletedAt])
@@ -202,11 +203,11 @@ model UserSchoolRole {
 
 // Granular permissions (extend RBAC beyond roles when needed)
 model SchoolPermission {
-  id         String   @id @default(uuid()) @db.Char(36)
-  schoolId   String   @db.Char(36)
+  id         String     @id @default(uuid()) @db.Char(36)
+  schoolId   String     @db.Char(36)
   role       SystemRole
-  permission String   @db.VarChar(100) // e.g. "attendance:write", "reports:export"
-  createdAt  DateTime @default(now())
+  permission String     @db.VarChar(100) // e.g. "attendance:write", "reports:export"
+  createdAt  DateTime   @default(now())
 
   school School @relation(fields: [schoolId], references: [id], onDelete: Cascade)
 
@@ -219,13 +220,13 @@ model SchoolPermission {
 // =============================================================================
 
 model TotpSecret {
-  id         String    @id @default(uuid()) @db.Char(36)
-  userId     String    @db.Char(36)
-  secret     String    @db.VarChar(300) // encrypted at rest
-  verified   Boolean   @default(false)
-  backupCodes Json                       // hashed backup codes
-  createdAt  DateTime  @default(now())
-  verifiedAt DateTime?
+  id          String    @id @default(uuid()) @db.Char(36)
+  userId      String    @db.Char(36)
+  secret      String    @db.VarChar(300) // encrypted at rest
+  verified    Boolean   @default(false)
+  backupCodes Json // hashed backup codes
+  createdAt   DateTime  @default(now())
+  verifiedAt  DateTime?
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
@@ -234,16 +235,16 @@ model TotpSecret {
 }
 
 model RefreshToken {
-  id         String    @id @default(uuid()) @db.Char(36)
-  userId     String    @db.Char(36)
-  tokenHash  String    @db.Char(64) // SHA-256 of raw token
-  family     String    @db.Char(36) // UUID grouping token lineage (reuse → revoke family)
-  ip         String?   @db.VarChar(45)
-  userAgent  String?   @db.VarChar(400)
-  expiresAt  DateTime
-  revokedAt  DateTime?
-  usedAt     DateTime?
-  createdAt  DateTime  @default(now())
+  id        String    @id @default(uuid()) @db.Char(36)
+  userId    String    @db.Char(36)
+  tokenHash String    @db.Char(64) // SHA-256 of raw token
+  family    String    @db.Char(36) // UUID grouping token lineage (reuse → revoke family)
+  ip        String?   @db.VarChar(45)
+  userAgent String?   @db.VarChar(400)
+  expiresAt DateTime
+  revokedAt DateTime?
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
@@ -255,14 +256,14 @@ model RefreshToken {
 }
 
 model TrustedDevice {
-  id         String   @id @default(uuid()) @db.Char(36)
-  userId     String   @db.Char(36)
-  tokenHash  String   @db.Char(64)          // SHA-256 hex of raw token
-  userAgent  String?  @db.VarChar(500)
-  expiresAt  DateTime
-  createdAt  DateTime @default(now())
+  id        String   @id @default(uuid()) @db.Char(36)
+  userId    String   @db.Char(36)
+  tokenHash String   @db.Char(64) // SHA-256 hex of raw token
+  userAgent String?  @db.VarChar(500)
+  expiresAt DateTime
+  createdAt DateTime @default(now())
 
-  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId])
   @@index([tokenHash])
@@ -279,7 +280,7 @@ model Notification {
   readAt    DateTime?
   createdAt DateTime  @default(now())
 
-  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId, readAt])
   @@index([userId, createdAt])
@@ -293,21 +294,21 @@ model Notification {
 model Course {
   id            String   @id @default(uuid()) @db.Char(36)
   schoolId      String   @db.Char(36)
-  code          String   @db.VarChar(10)   // "1A", "2B"
-  name          String   @db.VarChar(120)  // "1° Básico A"
-  level         String   @db.VarChar(40)   // "Básica", "Media"
+  code          String   @db.VarChar(10) // "1A", "2B"
+  name          String   @db.VarChar(120) // "1° Básico A"
+  level         String   @db.VarChar(40) // "Básica", "Media"
   year          Int
   headTeacherId String?  @db.Char(36)
   active        Boolean  @default(true)
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
 
-  school         School             @relation(fields: [schoolId], references: [id], onDelete: Cascade)
-  teachers       CourseTeacher[]
-  students       Student[]
-  attendance     AttendanceRecord[]
-  subjects       Subject[]
-  scheduleSlots  ScheduleSlot[]
+  school        School             @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+  teachers      CourseTeacher[]
+  students      Student[]
+  attendance    AttendanceRecord[]
+  subjects      Subject[]
+  scheduleSlots ScheduleSlot[]
 
   @@unique([schoolId, code, year])
   @@index([schoolId])
@@ -350,8 +351,8 @@ model Student {
   createdAt        DateTime  @default(now())
   updatedAt        DateTime  @updatedAt
 
-  school        School             @relation(fields: [schoolId], references: [id], onDelete: Cascade)
-  course        Course             @relation(fields: [courseId], references: [id])
+  school            School             @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+  course            Course             @relation(fields: [courseId], references: [id])
   guardianships     Guardianship[]
   attendance        AttendanceRecord[]
   grades            Grade[]
@@ -365,16 +366,16 @@ model Student {
 }
 
 model Guardianship {
-  id          String   @id @default(uuid()) @db.Char(36)
-  guardianId  String   @db.Char(36) // userId with role APODERADO
-  studentId   String   @db.Char(36)
-  relation    String   @db.VarChar(40) // "Padre", "Madre", "Tutor"
-  isPrimary   Boolean  @default(false)
-  notifyAbsences     Boolean  @default(true)
-  notifyLate         Boolean  @default(true)
-  notifyWeeklyDigest Boolean  @default(false)
-  notifyUntil DateTime?
-  createdAt   DateTime @default(now())
+  id                 String    @id @default(uuid()) @db.Char(36)
+  guardianId         String    @db.Char(36) // userId with role APODERADO
+  studentId          String    @db.Char(36)
+  relation           String    @db.VarChar(40) // "Padre", "Madre", "Tutor"
+  isPrimary          Boolean   @default(false)
+  notifyAbsences     Boolean   @default(true)
+  notifyLate         Boolean   @default(true)
+  notifyWeeklyDigest Boolean   @default(false)
+  notifyUntil        DateTime?
+  createdAt          DateTime  @default(now())
 
   guardian User    @relation(fields: [guardianId], references: [id], onDelete: Cascade)
   student  Student @relation(fields: [studentId], references: [id], onDelete: Cascade)
@@ -385,17 +386,17 @@ model Guardianship {
 }
 
 model GuardianContact {
-  id          String   @id @default(uuid()) @db.Char(36)
-  userId      String   @db.Char(36)
-  type        String   @db.VarChar(20)
-  phone       String   @db.VarChar(30)
-  label       String?  @db.VarChar(80)
-  isWhatsApp  Boolean  @default(false)
-  priority    Int      @default(0)
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  id         String   @id @default(uuid()) @db.Char(36)
+  userId     String   @db.Char(36)
+  type       String   @db.VarChar(20)
+  phone      String   @db.VarChar(30)
+  label      String?  @db.VarChar(80)
+  isWhatsApp Boolean  @default(false)
+  priority   Int      @default(0)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
 
-  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId])
   @@map("guardian_contacts")
@@ -412,14 +413,14 @@ model AttendanceRecord {
   date         DateTime         @db.Date
   status       AttendanceStatus
   note         String?          @db.VarChar(500)
-  lateMinutes  Int?             // when LATE, optional minutes
+  lateMinutes  Int? // when LATE, optional minutes
   recordedById String           @db.Char(36)
   recordedAt   DateTime         @default(now())
   updatedAt    DateTime         @updatedAt
 
-  student        Student @relation(fields: [studentId], references: [id], onDelete: Cascade)
-  course         Course  @relation(fields: [courseId], references: [id], onDelete: Cascade)
-  recordedBy     User    @relation("RecordedBy", fields: [recordedById], references: [id])
+  student        Student                   @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  course         Course                    @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  recordedBy     User                      @relation("RecordedBy", fields: [recordedById], references: [id])
   justifications AttendanceJustification[]
 
   @@unique([studentId, date])
@@ -430,22 +431,22 @@ model AttendanceRecord {
 }
 
 model AttendanceJustification {
-  id             String              @id @default(uuid()) @db.Char(36)
-  recordId       String              @db.Char(36)
-  uploadedById   String              @db.Char(36)
-  fileName       String              @db.VarChar(255)
-  filePath       String              @db.VarChar(500)
-  mimeType       String              @db.VarChar(120)
-  sizeBytes      Int
-  fileHash       String?             @db.VarChar(64)
-  fileIv         String?             @db.VarChar(24)  // hex del IV AES-GCM (12 bytes = 24 hex)
-  deletedAt      DateTime?
-  reason         String              @db.VarChar(500)
-  status         JustificationStatus @default(PENDING)
-  reviewedById   String?             @db.Char(36)
-  reviewedAt     DateTime?
-  reviewNotes    String?             @db.VarChar(500)
-  createdAt      DateTime            @default(now())
+  id           String              @id @default(uuid()) @db.Char(36)
+  recordId     String              @db.Char(36)
+  uploadedById String              @db.Char(36)
+  fileName     String              @db.VarChar(255)
+  filePath     String              @db.VarChar(500)
+  mimeType     String              @db.VarChar(120)
+  sizeBytes    Int
+  fileHash     String?             @db.VarChar(64)
+  fileIv       String?             @db.VarChar(24) // hex del IV AES-GCM (12 bytes = 24 hex)
+  deletedAt    DateTime?
+  reason       String              @db.VarChar(500)
+  status       JustificationStatus @default(PENDING)
+  reviewedById String?             @db.Char(36)
+  reviewedAt   DateTime?
+  reviewNotes  String?             @db.VarChar(500)
+  createdAt    DateTime            @default(now())
 
   record     AttendanceRecord @relation(fields: [recordId], references: [id], onDelete: Cascade)
   uploadedBy User             @relation("JustifUploader", fields: [uploadedById], references: [id])
@@ -518,15 +519,15 @@ model AlertRule {
   id          String       @id @default(uuid()) @db.Char(36)
   schoolId    String       @db.Char(36)
   trigger     AlertTrigger
-  threshold   Float?       // e.g. 0.85 for 85% attendance
+  threshold   Float? // e.g. 0.85 for 85% attendance
   windowDays  Int          @default(30) // rolling window in days
   enabled     Boolean      @default(true)
-  notifyRoles Json         // string[] — roles to notify e.g. ["DIRECTOR","UTP"]
+  notifyRoles Json // string[] — roles to notify e.g. ["DIRECTOR","UTP"]
   createdAt   DateTime     @default(now())
   updatedAt   DateTime     @updatedAt
 
-  school      School       @relation(fields: [schoolId], references: [id], onDelete: Cascade)
-  fired       AlertFired[]
+  school School       @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+  fired  AlertFired[]
 
   @@unique([schoolId, trigger])
   @@index([schoolId])
@@ -534,14 +535,14 @@ model AlertRule {
 }
 
 model AlertFired {
-  id          String    @id @default(uuid()) @db.Char(36)
-  ruleId      String    @db.Char(36)
-  entityType  String    @db.VarChar(30)  // "student" | "course" | "teacher"
-  entityId    String    @db.Char(36)
-  meta        Json?
-  firedAt     DateTime  @default(now())
+  id         String   @id @default(uuid()) @db.Char(36)
+  ruleId     String   @db.Char(36)
+  entityType String   @db.VarChar(30) // "student" | "course" | "teacher"
+  entityId   String   @db.Char(36)
+  meta       Json?
+  firedAt    DateTime @default(now())
 
-  rule        AlertRule @relation(fields: [ruleId], references: [id], onDelete: Cascade)
+  rule AlertRule @relation(fields: [ruleId], references: [id], onDelete: Cascade)
 
   @@index([ruleId])
   @@index([firedAt])
@@ -556,13 +557,13 @@ model AuditEvent {
   id        String      @id @default(uuid()) @db.Char(36)
   userId    String?     @db.Char(36)
   action    AuditAction
-  entity    String?     @db.VarChar(60)  // "User", "Course", "AttendanceRecord"
+  entity    String?     @db.VarChar(60) // "User", "Course", "AttendanceRecord"
   entityId  String?     @db.VarChar(36)
-  meta      Json?                         // diff or extra context
+  meta      Json? // diff or extra context
   ip        String?     @db.VarChar(45)
   userAgent String?     @db.VarChar(400)
-  prevHash  String?     @db.Char(64)     // SHA-256 chain for tamper-detection
-  hash      String      @db.Char(64)     // SHA-256(id+userId+action+entity+entityId+createdAt+prevHash)
+  prevHash  String?     @db.Char(64) // SHA-256 chain for tamper-detection
+  hash      String      @db.Char(64) // SHA-256(id+userId+action+entity+entityId+createdAt+prevHash)
   createdAt DateTime    @default(now())
 
   user User? @relation(fields: [userId], references: [id], onDelete: SetNull)
@@ -590,11 +591,11 @@ model Subject {
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 
-  school         School         @relation(fields: [schoolId], references: [id], onDelete: Cascade)
-  course         Course         @relation(fields: [courseId], references: [id], onDelete: Cascade)
-  teacher        User?          @relation("SubjectTeacher", fields: [teacherId], references: [id], onDelete: SetNull)
-  grades         Grade[]
-  scheduleSlots  ScheduleSlot[]
+  school        School         @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+  course        Course         @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  teacher       User?          @relation("SubjectTeacher", fields: [teacherId], references: [id], onDelete: SetNull)
+  grades        Grade[]
+  scheduleSlots ScheduleSlot[]
 
   @@unique([courseId, code])
   @@index([courseId])
@@ -613,9 +614,9 @@ model Grade {
   createdAt    DateTime    @default(now())
   updatedAt    DateTime    @updatedAt
 
-  student      Student @relation(fields: [studentId], references: [id], onDelete: Cascade)
-  subject      Subject @relation(fields: [subjectId], references: [id], onDelete: Cascade)
-  recordedBy   User    @relation("GradeRecordedBy", fields: [recordedById], references: [id])
+  student    Student @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  subject    Subject @relation(fields: [subjectId], references: [id], onDelete: Cascade)
+  recordedBy User    @relation("GradeRecordedBy", fields: [recordedById], references: [id])
 
   @@unique([studentId, subjectId, period])
   @@index([subjectId])
@@ -628,19 +629,19 @@ model Grade {
 // =============================================================================
 
 model ScheduleSlot {
-  id          String   @id @default(uuid()) @db.Char(36)
-  courseId    String   @db.Char(36)
-  subjectId   String   @db.Char(36)
-  teacherId   String   @db.Char(36)
-  dayOfWeek   Int      // 1=Lunes, 2=Martes, 3=Miércoles, 4=Jueves, 5=Viernes
-  slotNumber  Int      // 1–8 (bloque dentro del día)
-  startTime   String   @db.VarChar(5)
-  endTime     String   @db.VarChar(5)
-  roomNumber  String?  @db.VarChar(20)
-  year        Int
-  semester    Int
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  id         String   @id @default(uuid()) @db.Char(36)
+  courseId   String   @db.Char(36)
+  subjectId  String   @db.Char(36)
+  teacherId  String   @db.Char(36)
+  dayOfWeek  Int // 1=Lunes, 2=Martes, 3=Miércoles, 4=Jueves, 5=Viernes
+  slotNumber Int // 1–8 (bloque dentro del día)
+  startTime  String   @db.VarChar(5)
+  endTime    String   @db.VarChar(5)
+  roomNumber String?  @db.VarChar(20)
+  year       Int
+  semester   Int
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
 
   course  Course  @relation(fields: [courseId], references: [id], onDelete: Cascade)
   subject Subject @relation(fields: [subjectId], references: [id], onDelete: Cascade)
@@ -670,8 +671,8 @@ model EnrollmentEvent {
   recordedById          String           @db.Char(36)
   createdAt             DateTime         @default(now())
 
-  student      Student  @relation(fields: [studentId], references: [id], onDelete: Cascade)
-  recordedBy   User     @relation("EnrollmentRecordedBy", fields: [recordedById], references: [id])
+  student    Student @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  recordedBy User    @relation("EnrollmentRecordedBy", fields: [recordedById], references: [id])
 
   @@index([studentId])
   @@index([courseId])
@@ -688,7 +689,7 @@ model RetentionSnapshot {
   id        String   @id @default(uuid()) @db.Char(36)
   schoolId  String   @db.Char(36)
   year      Int
-  summary   Json     // { courses: [{ id, code, name, total, present, absent, late, justified }] }
+  summary   Json // { courses: [{ id, code, name, total, present, absent, late, justified }] }
   createdAt DateTime @default(now())
 
   school School @relation(fields: [schoolId], references: [id], onDelete: Cascade)

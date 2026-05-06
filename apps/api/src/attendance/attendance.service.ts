@@ -80,15 +80,23 @@ export class AttendanceService {
       seen.add(entry.studentId);
     }
 
+    const date = this.startOfDay(new Date(dto.date));
     const students = await this.prisma.student.findMany({
-      where: { courseId: dto.courseId, active: true },
+      where: {
+        courseId: dto.courseId,
+        enrolledAt: { lte: date },
+        firstName: { not: '[Eliminado]' },
+        OR: [{ withdrawnAt: null }, { withdrawnAt: { gt: date } }],
+      },
       select: { id: true },
     });
     const allowedStudentIds = new Set(students.map((student) => student.id));
     const invalidEntry = dto.entries.find((entry) => !allowedStudentIds.has(entry.studentId));
 
     if (invalidEntry) {
-      throw new BadRequestException('La asistencia contiene alumnos fuera del curso');
+      throw new BadRequestException(
+        'La asistencia contiene alumnos fuera del curso o fuera de su período activo',
+      );
     }
   }
 
@@ -342,8 +350,19 @@ export class AttendanceService {
         where: { id: courseId },
         include: {
           students: {
-            where: { active: true },
-            select: { id: true, firstName: true, lastName: true, enrollmentNumber: true },
+            where: {
+              enrolledAt: { lte: to },
+              firstName: { not: '[Eliminado]' },
+              OR: [{ withdrawnAt: null }, { withdrawnAt: { gte: from } }],
+            },
+            select: {
+              id: true,
+              firstName: true,
+              lastName: true,
+              enrollmentNumber: true,
+              enrolledAt: true,
+              withdrawnAt: true,
+            },
             orderBy: [{ lastName: 'asc' }, { firstName: 'asc' }],
           },
         },
@@ -369,7 +388,14 @@ export class AttendanceService {
     });
 
     const studentStats = course.students.map((s) => {
-      const studentRecords = Object.values(matrix[s.id] ?? {});
+      for (const dateKey of dates) {
+        const date = this.startOfDay(new Date(`${dateKey}T00:00:00.000Z`));
+        if (s.withdrawnAt && this.startOfDay(s.withdrawnAt) <= date) {
+          if (!matrix[s.id]) matrix[s.id] = {};
+          matrix[s.id]![dateKey] = 'WITHDRAWN';
+        }
+      }
+      const studentRecords = Object.values(matrix[s.id] ?? {}).filter((st) => st !== 'WITHDRAWN');
       const total = studentRecords.length;
       const present = studentRecords.filter((st) => st === 'PRESENT' || st === 'LATE').length;
       const absent = studentRecords.filter((st) => st === 'ABSENT').length;
@@ -394,7 +420,9 @@ export class AttendanceService {
     if (user.roles.includes(SystemRole.SUPER_ADMIN)) return;
     if (
       user.schoolId === student.schoolId &&
-      [SystemRole.DIRECTOR, SystemRole.UTP].some((role) => user.roles.includes(role))
+      [SystemRole.DIRECTOR, SystemRole.UTP, SystemRole.INSPECTORIA].some((role) =>
+        user.roles.includes(role),
+      )
     ) {
       return;
     }
@@ -413,5 +441,11 @@ export class AttendanceService {
     }
 
     throw new ForbiddenException('Sin acceso a este alumno');
+  }
+
+  private startOfDay(date: Date): Date {
+    const d = new Date(date);
+    d.setHours(0, 0, 0, 0);
+    return d;
   }
 }

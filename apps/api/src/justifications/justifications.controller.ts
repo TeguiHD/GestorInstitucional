@@ -81,7 +81,7 @@ export class JustificationsController {
   }
 
   @Get('school/:schoolId')
-  @Roles(SystemRole.SUPER_ADMIN, SystemRole.DIRECTOR, SystemRole.UTP)
+  @Roles(SystemRole.SUPER_ADMIN, SystemRole.DIRECTOR, SystemRole.UTP, SystemRole.INSPECTORIA)
   @ApiOperation({ summary: 'Todas las justificaciones del colegio (paginado)' })
   listBySchool(
     @Param('schoolId') schoolId: string,
@@ -108,14 +108,14 @@ export class JustificationsController {
   }
 
   @Get('pending')
-  @Roles(SystemRole.SUPER_ADMIN, SystemRole.DIRECTOR, SystemRole.UTP)
+  @Roles(SystemRole.SUPER_ADMIN, SystemRole.DIRECTOR, SystemRole.UTP, SystemRole.INSPECTORIA)
   @ApiOperation({ summary: 'Justificaciones pendientes del colegio' })
   pending(@Query('schoolId') schoolId: string, @CurrentUser() user: JwtPayload) {
     return this.service.pendingBySchool(schoolId, user);
   }
 
   @Patch(':id/review')
-  @Roles(SystemRole.SUPER_ADMIN, SystemRole.DIRECTOR, SystemRole.UTP)
+  @Roles(SystemRole.SUPER_ADMIN, SystemRole.DIRECTOR, SystemRole.UTP, SystemRole.INSPECTORIA)
   @ApiOperation({ summary: 'Aprobar o rechazar justificación' })
   review(@Param('id') id: string, @Body() dto: ReviewDto, @CurrentUser() user: JwtPayload) {
     return this.service.review(id, user, dto.decision, dto.notes);

@@ -60,7 +60,8 @@ export function JustificationsPage() {
   const qc = useQueryClient();
   const schoolId = useEffectiveSchoolId();
   const canReview =
-    user?.roles?.some((r) => ['SUPER_ADMIN', 'DIRECTOR', 'UTP'].includes(r)) ?? false;
+    user?.roles?.some((r) => ['SUPER_ADMIN', 'DIRECTOR', 'UTP', 'INSPECTORIA'].includes(r)) ??
+    false;
 
   const [tab, setTab] = useState<JustStatus | 'ALL'>('PENDING');
   const [search, setSearch] = useState('');

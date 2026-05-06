@@ -67,7 +67,9 @@ export function JustificationsTab({
 }) {
   const user = useUser();
   const qc = useQueryClient();
-  const isAdmin = user?.roles.some((r) => ['SUPER_ADMIN', 'DIRECTOR', 'UTP'].includes(r));
+  const isAdmin = user?.roles.some((r) =>
+    ['SUPER_ADMIN', 'DIRECTOR', 'UTP', 'INSPECTORIA'].includes(r),
+  );
 
   const studentIds = new Set(students.map((s) => s.id));
 

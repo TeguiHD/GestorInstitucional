@@ -24,7 +24,7 @@ import type { JwtPayload } from '../common/decorators/current-user.decorator.js'
 
 const ALLOWED_MIME = new Set(['application/pdf', 'image/png', 'image/jpeg', 'image/webp']);
 const MAX_FILE_SIZE_BYTES = 8 * 1024 * 1024;
-const SCHOOL_ADMIN_ROLES = new Set(['SUPER_ADMIN', 'DIRECTOR', 'UTP']);
+const SCHOOL_ADMIN_ROLES = new Set(['SUPER_ADMIN', 'DIRECTOR', 'UTP', 'INSPECTORIA']);
 
 const UPLOADS_ROOT = process.env.UPLOADS_DIR ?? join(process.cwd(), 'uploads');
 

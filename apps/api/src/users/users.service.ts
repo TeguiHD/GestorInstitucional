@@ -9,6 +9,7 @@ import {
 import { SystemRole, type UserStatus } from '@prisma/client';
 
 import { PasswordService } from '../auth/services/password.service.js';
+import { AuditService } from '../audit/audit.service.js';
 import { MailService } from '../mail/mail.service.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 import type { JwtPayload } from '../common/decorators/current-user.decorator.js';
@@ -18,6 +19,7 @@ export class UsersService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly passwords: PasswordService,
+    private readonly audit: AuditService,
     private readonly mail: MailService,
   ) {}
 
@@ -279,6 +281,41 @@ export class UsersService {
       })
       .catch(() => undefined);
     return { tempPassword };
+  }
+
+  async changeOwnPassword(
+    userId: string,
+    dto: { currentPassword: string; newPassword: string },
+  ): Promise<{ ok: true }> {
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId, deletedAt: null },
+      select: { id: true, passwordHash: true },
+    });
+    if (!user) throw new NotFoundException('Usuario no encontrado');
+
+    const validCurrent = await this.passwords.verify(user.passwordHash, dto.currentPassword);
+    if (!validCurrent) throw new BadRequestException('Contraseña actual incorrecta');
+    if (dto.currentPassword === dto.newPassword) {
+      throw new BadRequestException('La contraseña nueva debe ser distinta a la actual');
+    }
+
+    const pwned = await this.passwords.isPwned(dto.newPassword);
+    if (pwned) {
+      throw new BadRequestException('La contraseña aparece en filtraciones conocidas');
+    }
+
+    const passwordHash = await this.passwords.hash(dto.newPassword);
+    await this.prisma.user.update({
+      where: { id: userId },
+      data: { passwordHash, failedLogins: 0, lockedUntil: null },
+    });
+    await this.audit.log({
+      userId,
+      action: 'PASSWORD_CHANGE',
+      entity: 'User',
+      entityId: userId,
+    });
+    return { ok: true };
   }
 
   async findTrashed(schoolId: string, actor: JwtPayload) {
