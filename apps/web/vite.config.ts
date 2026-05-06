@@ -16,11 +16,12 @@ export default defineConfig(({ mode }) => {
       react(),
       tailwindcss(),
       VitePWA({
-        registerType: 'autoUpdate',
+        registerType: 'prompt',
         manifest: false, // use existing public/manifest.webmanifest
         workbox: {
           clientsClaim: true,
-          skipWaiting: true,
+          cleanupOutdatedCaches: true,
+          skipWaiting: false,
           globPatterns: ['**/*.{js,css,html,svg,png,ico,woff2}'],
           runtimeCaching: [
             {

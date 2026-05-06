@@ -4,6 +4,7 @@ import { Suspense } from 'react';
 import { Toaster } from 'sonner';
 
 import { ErrorBoundary } from '@/components/ErrorBoundary';
+import { PwaLifecycle } from '@/components/PwaLifecycle';
 
 export const Route = createRootRoute({
   component: () => (
@@ -11,6 +12,7 @@ export const Route = createRootRoute({
       <Suspense>
         <Outlet />
       </Suspense>
+      <PwaLifecycle />
       <Toaster richColors position="top-right" />
     </ErrorBoundary>
   ),
