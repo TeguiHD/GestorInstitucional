@@ -27,10 +27,11 @@ export function SchoolSelector() {
   const current = schools.find((s) => s.id === selectedSchoolId);
 
   return (
-    <div className="relative">
+    <div className="relative min-w-0">
       <button
         onClick={() => setOpen((v) => !v)}
-        className="flex items-center gap-2 rounded-lg border border-border bg-background px-3 py-1.5 text-sm hover:bg-muted transition-colors max-w-[220px]"
+        className="flex max-w-[180px] items-center gap-2 rounded-lg border border-border bg-background px-3 py-1.5 text-sm hover:bg-muted transition-colors sm:max-w-[240px]"
+        aria-label="Seleccionar colegio"
       >
         <Building2 className="h-3.5 w-3.5 text-muted-foreground flex-shrink-0" />
         <span className="truncate text-xs font-medium">

@@ -4,7 +4,6 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import * as QRCode from 'qrcode';
 import { SystemRole } from '@prisma/client';
 
 import { PrismaService } from '../prisma/prisma.service.js';
@@ -45,18 +44,6 @@ export class StudentsService {
     const student = await this.prisma.student.findUnique({ where: { id } });
     if (!student) throw new NotFoundException('Alumno no encontrado');
     return student;
-  }
-
-  async getQrCode(studentId: string): Promise<Buffer> {
-    const student = await this.prisma.student.findUnique({ where: { id: studentId } });
-    if (!student) throw new NotFoundException('Alumno no encontrado');
-    const dataUrl = await QRCode.toDataURL(`cssp:student:${studentId}`, {
-      width: 256,
-      margin: 2,
-      color: { dark: '#008269', light: '#FFFFFF' },
-    });
-    const base64 = dataUrl.replace('data:image/png;base64,', '');
-    return Buffer.from(base64, 'base64');
   }
 
   async create(dto: CreateStudentDto, actor: JwtPayload) {

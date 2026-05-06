@@ -147,6 +147,43 @@ export class ReportsController {
     void res.send(buffer);
   }
 
+  @Get('course/:courseId/annual')
+  @ApiOperation({ summary: 'Reporte anual Excel — 12 hojas mensuales + resumen consolidado' })
+  async getAnnualExcel(
+    @Param('courseId') courseId: string,
+    @Query('year', ParseIntPipe) year: number,
+    @CurrentUser() user: JwtPayload,
+    @Res() res: FastifyReply,
+  ) {
+    this.assertYear(year);
+    await this.courses.assertAccess(courseId, user);
+    const buffer = await this.reports.generateAnnualExcel(courseId, year, user.sub);
+    void res.header(
+      'Content-Type',
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    );
+    void res.header('Content-Disposition', `attachment; filename="anual-${year}.xlsx"`);
+    void res.header('Cache-Control', 'no-store');
+    void res.send(buffer);
+  }
+
+  @Get('course/:courseId/annual/pdf')
+  @ApiOperation({ summary: 'Informe anual PDF consolidado' })
+  async getAnnualPdf(
+    @Param('courseId') courseId: string,
+    @Query('year', ParseIntPipe) year: number,
+    @CurrentUser() user: JwtPayload,
+    @Res() res: FastifyReply,
+  ) {
+    this.assertYear(year);
+    await this.courses.assertAccess(courseId, user);
+    const buffer = await this.reports.generateAnnualPdf(courseId, year, user.sub);
+    void res.header('Content-Type', 'application/pdf');
+    void res.header('Content-Disposition', `attachment; filename="anual-${year}.pdf"`);
+    void res.header('Cache-Control', 'no-store');
+    void res.send(buffer);
+  }
+
   @Get('course/:courseId/semester/pdf')
   @ApiOperation({ summary: 'Informe semestral PDF consolidado' })
   async getSemesterPdf(

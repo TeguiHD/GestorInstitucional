@@ -6,7 +6,6 @@ import {
   ChevronRight,
   Download,
   FileText,
-  QrCode,
   Upload,
   Users,
   BookOpen,
@@ -22,7 +21,6 @@ import { api, downloadBlob } from '@/lib/api';
 import { attendanceQueue } from '@/lib/attendance-queue';
 import { useAttendanceSync } from '@/hooks/useAttendanceSync';
 import { cn } from '@/lib/cn';
-import { QrScanner } from './components/QrScanner';
 import { CourseStatsTab } from './components/CourseStatsTab';
 import { StudentsTab } from './components/StudentsTab';
 import { JustificationsTab } from './components/JustificationsTab';
@@ -169,7 +167,6 @@ export function CourseDetailPage() {
 
   const [selectedDate, setSelectedDate] = useState(() => new Date().toISOString().split('T')[0]!);
   const [localStatus, setLocalStatus] = useState<Record<string, StatusKey>>({});
-  const [showQr, setShowQr] = useState(false);
   const [sheetFor, setSheetFor] = useState<string | null>(null);
   const longPressTimer = useRef<number | null>(null);
   const longPressFired = useRef(false);
@@ -375,7 +372,7 @@ export function CourseDetailPage() {
   const headTeacher = course?.teachers.find((t) => t.isHead) ?? course?.teachers[0];
 
   return (
-    <div className="space-y-0 -mt-4 lg:-mt-6">
+    <div className="max-w-full space-y-0 overflow-hidden -mt-4 lg:-mt-6">
       {/* ── Header ─────────────────────────────────────── */}
       <div
         className="px-4 pt-6 pb-5 lg:px-6 -mx-4 lg:-mx-6 mb-5"
@@ -391,7 +388,7 @@ export function CourseDetailPage() {
         </Link>
 
         <div className="flex items-start justify-between gap-4 flex-wrap">
-          <div>
+          <div className="min-w-0">
             <div className="flex items-center gap-2 mb-1">
               <div className="size-9 rounded-lg bg-white/15 flex items-center justify-center">
                 <BookOpen className="size-5 text-white" />
@@ -420,10 +417,10 @@ export function CourseDetailPage() {
           </div>
 
           {/* Actions */}
-          <div className="flex items-center gap-2 flex-wrap">
+          <div className="flex w-full items-center gap-2 overflow-x-auto pb-1 sm:w-auto sm:flex-wrap sm:overflow-visible sm:pb-0">
             <button
               onClick={() => fileInputRef.current?.click()}
-              className="flex items-center gap-1.5 text-xs px-3 py-2 rounded-lg bg-white/15 hover:bg-white/25 text-white transition"
+              className="flex shrink-0 items-center gap-1.5 text-xs px-3 py-2 rounded-lg bg-white/15 hover:bg-white/25 text-white transition"
             >
               <Upload className="size-3.5" />
               Importar
@@ -440,13 +437,6 @@ export function CourseDetailPage() {
               }}
             />
             <button
-              onClick={() => setShowQr(true)}
-              className="flex items-center gap-1.5 text-xs px-3 py-2 rounded-lg bg-white/15 hover:bg-white/25 text-white transition"
-            >
-              <QrCode className="size-3.5" />
-              QR
-            </button>
-            <button
               type="button"
               onClick={() =>
                 void downloadBlob(
@@ -454,7 +444,7 @@ export function CourseDetailPage() {
                   `asistencia-${year}-${String(month).padStart(2, '0')}.xlsx`,
                 ).catch((e: Error) => toast.error(e.message))
               }
-              className="flex items-center gap-1.5 text-xs px-3 py-2 rounded-lg bg-white/15 hover:bg-white/25 text-white transition"
+              className="flex shrink-0 items-center gap-1.5 text-xs px-3 py-2 rounded-lg bg-white/15 hover:bg-white/25 text-white transition"
             >
               <Download className="size-3.5" />
               Excel
@@ -467,7 +457,7 @@ export function CourseDetailPage() {
                   `informe-${year}-${String(month).padStart(2, '0')}.pdf`,
                 ).catch((e: Error) => toast.error(e.message))
               }
-              className="flex items-center gap-1.5 text-xs px-3 py-2 rounded-lg bg-white/15 hover:bg-white/25 text-white transition"
+              className="flex shrink-0 items-center gap-1.5 text-xs px-3 py-2 rounded-lg bg-white/15 hover:bg-white/25 text-white transition"
             >
               <FileText className="size-3.5" />
               PDF
@@ -476,22 +466,24 @@ export function CourseDetailPage() {
         </div>
 
         {/* Tab bar — inside header */}
-        <div className="flex items-center gap-1 mt-5 -mb-5 border-b border-white/20">
-          {TABS.map(({ id, label, icon: Icon }) => (
-            <button
-              key={id}
-              onClick={() => setActiveTab(id)}
-              className={cn(
-                'flex items-center gap-1.5 px-3 py-2.5 text-xs font-medium border-b-2 transition-colors -mb-px whitespace-nowrap',
-                activeTab === id
-                  ? 'border-white text-white'
-                  : 'border-transparent text-white/60 hover:text-white/90',
-              )}
-            >
-              <Icon className="size-3.5" />
-              {label}
-            </button>
-          ))}
+        <div className="mt-5 -mb-5 overflow-x-auto border-b border-white/20">
+          <div className="flex min-w-max items-center gap-1">
+            {TABS.map(({ id, label, icon: Icon }) => (
+              <button
+                key={id}
+                onClick={() => setActiveTab(id)}
+                className={cn(
+                  'flex items-center gap-1.5 px-3 py-2.5 text-xs font-medium border-b-2 transition-colors -mb-px whitespace-nowrap',
+                  activeTab === id
+                    ? 'border-white text-white'
+                    : 'border-transparent text-white/60 hover:text-white/90',
+                )}
+              >
+                <Icon className="size-3.5" />
+                {label}
+              </button>
+            ))}
+          </div>
         </div>
       </div>
 
@@ -648,7 +640,6 @@ export function CourseDetailPage() {
                     <th className="text-left px-4 py-3 w-10">#</th>
                     <th className="text-left px-4 py-3">Alumno</th>
                     <th className="text-center px-4 py-3 w-28">Estado</th>
-                    <th className="w-10" />
                   </tr>
                 </thead>
                 <tbody>
@@ -692,21 +683,6 @@ export function CourseDetailPage() {
                           >
                             <span className="hidden sm:inline">{cfg.label}</span>
                             <span className="sm:hidden text-sm">{cfg.short}</span>
-                          </button>
-                        </td>
-                        <td className="px-2 py-3 text-center">
-                          <button
-                            type="button"
-                            onClick={() =>
-                              void downloadBlob(
-                                `/students/${student.id}/qr`,
-                                `qr-${student.rut}.png`,
-                              ).catch((e: Error) => toast.error(e.message))
-                            }
-                            className="inline-flex items-center justify-center size-8 rounded-lg text-muted-foreground hover:text-primary hover:bg-muted transition"
-                            title="Descargar QR"
-                          >
-                            <QrCode className="size-4" />
                           </button>
                         </td>
                       </tr>
@@ -781,21 +757,6 @@ export function CourseDetailPage() {
             </button>
           </div>
         </div>
-      )}
-
-      {/* QR Scanner overlay */}
-      {showQr && (
-        <QrScanner
-          onScan={(id) => {
-            if (!courseStudents.some((student) => student.id === id)) {
-              toast.error('QR no corresponde a este curso');
-              return;
-            }
-            setLocalStatus((p) => ({ ...p, [id]: 'PRESENT' }));
-            toast.success('Alumno marcado presente');
-          }}
-          onClose={() => setShowQr(false)}
-        />
       )}
 
       {/* Long-press status sheet */}

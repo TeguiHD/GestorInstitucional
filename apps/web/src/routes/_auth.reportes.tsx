@@ -68,11 +68,11 @@ function ReportsPage() {
   const courseLabel = courses?.find((c) => c.id === courseId)?.code ?? 'CURSO';
 
   return (
-    <div className="space-y-6 max-w-3xl">
+    <div className="max-w-3xl space-y-6 overflow-hidden">
       <div>
         <h1 className="text-2xl font-bold tracking-tight">Reportes</h1>
         <p className="text-sm text-muted-foreground">
-          Exporta asistencia en Excel o PDF — semanal, mensual o semestral
+          Exporta asistencia en Excel o PDF — semanal, mensual, semestral o anual
         </p>
       </div>
 
@@ -152,7 +152,7 @@ function ReportsPage() {
               ))}
             </select>
           </div>
-          <div className="flex gap-2 mt-4">
+          <div className="flex flex-wrap gap-2 mt-4">
             <button
               onClick={() =>
                 download(
@@ -229,7 +229,7 @@ function ReportsPage() {
               <option value={2}>2do Semestre (Jul–Dic)</option>
             </select>
           </div>
-          <div className="flex gap-2 mt-4">
+          <div className="flex flex-wrap gap-2 mt-4">
             <button
               onClick={() =>
                 download(
@@ -257,6 +257,57 @@ function ReportsPage() {
             >
               <Download className="size-4" />
               {loading === 'sem-pdf' ? 'Generando…' : 'PDF semestral'}
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {/* Annual */}
+      <div className="rounded-xl border border-border bg-background p-5 space-y-3">
+        <h2 className="text-sm font-semibold">Reporte Anual</h2>
+        <p className="text-xs text-muted-foreground">
+          Incluye Enero–Diciembre con resumen consolidado del curso.
+        </p>
+        <div className="flex items-center gap-3 flex-wrap">
+          <div>
+            <label className="text-xs text-muted-foreground block mb-1">Año</label>
+            <input
+              type="number"
+              value={year}
+              onChange={(e) => setYear(Number(e.target.value))}
+              min={2020}
+              max={2030}
+              className="w-24 rounded-lg border border-border px-3 py-1.5 text-sm bg-background"
+            />
+          </div>
+          <div className="flex flex-wrap gap-2 mt-4">
+            <button
+              onClick={() =>
+                download(
+                  'annual-xlsx',
+                  `/reports/course/${courseId}/annual?year=${year}`,
+                  `anual-${year}-${courseLabel}.xlsx`,
+                )
+              }
+              disabled={loading === 'annual-xlsx'}
+              className="flex items-center gap-2 text-sm px-4 py-2 rounded-lg bg-primary text-primary-foreground disabled:opacity-50"
+            >
+              <Download className="size-4" />
+              {loading === 'annual-xlsx' ? 'Generando…' : 'Excel anual'}
+            </button>
+            <button
+              onClick={() =>
+                download(
+                  'annual-pdf',
+                  `/reports/course/${courseId}/annual/pdf?year=${year}`,
+                  `anual-${year}-${courseLabel}.pdf`,
+                )
+              }
+              disabled={loading === 'annual-pdf'}
+              className="flex items-center gap-2 text-sm px-4 py-2 rounded-lg border border-border hover:bg-muted disabled:opacity-50"
+            >
+              <Download className="size-4" />
+              {loading === 'annual-pdf' ? 'Generando…' : 'PDF anual'}
             </button>
           </div>
         </div>

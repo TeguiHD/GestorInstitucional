@@ -1,5 +1,4 @@
-import { Body, Controller, Delete, Get, Param, Post, Query, Res, UseGuards } from '@nestjs/common';
-import type { FastifyReply } from 'fastify';
+import { Body, Controller, Delete, Get, Param, Post, Query, UseGuards } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { IsBoolean, IsOptional, IsString, MaxLength } from 'class-validator';
 import { ApiProperty } from '@nestjs/swagger';
@@ -60,17 +59,6 @@ export class StudentsController {
   async findOne(@Param('id') id: string, @CurrentUser() user: JwtPayload) {
     await this.students.assertCanAccessStudent(id, user);
     return this.students.findById(id);
-  }
-
-  @Get(':id/qr')
-  @ApiOperation({ summary: 'Código QR del alumno (PNG) para registro rápido de asistencia' })
-  async getQr(@Param('id') id: string, @CurrentUser() user: JwtPayload, @Res() res: FastifyReply) {
-    await this.students.assertCanAccessStudent(id, user);
-    const buf = await this.students.getQrCode(id);
-    void res.header('Content-Type', 'image/png');
-    void res.header('Content-Disposition', `inline; filename="qr-${id}.png"`);
-    void res.header('Cache-Control', 'public, max-age=86400');
-    void res.send(buf);
   }
 
   @Get(':id/stats')

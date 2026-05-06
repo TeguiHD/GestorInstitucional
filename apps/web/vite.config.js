@@ -19,6 +19,8 @@ export default defineConfig(function (_a) {
         registerType: 'autoUpdate',
         manifest: false, // use existing public/manifest.webmanifest
         workbox: {
+          clientsClaim: true,
+          skipWaiting: true,
           globPatterns: ['**/*.{js,css,html,svg,png,ico,woff2}'],
           runtimeCaching: [
             {
@@ -97,7 +99,7 @@ export default defineConfig(function (_a) {
               'sonner',
               'tailwind-merge',
             ],
-            utilities: ['date-fns', 'dompurify', 'jsqr', 'zustand'],
+            utilities: ['date-fns', 'dompurify', 'zustand'],
           },
         },
       },

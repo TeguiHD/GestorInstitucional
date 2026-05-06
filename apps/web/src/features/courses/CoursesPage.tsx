@@ -42,9 +42,9 @@ export function CoursesPage() {
   };
 
   return (
-    <div className="space-y-6">
+    <div className="max-w-full space-y-6 overflow-hidden">
       <div className="flex items-start justify-between">
-        <div>
+        <div className="min-w-0">
           <h1 className="text-2xl font-bold tracking-tight">Cursos</h1>
           {courses && (
             <p className="text-sm text-muted-foreground mt-1">
@@ -62,7 +62,7 @@ export function CoursesPage() {
           description="Tu cuenta no está vinculada a un colegio. Contacta a un administrador."
         />
       ) : isLoading ? (
-        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+        <div className="grid grid-cols-[minmax(0,1fr)] gap-3 sm:grid-cols-2 lg:grid-cols-3">
           {Array.from({ length: 6 }).map((_, i) => (
             <div key={i} className="h-28 animate-pulse bg-muted rounded-xl" />
           ))}
@@ -81,7 +81,7 @@ export function CoursesPage() {
             <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide mb-3">
               {level}
             </h2>
-            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+            <div className="grid grid-cols-[minmax(0,1fr)] gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
               {levelCourses.map((course) => {
                 const teacher = headTeacher(course);
                 return (
@@ -89,7 +89,7 @@ export function CoursesPage() {
                     key={course.id}
                     to="/cursos/$courseId"
                     params={{ courseId: course.id }}
-                    className="group rounded-xl border border-border bg-background p-5 hover:border-primary/50 hover:shadow-sm transition space-y-3"
+                    className="group min-w-0 rounded-xl border border-border bg-background p-5 hover:border-primary/50 hover:shadow-sm transition space-y-3"
                   >
                     <div className="flex items-center gap-3">
                       <div className="size-10 rounded-lg bg-primary/10 flex items-center justify-center flex-shrink-0">

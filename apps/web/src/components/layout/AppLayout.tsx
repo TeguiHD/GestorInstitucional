@@ -91,6 +91,7 @@ function NotificationBell({ schoolId }: { schoolId?: string }) {
         onClick={() => setOpen((v) => !v)}
         className="relative size-9 flex items-center justify-center rounded-lg hover:bg-muted transition text-muted-foreground"
         title="Alertas recientes"
+        aria-label="Alertas recientes"
       >
         <Bell className="size-4" />
         {last24h.length > 0 && (
@@ -100,7 +101,7 @@ function NotificationBell({ schoolId }: { schoolId?: string }) {
       {open && (
         <>
           <div className="fixed inset-0 z-10" onClick={() => setOpen(false)} />
-          <div className="absolute right-0 top-11 z-20 w-80 rounded-xl border border-border bg-background shadow-lg overflow-hidden">
+          <div className="absolute right-0 top-11 z-20 w-[calc(100vw-2rem)] max-w-80 rounded-xl border border-border bg-background shadow-lg overflow-hidden">
             <div className="px-4 py-3 border-b border-border flex items-center justify-between">
               <p className="text-sm font-semibold">Alertas recientes</p>
               {last24h.length > 0 && (
@@ -258,18 +259,20 @@ export function AppLayout({ children }: Props) {
       </aside>
 
       <div className="flex flex-1 flex-col min-w-0 overflow-hidden">
-        <header className="flex h-16 items-center gap-4 border-b border-border bg-background px-4 lg:px-6 shrink-0">
+        <header className="flex h-16 items-center gap-2 overflow-hidden border-b border-border bg-background px-4 lg:gap-4 lg:px-6 shrink-0">
           <button
-            className="lg:hidden text-muted-foreground hover:text-foreground"
+            className="shrink-0 lg:hidden text-muted-foreground hover:text-foreground"
             onClick={() => setSidebarOpen(true)}
             aria-label="Abrir menú"
           >
             <Menu className="size-5" />
           </button>
-          <div className="flex-1" />
-          {roles.includes('SUPER_ADMIN') && <SchoolSelector />}
-          {isStaff && user?.schoolId && <NotificationBell schoolId={user.schoolId} />}
-          <ThemeToggle />
+          <div className="min-w-0 flex-1" />
+          <div className="ml-auto flex min-w-0 shrink items-center gap-1.5 sm:gap-2">
+            {roles.includes('SUPER_ADMIN') && <SchoolSelector />}
+            {isStaff && user?.schoolId && <NotificationBell schoolId={user.schoolId} />}
+            <ThemeToggle />
+          </div>
         </header>
 
         {!online && (
@@ -278,7 +281,7 @@ export function AppLayout({ children }: Props) {
             Sin conexión — los cambios se guardarán localmente y sincronizarán al reconectar.
           </div>
         )}
-        <main className="flex-1 overflow-y-auto p-4 lg:p-6">{children}</main>
+        <main className="flex-1 overflow-x-hidden overflow-y-auto p-4 lg:p-6">{children}</main>
       </div>
     </div>
   );
@@ -309,7 +312,7 @@ function NavLink({
         active ? 'bg-primary text-primary-foreground shadow-sm' : 'text-foreground hover:bg-muted',
       )}
     >
-      <Icon className="size-4 shrink-0" />
+      <Icon className="size-4 shrink-0" aria-hidden="true" />
       {label}
     </Link>
   );

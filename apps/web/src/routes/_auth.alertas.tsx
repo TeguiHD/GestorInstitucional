@@ -25,6 +25,11 @@ type AlertRule = {
   notifyRoles: string;
   createdAt: string;
 };
+type FiredAlert = {
+  id: string;
+  firedAt: string;
+  rule: { trigger: AlertTrigger; threshold: number | null };
+};
 
 const TRIGGER_LABELS: Record<AlertTrigger, string> = {
   STUDENT_BELOW_THRESHOLD: 'Alumno bajo umbral de asistencia',
@@ -87,6 +92,11 @@ function AlertasPage() {
     queryFn: () => api.get(`/alerts/school/${schoolId}/rules`),
     enabled: !!schoolId,
   });
+  const { data: recentFired = [] } = useQuery<FiredAlert[]>({
+    queryKey: ['recent-fired-alerts-page', schoolId],
+    queryFn: () => api.get('/alerts/fired/recent'),
+    enabled: !!schoolId,
+  });
 
   const upsert = useMutation({
     mutationFn: (body: object) => api.put(`/alerts/school/${schoolId}/rules`, body),
@@ -108,6 +118,15 @@ function AlertasPage() {
   });
 
   const existingTriggers = new Set(rules.map((r) => r.trigger));
+  const enabledCount = rules.filter((rule) => rule.enabled).length;
+  const lastRunLabel = recentFired[0]
+    ? new Intl.DateTimeFormat('es-CL', {
+        day: '2-digit',
+        month: 'short',
+        hour: '2-digit',
+        minute: '2-digit',
+      }).format(new Date(recentFired[0].firedAt))
+    : 'Sin disparos';
 
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -124,15 +143,16 @@ function AlertasPage() {
   const availableTriggers = ALL_TRIGGERS.filter((t) => !existingTriggers.has(t));
 
   return (
-    <div className="space-y-6">
-      <div className="flex items-center justify-between">
+    <div className="space-y-6 overflow-hidden">
+      <div className="flex items-start justify-between gap-3 flex-wrap">
         <div>
           <h1 className="text-2xl font-bold tracking-tight">Alertas automáticas</h1>
           <p className="text-sm text-muted-foreground mt-1">
-            Reglas que se evalúan diariamente y notifican por correo
+            Reglas preventivas para detectar inasistencia, cursos bajo umbral y registros
+            pendientes.
           </p>
         </div>
-        <div className="flex gap-2">
+        <div className="flex gap-2 overflow-x-auto pb-1">
           {canEdit && (
             <button
               onClick={() => trigger.mutate()}
@@ -167,6 +187,44 @@ function AlertasPage() {
         </div>
       )}
 
+      <div className="grid gap-3 sm:grid-cols-3">
+        <div className="rounded-xl border border-border bg-background p-4">
+          <p className="text-xs text-muted-foreground">Reglas activas</p>
+          <p className="mt-1 text-2xl font-bold tabular-nums">
+            {enabledCount}/{rules.length}
+          </p>
+        </div>
+        <div className="rounded-xl border border-border bg-background p-4">
+          <p className="text-xs text-muted-foreground">Últimas alertas</p>
+          <p className="mt-1 text-2xl font-bold tabular-nums">{recentFired.length}</p>
+        </div>
+        <div className="rounded-xl border border-border bg-background p-4">
+          <p className="text-xs text-muted-foreground">Último disparo</p>
+          <p className="mt-1 text-lg font-semibold">{lastRunLabel}</p>
+        </div>
+      </div>
+
+      {recentFired.length > 0 && (
+        <div className="rounded-xl border border-border bg-background p-5 space-y-3">
+          <h2 className="text-sm font-semibold">Alertas recientes</h2>
+          <div className="divide-y divide-border">
+            {recentFired.slice(0, 5).map((alert) => (
+              <div key={alert.id} className="flex items-center justify-between gap-3 py-2 text-sm">
+                <span className="font-medium">{TRIGGER_LABELS[alert.rule.trigger]}</span>
+                <span className="shrink-0 text-xs text-muted-foreground">
+                  {new Intl.DateTimeFormat('es-CL', {
+                    day: '2-digit',
+                    month: 'short',
+                    hour: '2-digit',
+                    minute: '2-digit',
+                  }).format(new Date(alert.firedAt))}
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
       {showForm && canEdit && (
         <form
           onSubmit={handleSubmit}
@@ -175,8 +233,11 @@ function AlertasPage() {
           <h2 className="font-semibold text-base">Nueva regla de alerta</h2>
           <div className="grid gap-4 sm:grid-cols-2">
             <div className="flex flex-col gap-1">
-              <label className="text-xs text-muted-foreground font-medium">Tipo de alerta</label>
+              <label htmlFor="alert-trigger" className="text-xs text-muted-foreground font-medium">
+                Tipo de alerta
+              </label>
               <select
+                id="alert-trigger"
                 value={form.trigger}
                 onChange={(e) =>
                   setForm((f) => ({ ...f, trigger: e.target.value as AlertTrigger }))
@@ -192,7 +253,10 @@ function AlertasPage() {
               <p className="text-xs text-muted-foreground">{TRIGGER_DESCRIPTIONS[form.trigger]}</p>
             </div>
             <div className="flex flex-col gap-1">
-              <label className="text-xs text-muted-foreground font-medium">
+              <label
+                htmlFor="alert-threshold"
+                className="text-xs text-muted-foreground font-medium"
+              >
                 {form.trigger === 'TEACHER_NO_RECORD'
                   ? 'Días sin registro'
                   : form.trigger === 'STUDENT_CONSECUTIVE_ABSENCES'
@@ -200,6 +264,7 @@ function AlertasPage() {
                     : 'Umbral de asistencia (%)'}
               </label>
               <input
+                id="alert-threshold"
                 type="number"
                 value={form.threshold}
                 onChange={(e) => setForm((f) => ({ ...f, threshold: e.target.value }))}
@@ -209,10 +274,11 @@ function AlertasPage() {
               />
             </div>
             <div className="flex flex-col gap-1">
-              <label className="text-xs text-muted-foreground font-medium">
+              <label htmlFor="alert-window" className="text-xs text-muted-foreground font-medium">
                 Ventana de análisis (días)
               </label>
               <input
+                id="alert-window"
                 type="number"
                 value={form.windowDays}
                 onChange={(e) => setForm((f) => ({ ...f, windowDays: e.target.value }))}
@@ -309,10 +375,16 @@ function AlertasPage() {
               </div>
               {canEdit && (
                 <button
-                  onClick={() => remove.mutate(rule.id)}
+                  onClick={() => {
+                    const ok = window.confirm(
+                      `Eliminar regla "${TRIGGER_LABELS[rule.trigger]}"? Esta acción detiene sus notificaciones.`,
+                    );
+                    if (ok) remove.mutate(rule.id);
+                  }}
                   disabled={remove.isPending}
                   className="text-muted-foreground hover:text-destructive transition-colors p-1"
                   title="Eliminar regla"
+                  aria-label={`Eliminar regla ${TRIGGER_LABELS[rule.trigger]}`}
                 >
                   <Trash2 className="h-4 w-4" />
                 </button>

@@ -848,6 +848,133 @@ export class ReportsService {
     return Buffer.from(await wb.xlsx.writeBuffer());
   }
 
+  async generateAnnualExcel(
+    courseId: string,
+    year: number,
+    requestedById: string,
+  ): Promise<Buffer> {
+    const months = Array.from({ length: 12 }, (_, i) => i + 1);
+
+    const course = await this.prisma.course.findUniqueOrThrow({
+      where: { id: courseId },
+      include: {
+        school: true,
+        teachers: { include: { user: true }, where: { isHead: true }, take: 1 },
+        students: { where: { active: true }, orderBy: { enrollmentNumber: 'asc' } },
+      },
+    });
+
+    const SYMBOL: Record<string, string> = {
+      PRESENT: '1',
+      ABSENT: '0',
+      LATE: 'AT',
+      JUSTIFIED: 'J',
+      WITHDRAWN: '-',
+    };
+    const wb = new ExcelJS.Workbook();
+    wb.creator = 'Asistencia CSSP';
+
+    const summary = new Map<string, { p: number; a: number; j: number }>();
+    for (const s of course.students) summary.set(s.id, { p: 0, a: 0, j: 0 });
+
+    for (const month of months) {
+      const from = new Date(year, month - 1, 1);
+      const to = new Date(year, month, 0);
+      const records = await this.prisma.attendanceRecord.findMany({
+        where: { courseId, date: { gte: from, lte: to } },
+        select: { studentId: true, date: true, status: true },
+      });
+      const recordMap = new Map<string, Map<string, string>>();
+      for (const r of records) {
+        const key = r.date.toISOString().split('T')[0]!;
+        if (!recordMap.has(r.studentId)) recordMap.set(r.studentId, new Map());
+        recordMap.get(r.studentId)!.set(key, SYMBOL[r.status] ?? '-');
+      }
+      this.buildMonthSheet(wb, { course, year, month, to, records: recordMap });
+
+      for (const r of records) {
+        const e = summary.get(r.studentId);
+        if (!e) continue;
+        if (r.status === 'PRESENT' || r.status === 'LATE') e.p++;
+        else if (r.status === 'ABSENT') e.a++;
+        else if (r.status === 'JUSTIFIED') e.j++;
+      }
+    }
+
+    const thin = { style: 'thin' as const, color: { argb: 'FF000000' } };
+    const borderAll = { top: thin, bottom: thin, left: thin, right: thin };
+    const centerMid = { horizontal: 'center' as const, vertical: 'middle' as const };
+    const BLUE = 'FF1F4E79';
+    const ws = wb.addWorksheet('RESUMEN ANUAL', { views: [{ showGridLines: false }] });
+    ws.getColumn(1).width = 5;
+    ws.getColumn(2).width = 35;
+    ws.getColumn(3).width = 9;
+    ws.getColumn(4).width = 9;
+    ws.getColumn(5).width = 10;
+    ws.getColumn(6).width = 9;
+
+    ws.mergeCells('A1:F1');
+    ws.getCell('A1').value = `${course.school.name} — RESUMEN ANUAL ${year} — ${course.name}`;
+    ws.getCell('A1').font = { bold: true, size: 13, color: { argb: 'FFFFFFFF' } };
+    ws.getCell('A1').fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: BLUE } };
+    ws.getCell('A1').alignment = centerMid;
+    ws.getRow(1).height = 22;
+
+    ['Nº', 'Alumno', 'Asist.', 'Ausent.', '% Asist.', 'Justif.'].forEach((h, i) => {
+      const c = ws.getCell(2, i + 1);
+      c.value = h;
+      c.font = { bold: true, color: { argb: 'FFFFFFFF' } };
+      c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: BLUE } };
+      c.alignment = centerMid;
+      c.border = borderAll;
+    });
+
+    course.students.forEach((student, idx) => {
+      const r = idx + 3;
+      const e = summary.get(student.id) ?? { p: 0, a: 0, j: 0 };
+      const total = e.p + e.a + e.j;
+      const pct = total > 0 ? e.p / total : 0;
+      ws.getCell(r, 1).value = idx + 1;
+      ws.getCell(r, 1).border = borderAll;
+      ws.getCell(r, 1).alignment = centerMid;
+      ws.getCell(r, 2).value =
+        `${student.lastName}${student.secondLastName ? ' ' + student.secondLastName : ''}, ${student.firstName}`;
+      ws.getCell(r, 2).border = borderAll;
+      ws.getCell(r, 3).value = e.p;
+      ws.getCell(r, 3).border = borderAll;
+      ws.getCell(r, 3).alignment = centerMid;
+      ws.getCell(r, 3).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFE2EFDA' } };
+      ws.getCell(r, 4).value = e.a;
+      ws.getCell(r, 4).border = borderAll;
+      ws.getCell(r, 4).alignment = centerMid;
+      ws.getCell(r, 4).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFCE4E4' } };
+      const pctCell = ws.getCell(r, 5);
+      pctCell.value = pct;
+      pctCell.numFmt = '0.0%';
+      pctCell.border = borderAll;
+      pctCell.alignment = centerMid;
+      pctCell.font = { bold: true };
+      pctCell.fill = {
+        type: 'pattern',
+        pattern: 'solid',
+        fgColor: { argb: pct >= 0.9 ? 'FFE2EFDA' : pct >= 0.7 ? 'FFFFF2CC' : 'FFFCE4E4' },
+      };
+      ws.getCell(r, 6).value = e.j;
+      ws.getCell(r, 6).border = borderAll;
+      ws.getCell(r, 6).alignment = centerMid;
+      ws.getCell(r, 6).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFFF2CC' } };
+    });
+
+    await this.audit.log({
+      userId: requestedById,
+      action: 'EXPORT',
+      entity: 'Course',
+      entityId: courseId,
+      meta: { year, format: 'annual_xlsx' },
+    });
+    return Buffer.from(await wb.xlsx.writeBuffer());
+  }
+
   async generateSemesterPdf(
     courseId: string,
     year: number,
@@ -1018,6 +1145,174 @@ export class ReportsService {
       entity: 'Course',
       entityId: courseId,
       meta: { year, semester, format: 'semester_pdf' },
+    });
+    return Buffer.concat(chunks);
+  }
+
+  async generateAnnualPdf(courseId: string, year: number, requestedById: string): Promise<Buffer> {
+    const months = Array.from({ length: 12 }, (_, i) => i + 1);
+
+    const course = await this.prisma.course.findUniqueOrThrow({
+      where: { id: courseId },
+      include: {
+        school: true,
+        teachers: { include: { user: true }, where: { isHead: true }, take: 1 },
+        students: { where: { active: true }, orderBy: { enrollmentNumber: 'asc' } },
+      },
+    });
+
+    const perStudent = new Map<string, { p: number; a: number; l: number; j: number }>();
+    for (const s of course.students) perStudent.set(s.id, { p: 0, a: 0, l: 0, j: 0 });
+
+    for (const month of months) {
+      const from = new Date(year, month - 1, 1);
+      const to = new Date(year, month, 0);
+      const records = await this.prisma.attendanceRecord.findMany({
+        where: { courseId, date: { gte: from, lte: to } },
+        select: { studentId: true, status: true },
+      });
+      for (const r of records) {
+        const e = perStudent.get(r.studentId);
+        if (!e) continue;
+        if (r.status === 'PRESENT') e.p++;
+        else if (r.status === 'ABSENT') e.a++;
+        else if (r.status === 'LATE') e.l++;
+        else if (r.status === 'JUSTIFIED') e.j++;
+      }
+    }
+
+    const doc = new PDFDocument({ size: 'A4', margin: 48 });
+    const chunks: Buffer[] = [];
+    doc.on('data', (c) => chunks.push(c as Buffer));
+    const done = new Promise<void>((resolve) => doc.on('end', () => resolve()));
+
+    const logoPath = process.env.SCHOOL_LOGO_PATH ?? join(process.cwd(), 'assets', 'logo-cssp.png');
+    if (existsSync(logoPath)) {
+      try {
+        doc.image(logoPath, 48, 40, { fit: [60, 60] });
+      } catch {
+        /* ignore */
+      }
+    }
+
+    doc
+      .fontSize(16)
+      .fillColor('#1F4E79')
+      .font('Helvetica-Bold')
+      .text(course.school.name.toUpperCase(), 120, 48, { align: 'left' });
+    doc
+      .fontSize(11)
+      .fillColor('#333')
+      .font('Helvetica')
+      .text(`Informe Anual de Asistencia — ${year}`, 120, 70);
+    doc
+      .fontSize(9)
+      .fillColor('#666')
+      .text(`Emitido: ${new Date().toLocaleDateString('es-CL')}`, 120, 86);
+    doc.moveTo(48, 115).lineTo(547, 115).strokeColor('#1F4E79').lineWidth(1.2).stroke();
+
+    doc
+      .fontSize(13)
+      .fillColor('#000')
+      .font('Helvetica-Bold')
+      .text(`${course.name} — ${year}`, 48, 128);
+    const head = course.teachers[0]?.user;
+    doc
+      .fontSize(10)
+      .fillColor('#555')
+      .font('Helvetica')
+      .text(`Profesor jefe: ${head ? `${head.firstName} ${head.lastName}` : '—'}`, 48, 148)
+      .text(`Periodo: ${MONTH_NAMES_ES[0]} – ${MONTH_NAMES_ES[11]}`, 48, 162);
+
+    let y = 190;
+    const rowH = 18;
+    doc.rect(48, y, 499, rowH).fill('#1F4E79');
+    doc.fillColor('#fff').font('Helvetica-Bold').fontSize(9);
+    doc.text('N°', 54, y + 5, { width: 28 });
+    doc.text('Alumno', 88, y + 5, { width: 230 });
+    doc.text('RUT', 322, y + 5, { width: 70 });
+    doc.text('P', 396, y + 5, { width: 22, align: 'center' });
+    doc.text('A', 420, y + 5, { width: 22, align: 'center' });
+    doc.text('AT', 444, y + 5, { width: 22, align: 'center' });
+    doc.text('J', 468, y + 5, { width: 22, align: 'center' });
+    doc.text('% Asist.', 494, y + 5, { width: 50, align: 'center' });
+    y += rowH;
+
+    doc.font('Helvetica').fontSize(9).fillColor('#000');
+    let totalRate = 0;
+    let totalStudents = 0;
+    for (const [i, s] of course.students.entries()) {
+      if (y > 760) {
+        doc.addPage();
+        y = 60;
+      }
+      const c = perStudent.get(s.id)!;
+      const tot = c.p + c.a + c.l + c.j;
+      const rate = tot > 0 ? (c.p + c.l) / tot : 0;
+      if (tot > 0) {
+        totalRate += rate;
+        totalStudents++;
+      }
+      const band = i % 2 === 0 ? '#F5F8FB' : '#FFFFFF';
+      doc.rect(48, y, 499, rowH).fill(band);
+      doc.fillColor('#000');
+      doc.text(String(s.enrollmentNumber), 54, y + 5, { width: 28 });
+      doc.text(
+        `${s.lastName}${s.secondLastName ? ' ' + s.secondLastName : ''}, ${s.firstName}`,
+        88,
+        y + 5,
+        { width: 230, ellipsis: true },
+      );
+      doc.text(s.rut, 322, y + 5, { width: 70 });
+      doc.text(String(c.p), 396, y + 5, { width: 22, align: 'center' });
+      doc.text(String(c.a), 420, y + 5, { width: 22, align: 'center' });
+      doc.text(String(c.l), 444, y + 5, { width: 22, align: 'center' });
+      doc.text(String(c.j), 468, y + 5, { width: 22, align: 'center' });
+      const rateColor = rate >= 0.9 ? '#15803d' : rate >= 0.7 ? '#b45309' : '#b91c1c';
+      doc.fillColor(rateColor).font('Helvetica-Bold');
+      doc.text(tot > 0 ? `${(rate * 100).toFixed(1)}%` : '—', 494, y + 5, {
+        width: 50,
+        align: 'center',
+      });
+      doc.fillColor('#000').font('Helvetica');
+      y += rowH;
+    }
+
+    const avg = totalStudents > 0 ? totalRate / totalStudents : 0;
+    y += 10;
+    doc.rect(48, y, 499, 24).fill('#DCE6F1');
+    doc.fillColor('#1F4E79').font('Helvetica-Bold').fontSize(10);
+    doc.text(`Asistencia promedio anual del curso: ${(avg * 100).toFixed(1)}%`, 54, y + 7, {
+      width: 499 - 12,
+    });
+    y += 48;
+    if (y > 720) {
+      doc.addPage();
+      y = 80;
+    }
+    doc.fillColor('#000').font('Helvetica').fontSize(9);
+    doc.text('_______________________________________', 80, y + 40);
+    doc.text('_______________________________________', 340, y + 40);
+    doc.text('Profesor Jefe', 130, y + 55);
+    doc.text('Dirección', 400, y + 55);
+    doc
+      .fontSize(7)
+      .fillColor('#999')
+      .text(
+        `Documento generado automáticamente — ${course.school.name} · ${new Date().toISOString()}`,
+        48,
+        800,
+        { width: 499, align: 'center' },
+      );
+
+    doc.end();
+    await done;
+    await this.audit.log({
+      userId: requestedById,
+      action: 'EXPORT',
+      entity: 'Course',
+      entityId: courseId,
+      meta: { year, format: 'annual_pdf' },
     });
     return Buffer.concat(chunks);
   }
