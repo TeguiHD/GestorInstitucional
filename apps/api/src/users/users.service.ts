@@ -166,7 +166,7 @@ export class UsersService {
       return { id: exists.id, email: exists.email, isExisting: true, tempPassword: null };
     }
 
-    const tempPassword = crypto.randomBytes(6).toString('base64url');
+    const tempPassword = crypto.randomBytes(12).toString('base64url');
     const passwordHash = await this.passwords.hash(tempPassword);
 
     const user = await this.prisma.user.create({
@@ -224,7 +224,7 @@ export class UsersService {
       return { id: exists.id, email: exists.email, isExisting: true, tempPassword: null };
     }
 
-    const tempPassword = crypto.randomBytes(6).toString('base64url'); // 8-char URL-safe
+    const tempPassword = crypto.randomBytes(12).toString('base64url');
     const passwordHash = await this.passwords.hash(tempPassword);
 
     const user = await this.prisma.user.create({
@@ -261,9 +261,23 @@ export class UsersService {
 
   async resetPassword(userId: string, actor?: JwtPayload): Promise<{ tempPassword: string }> {
     if (actor) await this.assertCanManageUser(actor, userId);
-    const tempPassword = crypto.randomBytes(6).toString('base64url');
+    const tempPassword = crypto.randomBytes(12).toString('base64url');
     const passwordHash = await this.passwords.hash(tempPassword);
-    await this.prisma.user.update({ where: { id: userId }, data: { passwordHash } });
+    const user = await this.prisma.user.update({
+      where: { id: userId },
+      data: { passwordHash },
+      select: { email: true, firstName: true, lastName: true },
+    });
+    void this.mail
+      .enqueue({
+        to: { email: user.email, name: `${user.firstName} ${user.lastName}` },
+        subject: 'Tu contraseña ha sido restablecida',
+        html: `<p>Hola ${user.firstName},</p><p>Tu contraseña ha sido restablecida por un administrador. Tu nueva contraseña temporal es: <strong>${tempPassword}</strong></p><p>Inicia sesión y cámbiala de inmediato.</p>`,
+        text: `Hola ${user.firstName},\nTu contraseña ha sido restablecida. Contraseña temporal: ${tempPassword}\nCámbiala de inmediato.`,
+        category: 'SYSTEM',
+        priority: 'HIGH',
+      })
+      .catch(() => undefined);
     return { tempPassword };
   }
 

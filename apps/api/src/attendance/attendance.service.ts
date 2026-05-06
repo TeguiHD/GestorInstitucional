@@ -125,6 +125,9 @@ export class AttendanceService {
             guardianships: {
               select: {
                 isPrimary: true,
+                notifyAbsences: true,
+                notifyLate: true,
+                notifyUntil: true,
                 guardian: {
                   select: {
                     id: true,
@@ -143,16 +146,24 @@ export class AttendanceService {
       },
     });
 
+    const now = new Date();
     for (const rec of records) {
       if (rec.status !== 'ABSENT' && rec.status !== 'LATE') continue;
+      const wantsNotif = (g: {
+        notifyAbsences: boolean;
+        notifyLate: boolean;
+        notifyUntil: Date | null;
+      }) =>
+        (rec.status === 'ABSENT' ? g.notifyAbsences : g.notifyLate) &&
+        (g.notifyUntil === null || g.notifyUntil > now);
+      const isActiveGuardian = (g: { guardian: { status: string; deletedAt: Date | null } }) =>
+        g.guardian.status === 'ACTIVE' && !g.guardian.deletedAt;
       const primary = rec.student.guardianships.find(
-        (g) => g.isPrimary && g.guardian.status === 'ACTIVE' && !g.guardian.deletedAt,
+        (g) => g.isPrimary && isActiveGuardian(g) && wantsNotif(g),
       );
       const guardians = primary
         ? [primary]
-        : rec.student.guardianships.filter(
-            (g) => g.guardian.status === 'ACTIVE' && !g.guardian.deletedAt,
-          );
+        : rec.student.guardianships.filter((g) => isActiveGuardian(g) && wantsNotif(g));
       for (const g of guardians) {
         await this.mail.sendAbsenceDaily({
           guardianId: g.guardian.id,

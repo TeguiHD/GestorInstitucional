@@ -450,6 +450,7 @@ model AttendanceJustification {
 
   @@index([recordId])
   @@index([status])
+  @@index([uploadedById, createdAt])
   @@map("attendance_justifications")
 }
 

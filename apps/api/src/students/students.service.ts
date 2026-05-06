@@ -96,10 +96,17 @@ export class StudentsService {
     const takenNums = new Set(usedNums.map((s) => s.enrollmentNumber));
 
     const errors: Array<{ row: number; rut: string; reason: string }> = [];
-    const toCreate: Array<(typeof dto.rows)[number] & { schoolId: string; courseId: string }> = [];
+    const toCreate: Array<
+      (typeof dto.rows)[number] & {
+        schoolId: string;
+        courseId: string;
+        parsedBirthDate: Date | null;
+      }
+    > = [];
     const seenRuts = new Set<string>();
     const seenNums = new Set<number>();
 
+    const today = new Date();
     dto.rows.forEach((row, i) => {
       const rut = normalizeRut(row.rut);
       if (!isValidRut(rut)) {
@@ -122,24 +129,58 @@ export class StudentsService {
         });
         return;
       }
+      let parsedBirthDate: Date | null = null;
+      if (row.birthDate) {
+        const bd = new Date(row.birthDate);
+        if (isNaN(bd.getTime())) {
+          errors.push({ row: i + 1, rut, reason: 'Fecha de nacimiento inválida' });
+          return;
+        }
+        const ageYears = today.getFullYear() - bd.getFullYear();
+        if (bd > today || ageYears < 3 || ageYears > 30) {
+          errors.push({
+            row: i + 1,
+            rut,
+            reason: 'Fecha de nacimiento fuera de rango (3–30 años)',
+          });
+          return;
+        }
+        parsedBirthDate = bd;
+      }
       seenRuts.add(rut);
       seenNums.add(row.enrollmentNumber);
-      toCreate.push({ ...row, rut, schoolId: dto.schoolId, courseId: dto.courseId });
+      toCreate.push({
+        ...row,
+        rut,
+        schoolId: dto.schoolId,
+        courseId: dto.courseId,
+        parsedBirthDate,
+      });
     });
 
     let created = 0;
     if (toCreate.length > 0) {
-      const result = await this.prisma.student.createMany({
-        data: toCreate.map((r) => ({
-          schoolId: r.schoolId,
-          courseId: r.courseId,
-          rut: r.rut,
-          firstName: r.firstName.trim(),
-          lastName: r.lastName.trim(),
-          secondLastName: r.secondLastName?.trim() ?? null,
-          birthDate: r.birthDate ? new Date(r.birthDate) : null,
-          enrollmentNumber: r.enrollmentNumber,
-        })),
+      const result = await this.prisma.$transaction(async (tx) => {
+        // Re-check inside transaction to prevent race condition
+        const stillExisting = await tx.student.findMany({
+          where: { schoolId: dto.schoolId, rut: { in: toCreate.map((r) => r.rut) } },
+          select: { rut: true },
+        });
+        const stillExistingRuts = new Set(stillExisting.map((e) => e.rut));
+        const safe = toCreate.filter((r) => !stillExistingRuts.has(r.rut));
+        if (safe.length === 0) return { count: 0 };
+        return tx.student.createMany({
+          data: safe.map((r) => ({
+            schoolId: r.schoolId,
+            courseId: r.courseId,
+            rut: r.rut,
+            firstName: r.firstName.trim(),
+            lastName: r.lastName.trim(),
+            secondLastName: r.secondLastName?.trim() ?? null,
+            birthDate: r.parsedBirthDate,
+            enrollmentNumber: r.enrollmentNumber,
+          })),
+        });
       });
       created = result.count;
     }
