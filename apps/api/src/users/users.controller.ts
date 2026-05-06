@@ -140,6 +140,14 @@ export class UsersController {
     return this.users.findById(user.sub);
   }
 
+  @Get('trash')
+  @Roles(SystemRole.SUPER_ADMIN)
+  @ApiOperation({ summary: 'Papelera de usuarios (SUPER_ADMIN)' })
+  @ApiQuery({ name: 'schoolId', required: true })
+  findTrashed(@Query('schoolId') schoolId: string, @CurrentUser() actor: JwtPayload) {
+    return this.users.findTrashed(schoolId, actor);
+  }
+
   @Get(':id')
   @Roles(SystemRole.SUPER_ADMIN, SystemRole.DIRECTOR, SystemRole.UTP)
   @ApiOperation({ summary: 'Usuario por ID' })
@@ -199,6 +207,21 @@ export class UsersController {
   @ApiOperation({ summary: 'Resetear contraseña (genera temporal)' })
   resetPassword(@Param('id') id: string, @CurrentUser() actor: JwtPayload) {
     return this.users.resetPassword(id, actor);
+  }
+
+  @Post(':id/restore')
+  @Roles(SystemRole.SUPER_ADMIN)
+  @ApiOperation({ summary: 'Restaurar usuario eliminado' })
+  restore(@Param('id') id: string, @CurrentUser() actor: JwtPayload) {
+    return this.users.restore(id, actor);
+  }
+
+  @Delete(':id/purge')
+  @Roles(SystemRole.SUPER_ADMIN)
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Purgar usuario definitivamente (Ley 21.719)' })
+  purge(@Param('id') id: string, @CurrentUser() actor: JwtPayload) {
+    return this.users.purge(id, actor);
   }
 
   @Delete(':id')

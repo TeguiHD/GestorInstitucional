@@ -281,6 +281,60 @@ export class UsersService {
     return { tempPassword };
   }
 
+  async findTrashed(schoolId: string, actor: JwtPayload) {
+    if (!actor.roles.includes(SystemRole.SUPER_ADMIN))
+      throw new ForbiddenException('Solo SUPER_ADMIN');
+    return this.prisma.user.findMany({
+      where: {
+        deletedAt: { not: null },
+        schoolRoles: { some: { schoolId } },
+      },
+      select: {
+        id: true,
+        email: true,
+        firstName: true,
+        lastName: true,
+        deletedAt: true,
+        schoolRoles: { where: { schoolId }, select: { role: true } },
+      },
+      orderBy: { deletedAt: 'desc' },
+    });
+  }
+
+  async restore(id: string, actor: JwtPayload) {
+    if (!actor.roles.includes(SystemRole.SUPER_ADMIN))
+      throw new ForbiddenException('Solo SUPER_ADMIN');
+    const user = await this.prisma.user.findUnique({ where: { id } });
+    if (!user) throw new NotFoundException('Usuario no encontrado');
+    if (!user.deletedAt) throw new BadRequestException('El usuario no está eliminado');
+    return this.prisma.user.update({
+      where: { id },
+      data: { deletedAt: null, status: 'ACTIVE' },
+      select: { id: true, email: true, firstName: true, lastName: true },
+    });
+  }
+
+  async purge(id: string, actor: JwtPayload) {
+    if (!actor.roles.includes(SystemRole.SUPER_ADMIN))
+      throw new ForbiddenException('Solo SUPER_ADMIN');
+    if (actor.sub === id) throw new BadRequestException('No puedes purgar tu propia cuenta');
+    const user = await this.prisma.user.findUnique({ where: { id } });
+    if (!user) throw new NotFoundException('Usuario no encontrado');
+    return this.prisma.user.update({
+      where: { id },
+      data: {
+        email: `deleted-${id}@purged.local`,
+        firstName: '[Eliminado]',
+        lastName: '[Eliminado]',
+        phone: null,
+        passwordHash: crypto.randomBytes(32).toString('hex'),
+        deletedAt: new Date(),
+        status: 'INACTIVE',
+      },
+      select: { id: true },
+    });
+  }
+
   private assertCanAccessSchool(actor: JwtPayload, schoolId: string) {
     if (actor.roles.includes('SUPER_ADMIN')) return;
     if (actor.schoolId === schoolId) return;
