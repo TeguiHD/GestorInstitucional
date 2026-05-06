@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { createWriteStream } from 'node:fs';
 import { mkdir, unlink } from 'node:fs/promises';
 import { extname, join } from 'node:path';
@@ -12,6 +12,7 @@ import {
   Logger,
   NotFoundException,
 } from '@nestjs/common';
+import PDFDocument from 'pdfkit';
 import type { JustificationStatus } from '@prisma/client';
 
 import { MailService } from '../mail/mail.service.js';
@@ -75,6 +76,7 @@ export class JustificationsService {
     const filePath = join(dir, `${fileId}${safeExt}`);
 
     let size = 0;
+    const hasher = createHash('sha256');
     const counter = new Transform({
       transform(chunk: Buffer, _encoding, callback) {
         size += chunk.length;
@@ -82,6 +84,7 @@ export class JustificationsService {
           callback(new BadRequestException('Archivo demasiado grande (máx 8 MB)'));
           return;
         }
+        hasher.update(chunk);
         callback(null, chunk);
       },
     });
@@ -92,6 +95,7 @@ export class JustificationsService {
       await unlink(filePath).catch(() => undefined);
       throw error;
     }
+    const fileHash = hasher.digest('hex');
 
     const created = await this.prisma.attendanceJustification.create({
       data: {
@@ -101,6 +105,7 @@ export class JustificationsService {
         filePath,
         mimeType: params.file.mimetype,
         sizeBytes: size,
+        fileHash,
         reason: params.reason,
       },
     });
@@ -378,6 +383,189 @@ export class JustificationsService {
       j.record.student.guardianships.map((g) => g.guardianId),
     );
     return j;
+  }
+
+  async generateReceipt(id: string, user: JwtPayload): Promise<Buffer> {
+    const j = await this.prisma.attendanceJustification.findUnique({
+      where: { id },
+      include: {
+        uploadedBy: { select: { firstName: true, lastName: true, email: true } },
+        record: {
+          select: {
+            date: true,
+            student: {
+              select: {
+                firstName: true,
+                lastName: true,
+                rut: true,
+                schoolId: true,
+                courseId: true,
+                course: { select: { code: true, name: true } },
+                school: { select: { name: true } },
+                guardianships: { select: { guardianId: true } },
+              },
+            },
+          },
+        },
+      },
+    });
+    if (!j) throw new NotFoundException('Justificación no encontrada');
+    await this.assertCanAccessStudent(
+      user,
+      j.record.student.schoolId,
+      j.record.student.courseId,
+      j.record.student.guardianships.map((g) => g.guardianId),
+    );
+
+    return new Promise<Buffer>((resolve, reject) => {
+      const doc = new PDFDocument({ size: 'A4', margin: 56 });
+      const chunks: Buffer[] = [];
+      doc.on('data', (c: Buffer) => chunks.push(c));
+      doc.on('end', () => resolve(Buffer.concat(chunks)));
+      doc.on('error', reject);
+
+      const W = 595 - 112; // usable width
+      const fmtDate = (d: Date | string) =>
+        new Date(typeof d === 'string' ? d + 'T12:00' : d).toLocaleDateString('es-CL', {
+          day: '2-digit',
+          month: 'long',
+          year: 'numeric',
+        });
+      const fmtDateTime = (d: Date) =>
+        d.toLocaleString('es-CL', {
+          dateStyle: 'long',
+          timeStyle: 'medium',
+          timeZone: 'America/Santiago',
+        });
+
+      // ── Header ──────────────────────────────────────────────────────────────
+      doc
+        .fontSize(9)
+        .fillColor('#6b7280')
+        .text(j.record.student.school.name.toUpperCase(), { align: 'center' });
+
+      doc.moveDown(0.3);
+      doc
+        .fontSize(14)
+        .fillColor('#111827')
+        .font('Helvetica-Bold')
+        .text('COMPROBANTE DE RECEPCIÓN', { align: 'center' });
+
+      doc
+        .fontSize(11)
+        .fillColor('#374151')
+        .text('Firma Electrónica Simple · Ley N° 19.799', { align: 'center' });
+
+      doc.moveDown(0.4);
+
+      // thin separator
+      doc
+        .moveTo(56, doc.y)
+        .lineTo(56 + W, doc.y)
+        .strokeColor('#d1d5db')
+        .lineWidth(0.5)
+        .stroke();
+
+      doc.moveDown(1);
+
+      // ── Data rows ───────────────────────────────────────────────────────────
+      const row = (label: string, value: string, mono = false) => {
+        const yStart = doc.y;
+        doc
+          .font('Helvetica-Bold')
+          .fontSize(9)
+          .fillColor('#6b7280')
+          .text(label.toUpperCase(), 56, yStart, { width: 140 });
+        doc
+          .font(mono ? 'Courier' : 'Helvetica')
+          .fontSize(9)
+          .fillColor('#111827')
+          .text(value, 200, yStart, { width: W - 144 });
+        doc.moveDown(0.7);
+      };
+
+      row('ID Justificación', j.id, true);
+      row('Fecha de envío', fmtDateTime(j.createdAt));
+      row('Alumno', `${j.record.student.lastName}, ${j.record.student.firstName}`);
+      row('RUT alumno', j.record.student.rut);
+      row('Curso', `${j.record.student.course.code} — ${j.record.student.course.name}`);
+      row('Fecha de ausencia', fmtDate(j.record.date));
+      row('Motivo declarado', j.reason);
+      row(
+        'Archivo adjunto',
+        `${j.fileName} (${(j.sizeBytes / 1024).toFixed(1)} KB · ${j.mimeType})`,
+      );
+      row(
+        'Remitente',
+        `${j.uploadedBy.firstName} ${j.uploadedBy.lastName} <${j.uploadedBy.email}>`,
+      );
+
+      doc.moveDown(0.3);
+      doc
+        .moveTo(56, doc.y)
+        .lineTo(56 + W, doc.y)
+        .strokeColor('#d1d5db')
+        .lineWidth(0.5)
+        .stroke();
+      doc.moveDown(0.8);
+
+      // ── Hash block ──────────────────────────────────────────────────────────
+      doc
+        .font('Helvetica-Bold')
+        .fontSize(9)
+        .fillColor('#6b7280')
+        .text('HUELLA DIGITAL (SHA-256)', 56);
+      doc.moveDown(0.3);
+      doc
+        .font('Courier')
+        .fontSize(8.5)
+        .fillColor('#111827')
+        .text(
+          j.fileHash ?? '(no disponible — documento anterior a implementación FES)',
+          56,
+          doc.y,
+          {
+            width: W,
+            lineGap: 2,
+          },
+        );
+
+      doc.moveDown(1.2);
+
+      // ── Legal note ──────────────────────────────────────────────────────────
+      doc.roundedRect(56, doc.y, W, 56, 4).fillColor('#f9fafb').fill();
+
+      doc
+        .font('Helvetica')
+        .fontSize(7.5)
+        .fillColor('#374151')
+        .text(
+          'Este comprobante acredita la recepción electrónica del documento adjunto. ' +
+            'La huella digital SHA-256 identifica de forma unívoca el archivo tal como fue enviado. ' +
+            'Conforme al artículo 2° de la Ley N° 19.799 sobre Documentos Electrónicos, ' +
+            'Firma Electrónica y Servicios de Certificación, esta constancia constituye ' +
+            'firma electrónica simple al asociar electrónicamente la identidad del remitente al documento.',
+          58,
+          doc.y + 8,
+          { width: W - 4, lineGap: 2 },
+        );
+
+      doc.moveDown(3.5);
+
+      // ── Footer ──────────────────────────────────────────────────────────────
+      doc
+        .font('Helvetica')
+        .fontSize(7)
+        .fillColor('#9ca3af')
+        .text(
+          `Generado el ${fmtDateTime(new Date())} · Sistema de Gestión de Asistencia Escolar`,
+          56,
+          doc.y,
+          { align: 'center', width: W },
+        );
+
+      doc.end();
+    });
   }
 
   async remove(id: string, user: JwtPayload) {

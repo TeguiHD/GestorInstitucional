@@ -15,6 +15,9 @@ import { useAuthStore } from '@/stores/auth.store';
 import { api, ApiError } from '@/lib/api';
 
 export const Route = createFileRoute('/login')({
+  validateSearch: (s: Record<string, unknown>) => ({
+    reason: typeof s.reason === 'string' ? s.reason : undefined,
+  }),
   beforeLoad: () => {
     const { accessToken, user } = useAuthStore.getState();
     if (accessToken && user) throw redirect({ to: '/' });
@@ -26,6 +29,7 @@ type Step = 'credentials' | 'totp_setup' | 'totp_verify';
 type SetupData = { qrCodeDataUrl: string; backupCodes: string[] };
 
 function LoginPage() {
+  const { reason } = Route.useSearch();
   const login = useAuthStore((s) => s.login);
   const setTokens = useAuthStore((s) => s.setTokens);
   const isLoading = useAuthStore((s) => s.isLoading);
@@ -220,6 +224,15 @@ function LoginPage() {
                   </p>
                 </header>
 
+                {reason === 'totp_required' && !errorMsg && (
+                  <div
+                    role="alert"
+                    className="rounded-lg border border-amber-300/50 bg-amber-50 dark:bg-amber-900/20 px-3 py-2 text-sm text-amber-700 dark:text-amber-400"
+                  >
+                    Tu rol requiere autenticación de dos factores. Inicia sesión nuevamente para
+                    activarla.
+                  </div>
+                )}
                 {errorMsg && (
                   <div
                     role="alert"

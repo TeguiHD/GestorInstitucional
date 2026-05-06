@@ -112,6 +112,22 @@ export class JustificationsController {
     return this.service.review(id, user, dto.decision, dto.notes);
   }
 
+  @Get(':id/receipt')
+  @ApiOperation({ summary: 'Comprobante FES (Ley 19.799) de la justificación' })
+  async receipt(
+    @Param('id') id: string,
+    @CurrentUser() user: JwtPayload,
+    @Res() res: FastifyReply,
+  ) {
+    const pdf = await this.service.generateReceipt(id, user);
+    void res.header('Content-Type', 'application/pdf');
+    void res.header(
+      'Content-Disposition',
+      `attachment; filename="comprobante-fes-${id.slice(0, 8)}.pdf"`,
+    );
+    void res.send(pdf);
+  }
+
   @Get(':id/file')
   @ApiOperation({ summary: 'Descargar certificado' })
   async download(

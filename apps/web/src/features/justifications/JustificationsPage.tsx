@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { CheckCircle, Clock, Download, FileText, Search, XCircle } from 'lucide-react';
+import { CheckCircle, Clock, Download, FileText, FileCheck, Search, XCircle } from 'lucide-react';
 import { useState } from 'react';
 import { toast } from 'sonner';
 
@@ -248,6 +248,14 @@ export function JustificationsPage() {
                       className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg border border-border hover:bg-muted transition-colors"
                     >
                       <Download className="h-3.5 w-3.5" /> Ver
+                    </a>
+                    <a
+                      href={`${API_BASE}/justifications/${j.id}/receipt`}
+                      download={`comprobante-fes-${j.id.slice(0, 8)}.pdf`}
+                      title="Comprobante FES (Ley 19.799)"
+                      className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg border border-border hover:bg-muted transition-colors"
+                    >
+                      <FileCheck className="h-3.5 w-3.5" /> FES
                     </a>
                     {canReview && j.status === 'PENDING' && (
                       <button

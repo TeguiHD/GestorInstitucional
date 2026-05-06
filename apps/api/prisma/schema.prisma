@@ -436,6 +436,7 @@ model AttendanceJustification {
   filePath       String              @db.VarChar(500)
   mimeType       String              @db.VarChar(120)
   sizeBytes      Int
+  fileHash       String?             @db.VarChar(64)
   reason         String              @db.VarChar(500)
   status         JustificationStatus @default(PENDING)
   reviewedById   String?             @db.Char(36)

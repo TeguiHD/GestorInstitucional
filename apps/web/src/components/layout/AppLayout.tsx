@@ -154,7 +154,7 @@ export function AppLayout({ children }: Props) {
   const handleLogout = async () => {
     await logout();
     toast.success('Sesión cerrada');
-    void router.navigate({ to: '/login' });
+    void router.navigate({ to: '/login', search: { reason: undefined } });
   };
 
   const roles = user?.roles ?? [];
