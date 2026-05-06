@@ -51,6 +51,10 @@ const STATUS_CONFIG: Record<JustStatus, { label: string; color: string; icon: ty
   },
 };
 
+const PAGE_SIZE = 50;
+
+type PagedResult = { items: Justification[]; total: number; limit: number; offset: number };
+
 export function JustificationsPage() {
   const user = useUser();
   const qc = useQueryClient();
@@ -60,13 +64,29 @@ export function JustificationsPage() {
 
   const [tab, setTab] = useState<JustStatus | 'ALL'>('PENDING');
   const [search, setSearch] = useState('');
+  const [page, setPage] = useState(0);
   const [reviewId, setReviewId] = useState<string | null>(null);
   const [decision, setDecision] = useState<'APPROVED' | 'REJECTED' | null>(null);
   const [notes, setNotes] = useState('');
 
-  const { data: all = [], isLoading } = useQuery<Justification[]>({
-    queryKey: ['justifications', schoolId],
-    queryFn: () => api.get(`/justifications/school/${schoolId}`),
+  const statusParam = tab === 'ALL' ? undefined : tab;
+
+  const { data, isLoading } = useQuery<PagedResult>({
+    queryKey: ['justifications', schoolId, tab, page],
+    queryFn: () => {
+      const params = new URLSearchParams({
+        limit: String(PAGE_SIZE),
+        offset: String(page * PAGE_SIZE),
+      });
+      if (statusParam) params.set('status', statusParam);
+      return api.get(`/justifications/school/${schoolId}?${params.toString()}`);
+    },
+    enabled: !!schoolId,
+  });
+
+  const { data: pendingData } = useQuery<PagedResult>({
+    queryKey: ['justifications', schoolId, 'PENDING', 0],
+    queryFn: () => api.get(`/justifications/school/${schoolId}?status=PENDING&limit=1&offset=0`),
     enabled: !!schoolId,
   });
 
@@ -83,9 +103,12 @@ export function JustificationsPage() {
     onError: (e: Error) => toast.error(e.message),
   });
 
-  const pendingCount = all.filter((j) => j.status === 'PENDING').length;
+  const pendingCount = pendingData?.total ?? 0;
+  const allItems = data?.items ?? [];
+  const total = data?.total ?? 0;
+  const totalPages = Math.ceil(total / PAGE_SIZE);
 
-  const displayed = (tab === 'ALL' ? all : all.filter((j) => j.status === tab)).filter((j) => {
+  const displayed = allItems.filter((j) => {
     if (!search) return true;
     const q = search.toLowerCase();
     const name = `${j.record.student.firstName} ${j.record.student.lastName}`.toLowerCase();
@@ -103,6 +126,12 @@ export function JustificationsPage() {
     { key: 'ALL', label: 'Todas' },
   ];
 
+  function switchTab(next: JustStatus | 'ALL') {
+    setTab(next);
+    setPage(0);
+    setSearch('');
+  }
+
   const API_BASE = import.meta.env.VITE_API_BASE_URL ?? '/api/v1';
 
   return (
@@ -117,7 +146,7 @@ export function JustificationsPage() {
         {TABS.map((t) => (
           <button
             key={t.key}
-            onClick={() => setTab(t.key)}
+            onClick={() => switchTab(t.key)}
             className={`px-4 py-2.5 text-sm font-medium border-b-2 whitespace-nowrap transition-colors -mb-px ${
               tab === t.key
                 ? 'border-primary text-primary'
@@ -164,7 +193,7 @@ export function JustificationsPage() {
           }
         />
       ) : (
-        <div className="space-y-3">
+        <div className="space-y-3" key={`${tab}-${page}`}>
           {displayed.map((j) => {
             const cfg = STATUS_CONFIG[j.status];
             const Icon = cfg.icon;
@@ -278,6 +307,30 @@ export function JustificationsPage() {
               </div>
             );
           })}
+        </div>
+      )}
+
+      {totalPages > 1 && (
+        <div className="flex items-center justify-between text-sm">
+          <span className="text-muted-foreground">
+            {total} resultados · pág. {page + 1} de {totalPages}
+          </span>
+          <div className="flex gap-2">
+            <button
+              disabled={page === 0}
+              onClick={() => setPage((p) => p - 1)}
+              className="px-3 py-1.5 rounded-lg border border-border disabled:opacity-40 hover:bg-muted transition-colors"
+            >
+              ← Anterior
+            </button>
+            <button
+              disabled={page + 1 >= totalPages}
+              onClick={() => setPage((p) => p + 1)}
+              className="px-3 py-1.5 rounded-lg border border-border disabled:opacity-40 hover:bg-muted transition-colors"
+            >
+              Siguiente →
+            </button>
+          </div>
         </div>
       )}
     </div>

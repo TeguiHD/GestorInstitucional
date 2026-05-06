@@ -172,31 +172,46 @@ export class JustificationsService {
     });
   }
 
-  async listBySchool(schoolId: string, user: JwtPayload) {
+  async listBySchool(
+    schoolId: string,
+    user: JwtPayload,
+    opts: { status?: 'PENDING' | 'APPROVED' | 'REJECTED'; limit?: number; offset?: number } = {},
+  ) {
     this.assertCanAccessSchool(user, schoolId);
-    return this.prisma.attendanceJustification.findMany({
-      where: { record: { student: { schoolId } } },
-      orderBy: { createdAt: 'desc' },
-      take: 200,
-      include: {
-        record: {
-          select: {
-            date: true,
-            student: {
-              select: {
-                id: true,
-                firstName: true,
-                lastName: true,
-                rut: true,
-                course: { select: { code: true, name: true } },
+    const limit = Math.min(opts.limit ?? 50, 200);
+    const offset = opts.offset ?? 0;
+    const where = {
+      record: { student: { schoolId } },
+      ...(opts.status ? { status: opts.status } : {}),
+    };
+    const [items, total] = await this.prisma.$transaction([
+      this.prisma.attendanceJustification.findMany({
+        where,
+        orderBy: { createdAt: 'desc' },
+        take: limit,
+        skip: offset,
+        include: {
+          record: {
+            select: {
+              date: true,
+              student: {
+                select: {
+                  id: true,
+                  firstName: true,
+                  lastName: true,
+                  rut: true,
+                  course: { select: { code: true, name: true } },
+                },
               },
             },
           },
+          uploadedBy: { select: { firstName: true, lastName: true } },
+          reviewedBy: { select: { firstName: true, lastName: true } },
         },
-        uploadedBy: { select: { firstName: true, lastName: true } },
-        reviewedBy: { select: { firstName: true, lastName: true } },
-      },
-    });
+      }),
+      this.prisma.attendanceJustification.count({ where }),
+    ]);
+    return { items, total, limit, offset };
   }
 
   async pendingBySchool(schoolId: string, user: JwtPayload) {

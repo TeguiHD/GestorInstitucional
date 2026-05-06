@@ -82,9 +82,20 @@ export class JustificationsController {
 
   @Get('school/:schoolId')
   @Roles(SystemRole.SUPER_ADMIN, SystemRole.DIRECTOR, SystemRole.UTP)
-  @ApiOperation({ summary: 'Todas las justificaciones del colegio' })
-  listBySchool(@Param('schoolId') schoolId: string, @CurrentUser() user: JwtPayload) {
-    return this.service.listBySchool(schoolId, user);
+  @ApiOperation({ summary: 'Todas las justificaciones del colegio (paginado)' })
+  listBySchool(
+    @Param('schoolId') schoolId: string,
+    @CurrentUser() user: JwtPayload,
+    @Query('status') status?: 'PENDING' | 'APPROVED' | 'REJECTED',
+    @Query('limit') limit?: string,
+    @Query('offset') offset?: string,
+  ) {
+    const opts: { status?: 'PENDING' | 'APPROVED' | 'REJECTED'; limit?: number; offset?: number } =
+      {};
+    if (status !== undefined) opts.status = status;
+    if (limit !== undefined) opts.limit = Number(limit);
+    if (offset !== undefined) opts.offset = Number(offset);
+    return this.service.listBySchool(schoolId, user, opts);
   }
 
   @Get('pending')
