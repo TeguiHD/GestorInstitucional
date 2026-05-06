@@ -16,6 +16,7 @@ export default defineConfig(function (_a) {
       react(),
       tailwindcss(),
       VitePWA({
+        filename: 'service-worker.js',
         registerType: 'prompt',
         manifest: false, // use existing public/manifest.webmanifest
         workbox: {
