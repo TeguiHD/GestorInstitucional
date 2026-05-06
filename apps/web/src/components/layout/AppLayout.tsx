@@ -14,6 +14,7 @@ import {
   Mail,
   Menu,
   Shield,
+  Trash2,
   Users,
   X,
 } from 'lucide-react';
@@ -31,6 +32,7 @@ type NavItem = {
   icon: typeof LayoutDashboard;
   exact?: boolean;
   adminOnly?: boolean;
+  superAdminOnly?: boolean;
   guardianOnly?: boolean;
   staffOnly?: boolean;
 };
@@ -59,6 +61,7 @@ const NAV_GROUPS: NavGroup[] = [
       { to: '/alertas', label: 'Alertas', icon: Bell, adminOnly: true },
       { to: '/correos', label: 'Correos', icon: Mail, adminOnly: true },
       { to: '/auditoria', label: 'Auditoría', icon: Shield, adminOnly: true },
+      { to: '/papelera', label: 'Papelera', icon: Trash2, superAdminOnly: true },
     ],
   },
 ];
@@ -163,6 +166,7 @@ export function AppLayout({ children }: Props) {
   const isStaff = roles.some((r) => ['SUPER_ADMIN', 'DIRECTOR', 'UTP', 'PROFESOR'].includes(r));
 
   const visible = (item: NavItem): boolean => {
+    if (item.superAdminOnly && !roles.includes('SUPER_ADMIN')) return false;
     if (item.adminOnly && !isAdmin) return false;
     if (item.guardianOnly && !isGuardian) return false;
     if (item.staffOnly && !isStaff) return false;

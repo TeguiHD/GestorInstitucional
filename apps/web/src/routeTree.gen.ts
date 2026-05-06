@@ -388,18 +388,18 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthReportesRouteImport;
       parentRoute: typeof AuthRoute;
     };
-    '/_auth/my-children': {
-      id: '/_auth/my-children';
-      path: '/my-children';
-      fullPath: '/my-children';
-      preLoaderRoute: typeof AuthMyChildrenRouteImport;
-      parentRoute: typeof AuthRoute;
-    };
     '/_auth/papelera': {
       id: '/_auth/papelera';
       path: '/papelera';
       fullPath: '/papelera';
       preLoaderRoute: typeof AuthPapeleraRouteImport;
+      parentRoute: typeof AuthRoute;
+    };
+    '/_auth/my-children': {
+      id: '/_auth/my-children';
+      path: '/my-children';
+      fullPath: '/my-children';
+      preLoaderRoute: typeof AuthMyChildrenRouteImport;
       parentRoute: typeof AuthRoute;
     };
     '/_auth/mis-pupilos': {
