@@ -54,6 +54,13 @@ export class StudentsController {
     return this.students.findByGuardian(user.sub);
   }
 
+  @Get('trash')
+  @Roles(SystemRole.SUPER_ADMIN)
+  @ApiOperation({ summary: 'Alumnos retirados — papelera (SUPER_ADMIN)' })
+  findWithdrawn(@Query('schoolId') schoolId: string, @CurrentUser() actor: JwtPayload) {
+    return this.students.findWithdrawn(schoolId, actor);
+  }
+
   @Get(':id')
   @ApiOperation({ summary: 'Alumno por ID' })
   async findOne(@Param('id') id: string, @CurrentUser() user: JwtPayload) {
@@ -118,6 +125,20 @@ export class StudentsController {
     @CurrentUser() user: JwtPayload,
   ) {
     return this.students.removeGuardian(id, guardianId, user);
+  }
+
+  @Post(':id/restore')
+  @Roles(SystemRole.SUPER_ADMIN)
+  @ApiOperation({ summary: 'Reactivar alumno retirado' })
+  restore(@Param('id') id: string, @CurrentUser() actor: JwtPayload) {
+    return this.students.restore(id, actor);
+  }
+
+  @Delete(':id/purge')
+  @Roles(SystemRole.SUPER_ADMIN)
+  @ApiOperation({ summary: 'Purgar alumno definitivamente (Ley 21.719)' })
+  purge(@Param('id') id: string, @CurrentUser() actor: JwtPayload) {
+    return this.students.purge(id, actor);
   }
 
   @Delete(':id')

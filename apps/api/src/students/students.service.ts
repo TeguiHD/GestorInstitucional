@@ -275,6 +275,65 @@ export class StudentsService {
     return { total, present, absent, late, justified, attendanceRate };
   }
 
+  async findWithdrawn(schoolId: string, actor: JwtPayload) {
+    if (!actor.roles.includes(SystemRole.SUPER_ADMIN))
+      throw new ForbiddenException('Solo SUPER_ADMIN');
+    return this.prisma.student.findMany({
+      where: { schoolId, active: false, firstName: { not: '[Eliminado]' } },
+      select: {
+        id: true,
+        firstName: true,
+        lastName: true,
+        rut: true,
+        enrollmentNumber: true,
+        withdrawnAt: true,
+        course: { select: { code: true, name: true } },
+      },
+      orderBy: { withdrawnAt: 'desc' },
+    });
+  }
+
+  async restore(id: string, actor: JwtPayload) {
+    if (!actor.roles.includes(SystemRole.SUPER_ADMIN))
+      throw new ForbiddenException('Solo SUPER_ADMIN');
+    const student = await this.prisma.student.findUnique({ where: { id } });
+    if (!student) throw new NotFoundException('Alumno no encontrado');
+    if (student.active) throw new BadRequestException('El alumno ya está activo');
+    if (student.firstName === '[Eliminado]' || student.rut.startsWith('P-')) {
+      throw new BadRequestException('El alumno fue purgado y no puede reactivarse');
+    }
+    return this.prisma.student.update({
+      where: { id },
+      data: { active: true, withdrawnAt: null },
+      select: { id: true, firstName: true, lastName: true, rut: true },
+    });
+  }
+
+  async purge(id: string, actor: JwtPayload) {
+    if (!actor.roles.includes(SystemRole.SUPER_ADMIN))
+      throw new ForbiddenException('Solo SUPER_ADMIN');
+    const student = await this.prisma.student.findUnique({ where: { id } });
+    if (!student) throw new NotFoundException('Alumno no encontrado');
+    const compactId = id.replaceAll('-', '');
+    await this.prisma.$transaction([
+      this.prisma.student.update({
+        where: { id },
+        data: {
+          rut: `P-${compactId.slice(0, 10)}`,
+          firstName: '[Eliminado]',
+          lastName: '[Eliminado]',
+          secondLastName: null,
+          birthDate: null,
+          enrollmentNumber: -Number.parseInt(compactId.slice(0, 7), 16),
+          active: false,
+          withdrawnAt: student.withdrawnAt ?? new Date(),
+        },
+      }),
+      this.prisma.guardianship.deleteMany({ where: { studentId: id } }),
+    ]);
+    return { ok: true };
+  }
+
   async assertCanAccessStudent(studentId: string, user: JwtPayload): Promise<void> {
     const student = await this.prisma.student.findUnique({
       where: { id: studentId },
