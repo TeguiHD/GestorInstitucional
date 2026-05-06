@@ -30,6 +30,7 @@ export class AttendanceController {
   @Post()
   @ApiOperation({ summary: 'Registrar asistencia diaria de un curso (bulk upsert, idempotente)' })
   async record(@Body() dto: RecordAttendanceDto, @CurrentUser() user: JwtPayload) {
+    this.assertIsoDate(dto.date, 'date');
     await this.courses.assertAccess(dto.courseId, user);
     return this.attendance.recordBulk(dto, user.sub);
   }
@@ -41,6 +42,7 @@ export class AttendanceController {
     @Query('date') date: string,
     @CurrentUser() user: JwtPayload,
   ) {
+    this.assertIsoDate(date, 'date');
     await this.courses.assertAccess(courseId, user);
     return this.attendance.getByCourseDate(courseId, date);
   }
@@ -54,11 +56,9 @@ export class AttendanceController {
     @CurrentUser() user: JwtPayload,
   ) {
     await this.courses.assertAccess(courseId, user);
-    return this.attendance.getCourseMonthSummary(
-      courseId,
-      this.parseIntQuery(year, 'year'),
-      this.parseIntQuery(month, 'month'),
-    );
+    const parsedYear = this.parseYear(year);
+    const parsedMonth = this.parseMonth(month);
+    return this.attendance.getCourseMonthSummary(courseId, parsedYear, parsedMonth);
   }
 
   @Get('student/:studentId')
@@ -69,6 +69,8 @@ export class AttendanceController {
     @Query('from') from?: string,
     @Query('to') to?: string,
   ) {
+    if (from) this.assertIsoDate(from, 'from');
+    if (to) this.assertIsoDate(to, 'to');
     await this.attendance.assertCanAccessStudent(studentId, user);
     return this.attendance.getByStudent(studentId, from, to);
   }
@@ -81,6 +83,8 @@ export class AttendanceController {
     @Query('to') to: string,
     @CurrentUser() user: JwtPayload,
   ) {
+    this.assertIsoDate(from, 'from');
+    this.assertIsoDate(to, 'to');
     this.courses.assertSchoolAdminAccess(schoolId, user);
     return this.attendance.getSchoolStats(schoolId, from, to);
   }
@@ -93,6 +97,8 @@ export class AttendanceController {
     @Query('to') to: string,
     @CurrentUser() user: JwtPayload,
   ) {
+    this.assertIsoDate(from, 'from');
+    this.assertIsoDate(to, 'to');
     await this.courses.assertAccess(courseId, user);
     return this.attendance.getCourseDailyTrend(courseId, from, to);
   }
@@ -106,11 +112,9 @@ export class AttendanceController {
     @CurrentUser() user: JwtPayload,
   ) {
     await this.courses.assertAccess(courseId, user);
-    return this.attendance.getCourseMatrix(
-      courseId,
-      this.parseIntQuery(year, 'year'),
-      this.parseIntQuery(month, 'month'),
-    );
+    const parsedYear = this.parseYear(year);
+    const parsedMonth = this.parseMonth(month);
+    return this.attendance.getCourseMatrix(courseId, parsedYear, parsedMonth);
   }
 
   private parseIntQuery(value: string, field: string): number {
@@ -119,5 +123,31 @@ export class AttendanceController {
       throw new BadRequestException(`${field} debe ser numérico`);
     }
     return parsed;
+  }
+
+  private parseMonth(value: string): number {
+    const month = this.parseIntQuery(value, 'month');
+    if (month < 1 || month > 12) {
+      throw new BadRequestException('month debe estar entre 1 y 12');
+    }
+    return month;
+  }
+
+  private parseYear(value: string): number {
+    const year = this.parseIntQuery(value, 'year');
+    if (year < 2020 || year > 2100) {
+      throw new BadRequestException('year fuera de rango');
+    }
+    return year;
+  }
+
+  private assertIsoDate(value: string, field: string): void {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+      throw new BadRequestException(`${field} debe usar formato YYYY-MM-DD`);
+    }
+    const parsed = new Date(`${value}T00:00:00.000Z`);
+    if (Number.isNaN(parsed.getTime()) || parsed.toISOString().slice(0, 10) !== value) {
+      throw new BadRequestException(`${field} no es una fecha válida`);
+    }
   }
 }

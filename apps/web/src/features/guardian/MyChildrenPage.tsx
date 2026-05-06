@@ -3,8 +3,7 @@ import { Upload } from 'lucide-react';
 import { useRef, useState } from 'react';
 import { toast } from 'sonner';
 
-import { api } from '@/lib/api';
-import { useAuthStore } from '@/stores/auth.store';
+import { api, uploadFormData } from '@/lib/api';
 
 type Child = {
   id: string;
@@ -43,6 +42,7 @@ const STATUS_COLOR: Record<string, string> = {
   LATE: '#f97316',
   JUSTIFIED: '#eab308',
 };
+const MAX_JUSTIFICATION_FILE_SIZE_BYTES = 8 * 1024 * 1024;
 
 export function MyChildrenPage() {
   const { data: children, isLoading } = useQuery<Child[]>({
@@ -117,14 +117,7 @@ function ChildDetail({ child }: { child: Child }) {
       fd.append('recordId', v.recordId);
       fd.append('reason', v.reason);
       fd.append('file', v.file);
-      const token = useAuthStore.getState().accessToken;
-      const res = await fetch('/api/v1/justifications/upload', {
-        method: 'POST',
-        headers: token ? { Authorization: `Bearer ${token}` } : {},
-        body: fd,
-      });
-      if (!res.ok) throw new Error((await res.json().catch(() => ({}))).message ?? 'Error');
-      return res.json();
+      return uploadFormData('/justifications/upload', fd);
     },
     onSuccess: () => {
       toast.success('Certificado enviado');
@@ -262,6 +255,10 @@ function ChildDetail({ child }: { child: Child }) {
                   const f = fileRef.current?.files?.[0];
                   if (!f) {
                     toast.error('Selecciona un archivo');
+                    return;
+                  }
+                  if (f.size > MAX_JUSTIFICATION_FILE_SIZE_BYTES) {
+                    toast.error('El archivo supera 8 MB');
                     return;
                   }
                   if (!reason.trim()) {

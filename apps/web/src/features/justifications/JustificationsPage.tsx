@@ -3,7 +3,7 @@ import { CheckCircle, Clock, Download, FileText, FileCheck, Search, XCircle } fr
 import { useState } from 'react';
 import { toast } from 'sonner';
 
-import { api } from '@/lib/api';
+import { api, downloadBlob } from '@/lib/api';
 import { useUser } from '@/stores/auth.store';
 import { useEffectiveSchoolId } from '@/stores/school.store';
 import { EmptyState } from '@/components/ui/EmptyState';
@@ -132,8 +132,6 @@ export function JustificationsPage() {
     setSearch('');
   }
 
-  const API_BASE = import.meta.env.VITE_API_BASE_URL ?? '/api/v1';
-
   return (
     <div className="space-y-5 max-w-4xl">
       <div>
@@ -241,22 +239,31 @@ export function JustificationsPage() {
                   </div>
 
                   <div className="flex items-center gap-2 flex-shrink-0">
-                    <a
-                      href={`${API_BASE}/justifications/${j.id}/file`}
-                      target="_blank"
-                      rel="noreferrer"
+                    <button
+                      type="button"
+                      onClick={() =>
+                        void downloadBlob(
+                          `/justifications/${j.id}/file`,
+                          j.fileName || `justificacion-${j.id.slice(0, 8)}`,
+                        ).catch((e: Error) => toast.error(e.message))
+                      }
                       className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg border border-border hover:bg-muted transition-colors"
                     >
                       <Download className="h-3.5 w-3.5" /> Ver
-                    </a>
-                    <a
-                      href={`${API_BASE}/justifications/${j.id}/receipt`}
-                      download={`comprobante-fes-${j.id.slice(0, 8)}.pdf`}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        void downloadBlob(
+                          `/justifications/${j.id}/receipt`,
+                          `comprobante-fes-${j.id.slice(0, 8)}.pdf`,
+                        ).catch((e: Error) => toast.error(e.message))
+                      }
                       title="Comprobante FES (Ley 19.799)"
                       className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg border border-border hover:bg-muted transition-colors"
                     >
                       <FileCheck className="h-3.5 w-3.5" /> FES
-                    </a>
+                    </button>
                     {canReview && j.status === 'PENDING' && (
                       <button
                         onClick={() => {

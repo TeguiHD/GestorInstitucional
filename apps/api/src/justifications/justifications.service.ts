@@ -7,6 +7,7 @@ import { pipeline } from 'node:stream/promises';
 
 import {
   BadRequestException,
+  ConflictException,
   ForbiddenException,
   Injectable,
   Logger,
@@ -49,6 +50,11 @@ export class JustificationsService {
     const record = await this.prisma.attendanceRecord.findUnique({
       where: { id: params.recordId },
       include: {
+        justifications: {
+          where: { status: { in: ['PENDING', 'APPROVED'] } },
+          select: { id: true },
+          take: 1,
+        },
         student: {
           select: {
             schoolId: true,
@@ -59,6 +65,12 @@ export class JustificationsService {
       },
     });
     if (!record) throw new NotFoundException('Registro de asistencia no encontrado');
+    if (record.status !== 'ABSENT' && record.status !== 'LATE') {
+      throw new BadRequestException('Solo se pueden justificar ausencias o atrasos registrados');
+    }
+    if (record.justifications.length > 0) {
+      throw new ConflictException('Este registro ya tiene una justificación activa');
+    }
     await this.assertCanAccessStudent(
       params.actor,
       record.student.schoolId,
@@ -252,11 +264,16 @@ export class JustificationsService {
   ) {
     const j = await this.prisma.attendanceJustification.findUnique({
       where: { id },
-      include: { record: { select: { student: { select: { schoolId: true } } } } },
+      include: {
+        record: { select: { status: true, student: { select: { schoolId: true } } } },
+      },
     });
     if (!j) throw new NotFoundException('Justificación no encontrada');
     this.assertCanAccessSchool(reviewer, j.record.student.schoolId);
     if (j.status !== 'PENDING') throw new ForbiddenException('Ya fue revisada');
+    if (decision === 'APPROVED' && j.record.status !== 'ABSENT' && j.record.status !== 'LATE') {
+      throw new BadRequestException('El registro ya no es justificable');
+    }
 
     const updated = await this.prisma.$transaction(async (tx) => {
       const result = await tx.attendanceJustification.update({

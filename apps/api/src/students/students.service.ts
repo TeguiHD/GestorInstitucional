@@ -1,6 +1,7 @@
 import {
   ConflictException,
   ForbiddenException,
+  BadRequestException,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
@@ -9,6 +10,7 @@ import { SystemRole } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service.js';
 import type { CreateStudentDto } from './dto/create-student.dto.js';
 import type { JwtPayload } from '../common/decorators/current-user.decorator.js';
+import { isValidRut, normalizeRut } from './rut.js';
 
 @Injectable()
 export class StudentsService {
@@ -48,12 +50,14 @@ export class StudentsService {
 
   async create(dto: CreateStudentDto, actor: JwtPayload) {
     await this.assertCanAccessCourse(dto.courseId, actor);
+    const rut = normalizeRut(dto.rut);
+    if (!isValidRut(rut)) throw new BadRequestException('RUT inválido');
     const exists = await this.prisma.student.findUnique({
-      where: { schoolId_rut: { schoolId: dto.schoolId, rut: dto.rut } },
+      where: { schoolId_rut: { schoolId: dto.schoolId, rut } },
     });
     if (exists) throw new ConflictException('RUT ya registrado en este colegio');
 
-    return this.prisma.student.create({ data: dto });
+    return this.prisma.student.create({ data: { ...dto, rut } });
   }
 
   /** Bulk import. Skips existing RUTs and duplicate enrollment numbers. Returns per-row result. */
@@ -97,25 +101,30 @@ export class StudentsService {
     const seenNums = new Set<number>();
 
     dto.rows.forEach((row, i) => {
-      if (seenRuts.has(row.rut)) {
-        errors.push({ row: i + 1, rut: row.rut, reason: 'RUT duplicado en archivo' });
+      const rut = normalizeRut(row.rut);
+      if (!isValidRut(rut)) {
+        errors.push({ row: i + 1, rut, reason: 'RUT inválido' });
         return;
       }
-      if (existingRuts.has(row.rut)) {
-        errors.push({ row: i + 1, rut: row.rut, reason: 'RUT ya matriculado' });
+      if (seenRuts.has(rut)) {
+        errors.push({ row: i + 1, rut, reason: 'RUT duplicado en archivo' });
+        return;
+      }
+      if (existingRuts.has(rut)) {
+        errors.push({ row: i + 1, rut, reason: 'RUT ya matriculado' });
         return;
       }
       if (takenNums.has(row.enrollmentNumber) || seenNums.has(row.enrollmentNumber)) {
         errors.push({
           row: i + 1,
-          rut: row.rut,
+          rut,
           reason: `N° lista ${row.enrollmentNumber} ocupado`,
         });
         return;
       }
-      seenRuts.add(row.rut);
+      seenRuts.add(rut);
       seenNums.add(row.enrollmentNumber);
-      toCreate.push({ ...row, schoolId: dto.schoolId, courseId: dto.courseId });
+      toCreate.push({ ...row, rut, schoolId: dto.schoolId, courseId: dto.courseId });
     });
 
     let created = 0;

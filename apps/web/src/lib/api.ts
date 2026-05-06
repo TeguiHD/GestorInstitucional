@@ -81,6 +81,32 @@ export async function downloadBlob(path: string, filename: string): Promise<void
   URL.revokeObjectURL(url);
 }
 
+export async function uploadFormData<T>(path: string, formData: FormData): Promise<T> {
+  const token = _accessToken;
+  const headers: Record<string, string> = {};
+  if (token) headers['Authorization'] = `Bearer ${token}`;
+
+  const res = await fetch(`${BASE}${path}`, {
+    method: 'POST',
+    headers,
+    body: formData,
+    credentials: 'include',
+  });
+
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    const raw = (data as { message?: unknown }).message;
+    const message = Array.isArray(raw)
+      ? raw.join(', ')
+      : typeof raw === 'string'
+        ? raw
+        : res.statusText;
+    throw new ApiError(res.status, message, data);
+  }
+
+  return res.json() as Promise<T>;
+}
+
 export const api = {
   get: <T>(path: string, signal?: AbortSignal) => request<T>(path, signal ? { signal } : {}),
   post: <T>(path: string, body?: unknown, authToken?: string) =>
