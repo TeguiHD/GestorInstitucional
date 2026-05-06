@@ -1,4 +1,5 @@
 import { createReadStream } from 'node:fs';
+import { resolve } from 'node:path';
 
 import {
   BadRequestException,
@@ -108,9 +109,15 @@ export class JustificationsController {
     @Res() res: FastifyReply,
   ) {
     const j = await this.service.getFile(id, user);
+    const safePath = resolve(j.filePath);
+    const allowedRoot = resolve(process.env.UPLOADS_DIR ?? 'uploads');
+    if (!safePath.startsWith(allowedRoot + '/') && safePath !== allowedRoot) {
+      void res.status(403).send({ message: 'Ruta de archivo inválida' });
+      return;
+    }
     void res.header('Content-Type', j.mimeType);
     void res.header('Content-Disposition', `inline; filename="${encodeURIComponent(j.fileName)}"`);
-    void res.send(createReadStream(j.filePath));
+    void res.send(createReadStream(safePath));
   }
 
   @Delete(':id')

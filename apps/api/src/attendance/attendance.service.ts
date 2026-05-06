@@ -93,7 +93,11 @@ export class AttendanceService {
   }
 
   private async notifyGuardiansAbsence(dto: RecordAttendanceDto, date: Date) {
-    const toNotify = dto.entries.filter((e) => e.status === 'ABSENT' || e.status === 'LATE');
+    const lateThresholdMin = Number(process.env.LATE_NOTIFY_THRESHOLD_MIN ?? 15);
+    const toNotify = dto.entries.filter(
+      (e) =>
+        e.status === 'ABSENT' || (e.status === 'LATE' && (e.lateMinutes ?? 0) >= lateThresholdMin),
+    );
     if (toNotify.length === 0) return;
 
     // Don't notify for days marked HOLIDAY/SUSPENDED

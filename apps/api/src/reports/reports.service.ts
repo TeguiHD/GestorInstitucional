@@ -743,17 +743,26 @@ export class ReportsService {
     const wb = new ExcelJS.Workbook();
     wb.creator = 'Asistencia CSSP';
 
-    // Summary accumulator: studentId → { p, a, j }
     const summary = new Map<string, { p: number; a: number; j: number; byMonth: number[] }>();
     for (const s of course.students) summary.set(s.id, { p: 0, a: 0, j: 0, byMonth: [] });
 
+    // Single query for all semester months — group in memory by month
+    const semFrom = new Date(year, months[0]! - 1, 1);
+    const semTo = new Date(year, months[months.length - 1]!, 0, 23, 59, 59);
+    const allRecords = await this.prisma.attendanceRecord.findMany({
+      where: { courseId, date: { gte: semFrom, lte: semTo } },
+      select: { studentId: true, date: true, status: true },
+    });
+    const byMonth = new Map<number, Array<{ studentId: string; date: Date; status: string }>>();
+    for (const r of allRecords) {
+      const m = r.date.getMonth() + 1;
+      if (!byMonth.has(m)) byMonth.set(m, []);
+      byMonth.get(m)!.push(r);
+    }
+
     for (const month of months) {
-      const from = new Date(year, month - 1, 1);
+      const records = byMonth.get(month) ?? [];
       const to = new Date(year, month, 0);
-      const records = await this.prisma.attendanceRecord.findMany({
-        where: { courseId, date: { gte: from, lte: to } },
-        select: { studentId: true, date: true, status: true },
-      });
       const recordMap = new Map<string, Map<string, string>>();
       for (const r of records) {
         const key = r.date.toISOString().split('T')[0]!;
@@ -762,7 +771,6 @@ export class ReportsService {
       }
       this.buildMonthSheet(wb, { course, year, month, to, records: recordMap });
 
-      // Accumulate summary
       for (const r of records) {
         const e = summary.get(r.studentId);
         if (!e) continue;
@@ -877,13 +885,24 @@ export class ReportsService {
     const summary = new Map<string, { p: number; a: number; j: number }>();
     for (const s of course.students) summary.set(s.id, { p: 0, a: 0, j: 0 });
 
+    // Single query for entire year — group in memory by month
+    const allRecords = await this.prisma.attendanceRecord.findMany({
+      where: {
+        courseId,
+        date: { gte: new Date(year, 0, 1), lte: new Date(year, 11, 31, 23, 59, 59) },
+      },
+      select: { studentId: true, date: true, status: true },
+    });
+    const byMonth = new Map<number, Array<{ studentId: string; date: Date; status: string }>>();
+    for (const r of allRecords) {
+      const m = r.date.getMonth() + 1;
+      if (!byMonth.has(m)) byMonth.set(m, []);
+      byMonth.get(m)!.push(r);
+    }
+
     for (const month of months) {
-      const from = new Date(year, month - 1, 1);
+      const records = byMonth.get(month) ?? [];
       const to = new Date(year, month, 0);
-      const records = await this.prisma.attendanceRecord.findMany({
-        where: { courseId, date: { gte: from, lte: to } },
-        select: { studentId: true, date: true, status: true },
-      });
       const recordMap = new Map<string, Map<string, string>>();
       for (const r of records) {
         const key = r.date.toISOString().split('T')[0]!;
@@ -996,21 +1015,20 @@ export class ReportsService {
     const perStudent = new Map<string, { p: number; a: number; l: number; j: number }>();
     for (const s of course.students) perStudent.set(s.id, { p: 0, a: 0, l: 0, j: 0 });
 
-    for (const month of months) {
-      const from = new Date(year, month - 1, 1);
-      const to = new Date(year, month, 0);
-      const records = await this.prisma.attendanceRecord.findMany({
-        where: { courseId, date: { gte: from, lte: to } },
-        select: { studentId: true, status: true },
-      });
-      for (const r of records) {
-        const e = perStudent.get(r.studentId);
-        if (!e) continue;
-        if (r.status === 'PRESENT') e.p++;
-        else if (r.status === 'ABSENT') e.a++;
-        else if (r.status === 'LATE') e.l++;
-        else if (r.status === 'JUSTIFIED') e.j++;
-      }
+    // Single query for all semester months
+    const semFrom = new Date(year, months[0]! - 1, 1);
+    const semTo = new Date(year, months[months.length - 1]!, 0, 23, 59, 59);
+    const allSemRecords = await this.prisma.attendanceRecord.findMany({
+      where: { courseId, date: { gte: semFrom, lte: semTo } },
+      select: { studentId: true, status: true },
+    });
+    for (const r of allSemRecords) {
+      const e = perStudent.get(r.studentId);
+      if (!e) continue;
+      if (r.status === 'PRESENT') e.p++;
+      else if (r.status === 'ABSENT') e.a++;
+      else if (r.status === 'LATE') e.l++;
+      else if (r.status === 'JUSTIFIED') e.j++;
     }
 
     const doc = new PDFDocument({ size: 'A4', margin: 48 });
@@ -1150,8 +1168,6 @@ export class ReportsService {
   }
 
   async generateAnnualPdf(courseId: string, year: number, requestedById: string): Promise<Buffer> {
-    const months = Array.from({ length: 12 }, (_, i) => i + 1);
-
     const course = await this.prisma.course.findUniqueOrThrow({
       where: { id: courseId },
       include: {
@@ -1164,21 +1180,21 @@ export class ReportsService {
     const perStudent = new Map<string, { p: number; a: number; l: number; j: number }>();
     for (const s of course.students) perStudent.set(s.id, { p: 0, a: 0, l: 0, j: 0 });
 
-    for (const month of months) {
-      const from = new Date(year, month - 1, 1);
-      const to = new Date(year, month, 0);
-      const records = await this.prisma.attendanceRecord.findMany({
-        where: { courseId, date: { gte: from, lte: to } },
-        select: { studentId: true, status: true },
-      });
-      for (const r of records) {
-        const e = perStudent.get(r.studentId);
-        if (!e) continue;
-        if (r.status === 'PRESENT') e.p++;
-        else if (r.status === 'ABSENT') e.a++;
-        else if (r.status === 'LATE') e.l++;
-        else if (r.status === 'JUSTIFIED') e.j++;
-      }
+    // Single query for entire year
+    const allAnnualRecords = await this.prisma.attendanceRecord.findMany({
+      where: {
+        courseId,
+        date: { gte: new Date(year, 0, 1), lte: new Date(year, 11, 31, 23, 59, 59) },
+      },
+      select: { studentId: true, status: true },
+    });
+    for (const r of allAnnualRecords) {
+      const e = perStudent.get(r.studentId);
+      if (!e) continue;
+      if (r.status === 'PRESENT') e.p++;
+      else if (r.status === 'ABSENT') e.a++;
+      else if (r.status === 'LATE') e.l++;
+      else if (r.status === 'JUSTIFIED') e.j++;
     }
 
     const doc = new PDFDocument({ size: 'A4', margin: 48 });

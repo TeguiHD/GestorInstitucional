@@ -308,32 +308,56 @@ function UserModal({
     const copy = () => {
       navigator.clipboard.writeText(state.tempPassword).then(() => {
         setCopied(true);
-        setTimeout(() => setCopied(false), 2000);
       });
     };
     return (
       <Modal onClose={onClose} title="Contraseña temporal generada">
         <div className="space-y-4">
-          <p className="text-sm text-muted-foreground">
-            Comparte esta contraseña con el usuario. No podrá verla después.
-          </p>
+          <div className="rounded-lg border border-amber-200 bg-amber-50 dark:border-amber-800 dark:bg-amber-950/40 px-4 py-3 text-sm text-amber-800 dark:text-amber-300">
+            Esta contraseña <strong>no volverá a mostrarse</strong>. Cópiala y entrégala al usuario
+            de forma segura antes de cerrar.
+          </div>
           <div className="flex items-center gap-2 rounded-lg border border-border bg-muted/40 px-4 py-3">
-            <code className="flex-1 text-sm font-mono tracking-wider">
-              {showPass ? state.tempPassword : '••••••••'}
+            <code className="flex-1 text-sm font-mono tracking-wider select-all">
+              {showPass ? state.tempPassword : '••••••••••••'}
             </code>
             <button
+              type="button"
               onClick={() => setShowPass((v) => !v)}
-              className="text-muted-foreground hover:text-foreground"
+              className="text-muted-foreground hover:text-foreground transition-colors"
+              title={showPass ? 'Ocultar' : 'Mostrar'}
             >
               {showPass ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
             </button>
-            <button onClick={copy} className="text-muted-foreground hover:text-foreground">
-              {copied ? <Check className="h-4 w-4 text-success" /> : <Copy className="h-4 w-4" />}
+            <button
+              type="button"
+              onClick={copy}
+              className="text-muted-foreground hover:text-foreground transition-colors"
+              title="Copiar al portapapeles"
+            >
+              {copied ? (
+                <Check className="h-4 w-4 text-green-600 dark:text-green-400" />
+              ) : (
+                <Copy className="h-4 w-4" />
+              )}
             </button>
           </div>
+          <label className="flex items-start gap-3 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={copied}
+              onChange={() => setCopied((v) => !v)}
+              className="mt-0.5 h-4 w-4 rounded border-border accent-primary"
+            />
+            <span className="text-sm text-muted-foreground">
+              Confirmé que guardé la contraseña en un lugar seguro
+            </span>
+          </label>
           <button
+            type="button"
             onClick={onClose}
-            className="w-full py-2 rounded-lg bg-primary text-primary-foreground text-sm hover:bg-primary/90 transition-colors"
+            disabled={!copied}
+            className="w-full py-2 rounded-lg bg-primary text-primary-foreground text-sm hover:bg-primary/90 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
           >
             Listo
           </button>
