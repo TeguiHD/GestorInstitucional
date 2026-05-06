@@ -65,7 +65,7 @@ export class AttendanceService {
     });
 
     void this.notifyGuardiansAbsence(dto, date).catch((e) =>
-      this.log.warn(`notifyGuardiansAbsence failed: ${(e as Error).message}`),
+      this.log.warn(`notifyGuardiansAbsence failed: ${e instanceof Error ? e.message : String(e)}`),
     );
 
     return { upserted: dto.entries.length };

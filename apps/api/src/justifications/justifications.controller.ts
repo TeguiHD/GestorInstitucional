@@ -93,8 +93,17 @@ export class JustificationsController {
     const opts: { status?: 'PENDING' | 'APPROVED' | 'REJECTED'; limit?: number; offset?: number } =
       {};
     if (status !== undefined) opts.status = status;
-    if (limit !== undefined) opts.limit = Number(limit);
-    if (offset !== undefined) opts.offset = Number(offset);
+    if (limit !== undefined) {
+      const lim = Number(limit);
+      if (!Number.isInteger(lim) || lim < 1) throw new BadRequestException('limit inválido');
+      opts.limit = lim;
+    }
+    if (offset !== undefined) {
+      const off = Number(offset);
+      if (!Number.isInteger(off) || off < 0 || off > 100_000)
+        throw new BadRequestException('offset inválido');
+      opts.offset = off;
+    }
     return this.service.listBySchool(schoolId, user, opts);
   }
 
