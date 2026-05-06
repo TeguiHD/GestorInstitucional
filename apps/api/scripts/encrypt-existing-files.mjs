@@ -1,17 +1,16 @@
-#!/usr/bin/env tsx
+#!/usr/bin/env node
 /**
- * Migra archivos de justificación existentes a AES-256-GCM.
- * Idempotente: salta registros que ya tienen fileIv en DB.
- *
- * Uso:
- * FILE_ENC_KEY=<64hex> DATABASE_URL=... pnpm --filter @asistencia/api exec tsx scripts/encrypt-existing-files.ts
+ * Production runner for encrypt-existing-files.ts.
+ * Uses only production dependencies and built API files inside the Docker image.
  */
 import { existsSync } from 'node:fs';
 import { readFile, writeFile } from 'node:fs/promises';
 
 import { PrismaClient } from '@prisma/client';
 
-import { encryptBuffer, getFileEncKey } from '../src/justifications/file-crypto.js';
+const { encryptBuffer, getFileEncKey } = await import(
+  '../dist/src/justifications/file-crypto.js'
+);
 
 for (const envPath of ['apps/api/.env', '.env']) {
   if (!process.env.FILE_ENC_KEY && existsSync(envPath)) process.loadEnvFile(envPath);
@@ -21,7 +20,6 @@ const prisma = new PrismaClient();
 
 async function main() {
   const key = getFileEncKey();
-
   const pending = await prisma.attendanceJustification.findMany({
     where: { fileIv: null, filePath: { not: '' } },
     select: { id: true, filePath: true },

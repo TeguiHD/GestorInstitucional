@@ -64,6 +64,7 @@ RUN PRISMA_DIR=/app/node_modules/.pnpm/@prisma+client@5.22.0_prisma@5.22.0/node_
        "$PRISMA_DIR/libquery_engine-linux-musl.so.node"
 COPY --from=builder /app/apps/api/prisma ./apps/api/prisma
 COPY apps/api/assets ./apps/api/assets
+COPY apps/api/scripts ./apps/api/scripts
 
 RUN find /app/node_modules/.pnpm -maxdepth 1 -name '@prisma+engines@5.22.0*' -exec chown -R appuser:nodejs {} + && \
     chown -R appuser:nodejs /app/node_modules/.pnpm/@prisma+client@5.22.0_prisma@5.22.0/node_modules/.prisma

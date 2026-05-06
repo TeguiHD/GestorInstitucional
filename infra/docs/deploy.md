@@ -46,17 +46,17 @@ WAF rules: habilitar OWASP Core Rule Set.
 # En el servidor
 mkdir -p /opt/asistencia && cd /opt/asistencia
 git clone <repo> .
-cp .env.example .env
-# Editar .env con secretos reales (JWT secrets, DB passwords, etc.)
-nano .env
+cp .env.example .env.prod
+# Editar .env.prod con secretos reales (JWT secrets, DB passwords, FILE_ENC_KEY, etc.)
+nano .env.prod
 
-# Levantar DB primero, ejecutar migrations + seed
-docker compose -f infra/docker/docker-compose.prod.yml up -d db
-docker compose -f infra/docker/docker-compose.prod.yml exec api sh -c \
-  "pnpm --filter @asistencia/api prisma:deploy && pnpm --filter @asistencia/api db:seed"
+# Levantar DB y aplicar migrations
+docker compose --env-file .env.prod -f infra/docker/docker-compose.prod.yml up -d db
+docker compose --env-file .env.prod -f infra/docker/docker-compose.prod.yml run --rm api \
+  pnpm --filter @asistencia/api prisma:deploy
 
 # Levantar todo
-docker compose -f infra/docker/docker-compose.prod.yml up -d
+docker compose --env-file .env.prod -f infra/docker/docker-compose.prod.yml up -d
 ```
 
 ## 4. Deploy de updates
@@ -64,10 +64,12 @@ docker compose -f infra/docker/docker-compose.prod.yml up -d
 ```bash
 cd /opt/asistencia
 git pull
-docker compose -f infra/docker/docker-compose.prod.yml build api web
-docker compose -f infra/docker/docker-compose.prod.yml up -d --no-deps api web
-docker compose -f infra/docker/docker-compose.prod.yml exec api \
+docker compose --env-file .env.prod -f infra/docker/docker-compose.prod.yml build api web
+docker compose --env-file .env.prod -f infra/docker/docker-compose.prod.yml run --rm api \
   pnpm --filter @asistencia/api prisma:deploy
+docker compose --env-file .env.prod -f infra/docker/docker-compose.prod.yml run --rm api \
+  node apps/api/scripts/encrypt-existing-files.mjs
+docker compose --env-file .env.prod -f infra/docker/docker-compose.prod.yml up -d --no-deps api web
 ```
 
 > Producción debe tener `_prisma_migrations` baselineada. Si se restaura una BD creada antes de Prisma migrations, crear backup, alinear columnas (`students.enrolledAt`) y registrar las migraciones aplicadas antes de ejecutar `prisma:deploy`.
@@ -91,6 +93,7 @@ docker run --rm -v asistencia_db_prod:/data -v /opt/backups:/backups alpine \
 - [ ] Regenerar Cloudflare API token (minimal scope: Zone.DNS edit)
 - [ ] Generar JWT_ACCESS_SECRET y JWT_REFRESH_SECRET (64 bytes random)
 - [ ] Generar TOTP_ENC_KEY (`openssl rand -hex 32`)
+- [ ] Generar FILE_ENC_KEY (`openssl rand -hex 32`)
 - [ ] Generar DB_PASSWORD segura (32+ chars)
 - [ ] Verificar que `.env.prod` y todo `.env.*` real estén fuera de git
 - [ ] Configurar HIBP_ENABLED=true
