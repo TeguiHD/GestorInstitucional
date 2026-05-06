@@ -131,13 +131,14 @@ model School {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  users        UserSchoolRole[]
-  courses      Course[]
-  students     Student[]
-  permissions  SchoolPermission[]
-  calendarDays SchoolCalendarDay[]
-  alertRules   AlertRule[]
-  subjects     Subject[]
+  users               UserSchoolRole[]
+  courses             Course[]
+  students            Student[]
+  permissions         SchoolPermission[]
+  calendarDays        SchoolCalendarDay[]
+  alertRules          AlertRule[]
+  subjects            Subject[]
+  retentionSnapshots  RetentionSnapshot[]
 
   @@map("schools")
 }
@@ -437,6 +438,8 @@ model AttendanceJustification {
   mimeType       String              @db.VarChar(120)
   sizeBytes      Int
   fileHash       String?             @db.VarChar(64)
+  fileIv         String?             @db.VarChar(24)  // hex del IV AES-GCM (12 bytes = 24 hex)
+  deletedAt      DateTime?
   reason         String              @db.VarChar(500)
   status         JustificationStatus @default(PENDING)
   reviewedById   String?             @db.Char(36)
@@ -451,6 +454,7 @@ model AttendanceJustification {
   @@index([recordId])
   @@index([status])
   @@index([uploadedById, createdAt])
+  @@index([deletedAt])
   @@map("attendance_justifications")
 }
 
@@ -674,4 +678,22 @@ model EnrollmentEvent {
   @@index([schoolId])
   @@index([effectiveDate])
   @@map("enrollment_events")
+}
+
+// =============================================================================
+// RETENTION SNAPSHOTS (resumen pre-purga para MINEDUC)
+// =============================================================================
+
+model RetentionSnapshot {
+  id        String   @id @default(uuid()) @db.Char(36)
+  schoolId  String   @db.Char(36)
+  year      Int
+  summary   Json     // { courses: [{ id, code, name, total, present, absent, late, justified }] }
+  createdAt DateTime @default(now())
+
+  school School @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+
+  @@unique([schoolId, year])
+  @@index([schoolId])
+  @@map("retention_snapshots")
 }
