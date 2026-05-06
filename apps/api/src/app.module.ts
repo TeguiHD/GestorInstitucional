@@ -22,6 +22,7 @@ import { JustificationsModule } from './justifications/justifications.module.js'
 import { MailModule } from './mail/mail.module.js';
 import { AuditModule } from './audit/audit.module.js';
 import { AlertsModule } from './alerts/alerts.module.js';
+import { RetentionModule } from './retention/retention.module.js';
 
 @Module({
   imports: [
@@ -89,6 +90,7 @@ import { AlertsModule } from './alerts/alerts.module.js';
     JustificationsModule,
     MailModule,
     AlertsModule,
+    RetentionModule,
     HealthModule,
   ],
   providers: [
