@@ -1,4 +1,4 @@
-import { createReadStream } from 'node:fs';
+import { readFile as readFileAsync } from 'node:fs/promises';
 import { resolve } from 'node:path';
 
 import {
@@ -138,7 +138,7 @@ export class JustificationsController {
   }
 
   @Get(':id/file')
-  @ApiOperation({ summary: 'Descargar certificado' })
+  @ApiOperation({ summary: 'Descargar certificado (descifrado on-demand)' })
   async download(
     @Param('id') id: string,
     @CurrentUser() user: JwtPayload,
@@ -151,9 +151,41 @@ export class JustificationsController {
       void res.status(403).send({ message: 'Ruta de archivo inválida' });
       return;
     }
+
+    const fileBuffer = await readFileAsync(safePath);
+    let responseBuffer: Buffer;
+
+    if (j.fileIv) {
+      const { decryptBuffer, getFileEncKey } = await import('./file-crypto.js');
+      responseBuffer = decryptBuffer(fileBuffer, j.fileIv, getFileEncKey());
+    } else {
+      responseBuffer = fileBuffer;
+    }
+
     void res.header('Content-Type', j.mimeType);
     void res.header('Content-Disposition', `inline; filename="${encodeURIComponent(j.fileName)}"`);
-    void res.send(createReadStream(safePath));
+    void res.send(responseBuffer);
+  }
+
+  @Get('trash')
+  @Roles(SystemRole.SUPER_ADMIN)
+  @ApiOperation({ summary: 'Papelera de justificaciones (SUPER_ADMIN)' })
+  listTrash(@Query('schoolId') schoolId: string, @CurrentUser() user: JwtPayload) {
+    return this.service.listTrash(schoolId, user);
+  }
+
+  @Post(':id/restore')
+  @Roles(SystemRole.SUPER_ADMIN)
+  @ApiOperation({ summary: 'Restaurar justificación eliminada' })
+  restore(@Param('id') id: string, @CurrentUser() user: JwtPayload) {
+    return this.service.restoreJustification(id, user);
+  }
+
+  @Delete(':id/purge')
+  @Roles(SystemRole.SUPER_ADMIN)
+  @ApiOperation({ summary: 'Purgar definitivamente justificación (Ley 21.719)' })
+  purge(@Param('id') id: string, @CurrentUser() user: JwtPayload) {
+    return this.service.purgeJustification(id, user);
   }
 
   @Delete(':id')

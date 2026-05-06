@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { createWriteStream } from 'node:fs';
-import { mkdir, unlink } from 'node:fs/promises';
+import { mkdir, readFile, unlink, writeFile } from 'node:fs/promises';
 import { extname, join } from 'node:path';
 import { Transform } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
@@ -16,6 +16,7 @@ import {
 import PDFDocument from 'pdfkit';
 import type { JustificationStatus } from '@prisma/client';
 
+import { encryptBuffer, getFileEncKey } from './file-crypto.js';
 import { MailService } from '../mail/mail.service.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { AuditService } from '../audit/audit.service.js';
@@ -107,6 +108,11 @@ export class JustificationsService {
       await unlink(filePath).catch(() => undefined);
       throw error;
     }
+    // Cifrar en reposo (AES-256-GCM)
+    const encKey = getFileEncKey();
+    const plainBuffer = await readFile(filePath);
+    const { encrypted, iv: fileIv } = encryptBuffer(plainBuffer, encKey);
+    await writeFile(filePath, encrypted);
     const fileHash = hasher.digest('hex');
 
     const created = await this.prisma.attendanceJustification.create({
@@ -118,6 +124,7 @@ export class JustificationsService {
         mimeType: params.file.mimetype,
         sizeBytes: size,
         fileHash,
+        fileIv,
         reason: params.reason,
       },
     });
@@ -154,7 +161,7 @@ export class JustificationsService {
       record.student.guardianships.map((g) => g.guardianId),
     );
     return this.prisma.attendanceJustification.findMany({
-      where: { recordId },
+      where: { recordId, deletedAt: null },
       orderBy: { createdAt: 'desc' },
       include: {
         uploadedBy: { select: { firstName: true, lastName: true, email: true } },
@@ -180,7 +187,7 @@ export class JustificationsService {
       student.guardianships.map((g) => g.guardianId),
     );
     return this.prisma.attendanceJustification.findMany({
-      where: { record: { studentId } },
+      where: { record: { studentId }, deletedAt: null },
       orderBy: { createdAt: 'desc' },
       include: {
         record: { select: { date: true, status: true } },
@@ -199,6 +206,7 @@ export class JustificationsService {
     const offset = opts.offset ?? 0;
     const where = {
       record: { student: { schoolId } },
+      deletedAt: null,
       ...(opts.status ? { status: opts.status } : {}),
     };
     const [items, total] = await this.prisma.$transaction([
@@ -234,7 +242,7 @@ export class JustificationsService {
   async pendingBySchool(schoolId: string, user: JwtPayload) {
     this.assertCanAccessSchool(user, schoolId);
     return this.prisma.attendanceJustification.findMany({
-      where: { status: 'PENDING', record: { student: { schoolId } } },
+      where: { status: 'PENDING', record: { student: { schoolId } }, deletedAt: null },
       orderBy: { createdAt: 'asc' },
       include: {
         record: {
@@ -263,7 +271,7 @@ export class JustificationsService {
     notes?: string,
   ) {
     const j = await this.prisma.attendanceJustification.findUnique({
-      where: { id },
+      where: { id, deletedAt: null },
       include: {
         record: { select: { status: true, student: { select: { schoolId: true } } } },
       },
@@ -377,7 +385,7 @@ export class JustificationsService {
 
   async getFile(id: string, user: JwtPayload) {
     const j = await this.prisma.attendanceJustification.findUnique({
-      where: { id },
+      where: { id, deletedAt: null },
       include: {
         record: {
           select: {
@@ -404,7 +412,7 @@ export class JustificationsService {
 
   async generateReceipt(id: string, user: JwtPayload): Promise<Buffer> {
     const j = await this.prisma.attendanceJustification.findUnique({
-      where: { id },
+      where: { id, deletedAt: null },
       include: {
         uploadedBy: { select: { firstName: true, lastName: true, email: true } },
         record: {
@@ -587,7 +595,7 @@ export class JustificationsService {
 
   async remove(id: string, user: JwtPayload) {
     const j = await this.prisma.attendanceJustification.findUnique({
-      where: { id },
+      where: { id, deletedAt: null },
       include: { record: { select: { student: { select: { schoolId: true } } } } },
     });
     if (!j) throw new NotFoundException('Justificación no encontrada');
@@ -598,19 +606,94 @@ export class JustificationsService {
     if (j.uploadedById !== user.sub && !sameSchoolAdmin) {
       throw new ForbiddenException('Solo el autor o personal autorizado puede eliminarla');
     }
-    await this.prisma.attendanceJustification.delete({ where: { id } });
+    await this.prisma.attendanceJustification.update({
+      where: { id },
+      data: { deletedAt: new Date() },
+    });
     await this.audit.log({
       userId: user.sub,
       action: 'DELETE',
       entity: 'AttendanceJustification',
       entityId: id,
-      meta: { recordId: j.recordId },
+      meta: { recordId: j.recordId, softDelete: true },
     });
-    try {
-      await unlink(j.filePath);
-    } catch {
-      /* file may be gone */
+    return { ok: true };
+  }
+
+  async listTrash(schoolId: string, user: JwtPayload) {
+    if (!user.roles.includes('SUPER_ADMIN')) {
+      throw new ForbiddenException('Solo SUPER_ADMIN puede ver la papelera');
     }
+    return this.prisma.attendanceJustification.findMany({
+      where: { deletedAt: { not: null }, record: { student: { schoolId } } },
+      orderBy: { deletedAt: 'desc' },
+      include: {
+        record: {
+          select: {
+            date: true,
+            student: {
+              select: {
+                firstName: true,
+                lastName: true,
+                rut: true,
+                course: { select: { code: true } },
+              },
+            },
+          },
+        },
+        uploadedBy: { select: { firstName: true, lastName: true, email: true } },
+      },
+    });
+  }
+
+  async restoreJustification(id: string, user: JwtPayload) {
+    if (!user.roles.includes('SUPER_ADMIN')) throw new ForbiddenException('Solo SUPER_ADMIN');
+    const j = await this.prisma.attendanceJustification.findUnique({ where: { id } });
+    if (!j) throw new NotFoundException('Justificación no encontrada');
+    if (!j.deletedAt) throw new BadRequestException('La justificación no está eliminada');
+    await this.prisma.attendanceJustification.update({
+      where: { id },
+      data: { deletedAt: null },
+    });
+    await this.audit.log({
+      userId: user.sub,
+      action: 'UPDATE',
+      entity: 'AttendanceJustification',
+      entityId: id,
+      meta: { restored: true },
+    });
+    return { ok: true };
+  }
+
+  async purgeJustification(id: string, user: JwtPayload) {
+    if (!user.roles.includes('SUPER_ADMIN')) throw new ForbiddenException('Solo SUPER_ADMIN');
+    const j = await this.prisma.attendanceJustification.findUnique({ where: { id } });
+    if (!j) throw new NotFoundException('Justificación no encontrada');
+    if (j.filePath) {
+      try {
+        await unlink(j.filePath);
+      } catch {
+        /* file may already be gone */
+      }
+    }
+    await this.prisma.attendanceJustification.update({
+      where: { id },
+      data: {
+        fileName: '[archivo-eliminado]',
+        filePath: '',
+        fileHash: null,
+        fileIv: null,
+        reason: '[eliminado]',
+        deletedAt: new Date(),
+      },
+    });
+    await this.audit.log({
+      userId: user.sub,
+      action: 'DELETE',
+      entity: 'AttendanceJustification',
+      entityId: id,
+      meta: { purged: true, reason: 'GDPR/Ley21719' },
+    });
     return { ok: true };
   }
 
