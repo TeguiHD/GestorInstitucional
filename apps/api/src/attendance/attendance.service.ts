@@ -264,25 +264,39 @@ export class AttendanceService {
     const fromDate = new Date(from);
     const toDate = new Date(to);
 
-    const [courses, allRecords, nonSchool] = await Promise.all([
+    const [courses, nonSchool] = await Promise.all([
       this.prisma.course.findMany({
         where: { schoolId, active: true },
         select: { id: true, code: true, name: true },
       }),
-      this.prisma.attendanceRecord.findMany({
-        where: { course: { schoolId }, date: { gte: fromDate, lte: toDate } },
-        select: { courseId: true, status: true, date: true },
-      }),
       this.calendar.getNonSchoolDays(schoolId, fromDate, toDate),
     ]);
 
+    const courseIds = courses.map((course) => course.id);
+    const nonSchoolDates = Array.from(nonSchool).map((date) => new Date(date));
+
+    const grouped =
+      courseIds.length === 0
+        ? []
+        : await this.prisma.attendanceRecord.groupBy({
+            by: ['courseId', 'status'],
+            where: {
+              courseId: { in: courseIds },
+              date: {
+                gte: fromDate,
+                lte: toDate,
+                notIn: nonSchoolDates,
+              },
+            },
+            _count: { _all: true },
+          });
+
     const byCourse = new Map<string, { total: number; present: number }>();
-    for (const r of allRecords) {
-      if (nonSchool.has(r.date.toISOString().split('T')[0]!)) continue;
-      const cur = byCourse.get(r.courseId) ?? { total: 0, present: 0 };
-      cur.total += 1;
-      if (r.status === 'PRESENT' || r.status === 'LATE') cur.present += 1;
-      byCourse.set(r.courseId, cur);
+    for (const row of grouped) {
+      const cur = byCourse.get(row.courseId) ?? { total: 0, present: 0 };
+      cur.total += row._count._all;
+      if (row.status === 'PRESENT' || row.status === 'LATE') cur.present += row._count._all;
+      byCourse.set(row.courseId, cur);
     }
 
     return courses
