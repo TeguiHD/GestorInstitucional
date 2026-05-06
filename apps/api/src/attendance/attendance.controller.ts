@@ -85,6 +85,18 @@ export class AttendanceController {
     return this.attendance.getSchoolStats(schoolId, from, to);
   }
 
+  @Get('course/:courseId/daily-trend')
+  @ApiOperation({ summary: 'Tendencia diaria de asistencia de un curso (dashboard drill-down)' })
+  async getCourseDailyTrend(
+    @Param('courseId') courseId: string,
+    @Query('from') from: string,
+    @Query('to') to: string,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    await this.courses.assertAccess(courseId, user);
+    return this.attendance.getCourseDailyTrend(courseId, from, to);
+  }
+
   @Get('course/:courseId/matrix')
   @ApiOperation({ summary: 'Matriz alumno×día del mes — backbone del dashboard Power BI' })
   async getCourseMatrix(

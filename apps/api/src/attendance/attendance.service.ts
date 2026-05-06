@@ -250,30 +250,62 @@ export class AttendanceService {
 
   /** School-level stats per course for a given period. */
   async getSchoolStats(schoolId: string, from: string, to: string) {
-    const courses = await this.prisma.course.findMany({
-      where: { schoolId, active: true },
-      select: { id: true, code: true, name: true },
-    });
-
     const fromDate = new Date(from);
     const toDate = new Date(to);
-    const nonSchool = await this.calendar.getNonSchoolDays(schoolId, fromDate, toDate);
-    const stats = await Promise.all(
-      courses.map(async (course) => {
-        const recs = await this.prisma.attendanceRecord.findMany({
-          where: { courseId: course.id, date: { gte: fromDate, lte: toDate } },
-          select: { status: true, date: true },
-        });
-        const filtered = recs.filter((r) => !nonSchool.has(r.date.toISOString().split('T')[0]!));
-        const total = filtered.length;
-        const present = filtered.filter(
-          (r) => r.status === 'PRESENT' || r.status === 'LATE',
-        ).length;
-        return { ...course, total, present, attendanceRate: total > 0 ? present / total : 0 };
-      }),
-    );
 
-    return stats.sort((a, b) => b.attendanceRate - a.attendanceRate);
+    const [courses, allRecords, nonSchool] = await Promise.all([
+      this.prisma.course.findMany({
+        where: { schoolId, active: true },
+        select: { id: true, code: true, name: true },
+      }),
+      this.prisma.attendanceRecord.findMany({
+        where: { course: { schoolId }, date: { gte: fromDate, lte: toDate } },
+        select: { courseId: true, status: true, date: true },
+      }),
+      this.calendar.getNonSchoolDays(schoolId, fromDate, toDate),
+    ]);
+
+    const byCourse = new Map<string, { total: number; present: number }>();
+    for (const r of allRecords) {
+      if (nonSchool.has(r.date.toISOString().split('T')[0]!)) continue;
+      const cur = byCourse.get(r.courseId) ?? { total: 0, present: 0 };
+      cur.total += 1;
+      if (r.status === 'PRESENT' || r.status === 'LATE') cur.present += 1;
+      byCourse.set(r.courseId, cur);
+    }
+
+    return courses
+      .map((c) => {
+        const agg = byCourse.get(c.id) ?? { total: 0, present: 0 };
+        return { ...c, ...agg, attendanceRate: agg.total > 0 ? agg.present / agg.total : 0 };
+      })
+      .sort((a, b) => b.attendanceRate - a.attendanceRate);
+  }
+
+  async getCourseDailyTrend(courseId: string, from: string, to: string) {
+    const fromDate = new Date(from);
+    const toDate = new Date(to);
+    const records = await this.prisma.attendanceRecord.findMany({
+      where: { courseId, date: { gte: fromDate, lte: toDate } },
+      select: { date: true, status: true },
+      orderBy: { date: 'asc' },
+    });
+
+    const byDate = new Map<string, { total: number; present: number }>();
+    for (const r of records) {
+      const d = r.date.toISOString().split('T')[0]!;
+      const cur = byDate.get(d) ?? { total: 0, present: 0 };
+      cur.total += 1;
+      if (r.status === 'PRESENT' || r.status === 'LATE') cur.present += 1;
+      byDate.set(d, cur);
+    }
+
+    return Array.from(byDate.entries()).map(([date, agg]) => ({
+      date,
+      total: agg.total,
+      present: agg.present,
+      rate: agg.total > 0 ? agg.present / agg.total : 0,
+    }));
   }
 
   async getCourseMatrix(courseId: string, year: number, month: number) {
