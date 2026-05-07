@@ -67,7 +67,9 @@ COPY apps/api/assets ./apps/api/assets
 COPY apps/api/scripts ./apps/api/scripts
 
 RUN find /app/node_modules/.pnpm -maxdepth 1 -name '@prisma+engines@5.22.0*' -exec chown -R appuser:nodejs {} + && \
-    chown -R appuser:nodejs /app/node_modules/.pnpm/@prisma+client@5.22.0_prisma@5.22.0/node_modules/.prisma
+    chown -R appuser:nodejs /app/node_modules/.pnpm/@prisma+client@5.22.0_prisma@5.22.0/node_modules/.prisma && \
+    mkdir -p /app/uploads && \
+    chown -R appuser:nodejs /app/uploads
 
 USER appuser
 EXPOSE 4000
