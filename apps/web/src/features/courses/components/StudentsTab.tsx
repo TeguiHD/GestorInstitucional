@@ -215,129 +215,132 @@ export function StudentsTab({ courseId }: { courseId: string }) {
 
       {/* Table */}
       <div className="rounded-xl border border-border bg-background overflow-hidden">
-        <table className="w-full text-sm">
-          <thead>
-            <tr className="bg-muted/50 text-xs text-muted-foreground uppercase tracking-wide">
-              <th
-                className="text-left px-4 py-3 w-10 cursor-pointer hover:text-foreground select-none"
-                onClick={() => sort('enrollmentNumber')}
-              >
-                # <SortIcon k="enrollmentNumber" />
-              </th>
-              <th
-                className="text-left px-4 py-3 cursor-pointer hover:text-foreground select-none"
-                onClick={() => sort('lastName')}
-              >
-                Alumno <SortIcon k="lastName" />
-              </th>
-              <th className="text-left px-4 py-3 w-28 hidden sm:table-cell">RUT</th>
-              <th
-                className="text-left px-4 py-3 w-40 cursor-pointer hover:text-foreground select-none"
-                onClick={() => sort('rate')}
-              >
-                Asistencia {MONTH_NAMES[month - 1]} <SortIcon k="rate" />
-              </th>
-              <th className="text-center px-4 py-3 w-24 hidden md:table-cell">Apoderado</th>
-              <th className="text-center px-4 py-3 w-24">Acciones</th>
-            </tr>
-          </thead>
-          <tbody>
-            {students.map((student) => {
-              const guardians = guardianMap?.[student.id] ?? [];
-              const primaryGuardian = guardians.find((g) => g.isPrimary) ?? guardians[0];
-              return (
-                <tr
-                  key={student.id}
-                  className="border-t border-border hover:bg-muted/20 transition group"
+        <div className="data-scroll data-scroll-lg">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="bg-muted/50 text-xs text-muted-foreground uppercase tracking-wide">
+                <th
+                  className="text-left px-4 py-3 w-10 cursor-pointer hover:text-foreground select-none"
+                  onClick={() => sort('enrollmentNumber')}
                 >
-                  <td className="px-4 py-3 text-muted-foreground tabular-nums text-xs">
-                    {student.enrollmentNumber}
-                  </td>
-                  <td className="px-4 py-3">
-                    <div className="min-w-0">
-                      <Link
-                        to="/alumnos/$studentId"
-                        params={{ studentId: student.id }}
-                        search={{ courseId }}
-                        className="font-medium hover:text-primary transition-colors truncate block"
-                      >
-                        {student.lastName}
-                        {student.secondLastName ? ` ${student.secondLastName}` : ''},{' '}
-                        {student.firstName}
-                      </Link>
-                      <div className="md:hidden mt-0.5">
-                        {primaryGuardian ? (
-                          <span className="text-xs text-muted-foreground flex items-center gap-1">
-                            <Shield className="size-3 text-green-500" />
-                            {primaryGuardian.guardian.firstName} {primaryGuardian.guardian.lastName}
-                          </span>
-                        ) : (
-                          <span className="text-xs text-amber-600 dark:text-amber-400 flex items-center gap-1">
-                            <ShieldOff className="size-3" />
-                            Sin apoderado
-                          </span>
-                        )}
+                  # <SortIcon k="enrollmentNumber" />
+                </th>
+                <th
+                  className="text-left px-4 py-3 cursor-pointer hover:text-foreground select-none"
+                  onClick={() => sort('lastName')}
+                >
+                  Alumno <SortIcon k="lastName" />
+                </th>
+                <th className="text-left px-4 py-3 w-28 hidden sm:table-cell">RUT</th>
+                <th
+                  className="text-left px-4 py-3 w-40 cursor-pointer hover:text-foreground select-none"
+                  onClick={() => sort('rate')}
+                >
+                  Asistencia {MONTH_NAMES[month - 1]} <SortIcon k="rate" />
+                </th>
+                <th className="text-center px-4 py-3 w-24 hidden md:table-cell">Apoderado</th>
+                <th className="text-center px-4 py-3 w-24">Acciones</th>
+              </tr>
+            </thead>
+            <tbody>
+              {students.map((student) => {
+                const guardians = guardianMap?.[student.id] ?? [];
+                const primaryGuardian = guardians.find((g) => g.isPrimary) ?? guardians[0];
+                return (
+                  <tr
+                    key={student.id}
+                    className="border-t border-border hover:bg-muted/20 transition group"
+                  >
+                    <td className="px-4 py-3 text-muted-foreground tabular-nums text-xs">
+                      {student.enrollmentNumber}
+                    </td>
+                    <td className="px-4 py-3">
+                      <div className="min-w-0">
+                        <Link
+                          to="/alumnos/$studentId"
+                          params={{ studentId: student.id }}
+                          search={{ courseId }}
+                          className="font-medium hover:text-primary transition-colors truncate block"
+                        >
+                          {student.lastName}
+                          {student.secondLastName ? ` ${student.secondLastName}` : ''},{' '}
+                          {student.firstName}
+                        </Link>
+                        <div className="md:hidden mt-0.5">
+                          {primaryGuardian ? (
+                            <span className="text-xs text-muted-foreground flex items-center gap-1">
+                              <Shield className="size-3 text-green-500" />
+                              {primaryGuardian.guardian.firstName}{' '}
+                              {primaryGuardian.guardian.lastName}
+                            </span>
+                          ) : (
+                            <span className="text-xs text-amber-600 dark:text-amber-400 flex items-center gap-1">
+                              <ShieldOff className="size-3" />
+                              Sin apoderado
+                            </span>
+                          )}
+                        </div>
                       </div>
-                    </div>
-                  </td>
-                  <td className="px-4 py-3 hidden sm:table-cell">
-                    <span className="font-mono text-xs text-muted-foreground">{student.rut}</span>
-                  </td>
-                  <td className="px-4 py-3">
-                    {student.total > 0 ? (
-                      <div className="space-y-1">
-                        <RateBar rate={student.rate} />
-                        <p className="text-xs text-muted-foreground">
-                          {student.present + student.late}/{student.total} días
-                        </p>
-                      </div>
-                    ) : (
-                      <span className="text-xs text-muted-foreground">Sin registros</span>
-                    )}
-                  </td>
-                  <td className="px-4 py-3 text-center hidden md:table-cell">
-                    {primaryGuardian ? (
-                      <div className="flex flex-col items-center gap-0.5">
-                        <span className="inline-flex items-center gap-1 text-xs text-green-700 dark:text-green-400">
-                          <Shield className="size-3" />
-                          {primaryGuardian.guardian.firstName}
+                    </td>
+                    <td className="px-4 py-3 hidden sm:table-cell">
+                      <span className="font-mono text-xs text-muted-foreground">{student.rut}</span>
+                    </td>
+                    <td className="px-4 py-3">
+                      {student.total > 0 ? (
+                        <div className="space-y-1">
+                          <RateBar rate={student.rate} />
+                          <p className="text-xs text-muted-foreground">
+                            {student.present + student.late}/{student.total} días
+                          </p>
+                        </div>
+                      ) : (
+                        <span className="text-xs text-muted-foreground">Sin registros</span>
+                      )}
+                    </td>
+                    <td className="px-4 py-3 text-center hidden md:table-cell">
+                      {primaryGuardian ? (
+                        <div className="flex flex-col items-center gap-0.5">
+                          <span className="inline-flex items-center gap-1 text-xs text-green-700 dark:text-green-400">
+                            <Shield className="size-3" />
+                            {primaryGuardian.guardian.firstName}
+                          </span>
+                        </div>
+                      ) : (
+                        <span className="inline-flex items-center gap-1 text-xs text-amber-600 dark:text-amber-400">
+                          <ShieldOff className="size-3" />
+                          Sin asignar
                         </span>
+                      )}
+                    </td>
+                    <td className="px-3 py-3 text-center">
+                      <div className="flex items-center justify-center gap-1">
+                        <Link
+                          to="/alumnos/$studentId"
+                          params={{ studentId: student.id }}
+                          search={{ courseId }}
+                          className="size-8 flex items-center justify-center rounded-lg text-muted-foreground hover:text-primary hover:bg-muted transition"
+                          title="Ver perfil"
+                          aria-label={`Ver perfil de ${student.firstName} ${student.lastName}`}
+                        >
+                          <ExternalLink className="size-3.5" />
+                        </Link>
                       </div>
-                    ) : (
-                      <span className="inline-flex items-center gap-1 text-xs text-amber-600 dark:text-amber-400">
-                        <ShieldOff className="size-3" />
-                        Sin asignar
-                      </span>
-                    )}
-                  </td>
-                  <td className="px-3 py-3 text-center">
-                    <div className="flex items-center justify-center gap-1">
-                      <Link
-                        to="/alumnos/$studentId"
-                        params={{ studentId: student.id }}
-                        search={{ courseId }}
-                        className="size-8 flex items-center justify-center rounded-lg text-muted-foreground hover:text-primary hover:bg-muted transition"
-                        title="Ver perfil"
-                        aria-label={`Ver perfil de ${student.firstName} ${student.lastName}`}
-                      >
-                        <ExternalLink className="size-3.5" />
-                      </Link>
-                    </div>
+                    </td>
+                  </tr>
+                );
+              })}
+              {students.length === 0 && (
+                <tr>
+                  <td colSpan={6} className="px-4 py-12 text-center text-sm text-muted-foreground">
+                    {guardianFilter === 'without'
+                      ? 'Todos los alumnos tienen apoderado asignado.'
+                      : 'No hay alumnos matriculados en este curso.'}
                   </td>
                 </tr>
-              );
-            })}
-            {students.length === 0 && (
-              <tr>
-                <td colSpan={6} className="px-4 py-12 text-center text-sm text-muted-foreground">
-                  {guardianFilter === 'without'
-                    ? 'Todos los alumnos tienen apoderado asignado.'
-                    : 'No hay alumnos matriculados en este curso.'}
-                </td>
-              </tr>
-            )}
-          </tbody>
-        </table>
+              )}
+            </tbody>
+          </table>
+        </div>
       </div>
     </div>
   );

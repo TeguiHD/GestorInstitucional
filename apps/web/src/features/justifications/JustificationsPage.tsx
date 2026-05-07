@@ -134,7 +134,7 @@ export function JustificationsPage() {
   }
 
   return (
-    <div className="space-y-5 max-w-4xl">
+    <div className="max-w-5xl space-y-5">
       <div>
         <h1 className="text-2xl font-bold tracking-tight">Justificaciones</h1>
         <p className="text-sm text-muted-foreground mt-1">Certificados enviados por apoderados</p>
@@ -203,7 +203,7 @@ export function JustificationsPage() {
                 key={j.id}
                 className="rounded-xl border border-border bg-background p-5 space-y-0"
               >
-                <div className="flex items-start gap-4">
+                <div className="flex flex-col gap-4 sm:flex-row sm:items-start">
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2 flex-wrap">
                       <span className="font-semibold text-sm">
@@ -239,7 +239,7 @@ export function JustificationsPage() {
                     )}
                   </div>
 
-                  <div className="flex items-center gap-2 flex-shrink-0">
+                  <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto sm:flex-shrink-0 sm:justify-end">
                     <button
                       type="button"
                       onClick={() =>
@@ -248,7 +248,7 @@ export function JustificationsPage() {
                           j.fileName || `justificacion-${j.id.slice(0, 8)}`,
                         ).catch((e: Error) => toast.error(e.message))
                       }
-                      className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg border border-border hover:bg-muted transition-colors"
+                      className="inline-flex min-h-[36px] flex-1 items-center justify-center gap-1.5 rounded-lg border border-border px-3 py-1.5 text-xs transition-colors hover:bg-muted sm:flex-none"
                     >
                       <Download className="h-3.5 w-3.5" /> Ver
                     </button>
@@ -261,7 +261,7 @@ export function JustificationsPage() {
                         ).catch((e: Error) => toast.error(e.message))
                       }
                       title="Comprobante FES (Ley 19.799)"
-                      className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg border border-border hover:bg-muted transition-colors"
+                      className="inline-flex min-h-[36px] flex-1 items-center justify-center gap-1.5 rounded-lg border border-border px-3 py-1.5 text-xs transition-colors hover:bg-muted sm:flex-none"
                     >
                       <FileCheck className="h-3.5 w-3.5" /> FES
                     </button>
@@ -272,7 +272,7 @@ export function JustificationsPage() {
                           setDecision(null);
                           setNotes('');
                         }}
-                        className="text-xs px-3 py-1.5 rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 transition-colors"
+                        className="min-h-[36px] flex-1 rounded-lg bg-primary px-3 py-1.5 text-xs text-primary-foreground transition-colors hover:bg-primary/90 sm:flex-none"
                       >
                         {isReviewing ? 'Cancelar' : 'Revisar'}
                       </button>

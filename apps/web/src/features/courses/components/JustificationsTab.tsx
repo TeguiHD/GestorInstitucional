@@ -27,6 +27,13 @@ type Justification = {
   fileUrl?: string;
 };
 
+type JustificationResult = {
+  items: Justification[];
+  total: number;
+  limit: number;
+  offset: number;
+};
+
 const STATUS_CONFIG = {
   PENDING: {
     label: 'Pendiente',
@@ -73,13 +80,14 @@ export function JustificationsTab({
 
   const studentIds = new Set(students.map((s) => s.id));
 
-  const { data: all = [], isLoading } = useQuery<Justification[]>({
+  const { data, isLoading } = useQuery<JustificationResult | Justification[]>({
     queryKey: ['justifications-school', user?.schoolId],
     queryFn: () => api.get(`/justifications/school/${user?.schoolId}`),
     enabled: !!user?.schoolId,
     staleTime: 1000 * 60 * 2,
   });
 
+  const all = Array.isArray(data) ? data : (data?.items ?? []);
   const courseJustifications = all.filter((j) => studentIds.has(j.record.student.id));
 
   const reviewMutation = useMutation({

@@ -602,7 +602,7 @@ function UsersPage() {
   return (
     <div className="space-y-5">
       {/* Header */}
-      <div className="flex items-start justify-between gap-4">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
         <div>
           <h1 className="text-2xl font-bold tracking-tight">Usuarios</h1>
           <p className="text-sm text-muted-foreground mt-1">
@@ -612,7 +612,7 @@ function UsersPage() {
         {canEdit && (
           <button
             onClick={() => setModal({ type: 'create' })}
-            className="flex items-center gap-2 px-4 py-2 text-sm rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 transition-colors flex-shrink-0"
+            className="inline-flex min-h-[40px] items-center justify-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm text-primary-foreground transition-colors hover:bg-primary/90 sm:flex-shrink-0"
           >
             <Plus className="h-4 w-4" />
             Nuevo usuario
@@ -700,74 +700,86 @@ function UsersPage() {
         />
       ) : (
         <div className="rounded-xl border border-border bg-background overflow-hidden">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="bg-muted/50 text-xs text-muted-foreground uppercase tracking-wide border-b border-border">
-                <th className="text-left px-5 py-3">Usuario</th>
-                <th className="text-left px-5 py-3 hidden md:table-cell">Rol</th>
-                <th className="text-left px-5 py-3 hidden lg:table-cell">Último acceso</th>
-                <th className="text-left px-5 py-3">Estado</th>
-                <th className="px-3 py-3 w-10" />
-              </tr>
-            </thead>
-            <tbody>
-              {filtered.map((u) => (
-                <tr
-                  key={u.id}
-                  className="border-t border-border hover:bg-muted/20 transition-colors"
-                >
-                  <td className="px-5 py-3.5">
-                    <div className="flex items-center gap-3">
-                      <Avatar user={u} />
-                      <div className="min-w-0">
-                        <p className="font-medium truncate">
-                          {u.firstName} {u.lastName}
-                        </p>
-                        <p className="text-xs text-muted-foreground truncate">{u.email}</p>
-                      </div>
-                    </div>
-                  </td>
-                  <td className="px-5 py-3.5 hidden md:table-cell">
-                    <div className="flex flex-wrap gap-1">
-                      {u.schoolRoles.length > 0 ? (
-                        u.schoolRoles.map((r) => <RoleBadge key={r.role} role={r.role} />)
-                      ) : (
-                        <span className="text-xs text-muted-foreground">—</span>
-                      )}
-                    </div>
-                  </td>
-                  <td className="px-5 py-3.5 hidden lg:table-cell text-xs text-muted-foreground">
-                    {timeAgo(u.lastLoginAt)}
-                  </td>
-                  <td className="px-5 py-3.5">
-                    <div className="flex items-center gap-1.5">
-                      <StatusPill status={u.status} />
-                      {u.status === 'LOCKED' && <Lock className="h-3 w-3 text-destructive" />}
-                    </div>
-                  </td>
-                  <td className="px-3 py-3.5">
-                    <ActionMenu
-                      user={u}
-                      canEdit={canEdit}
-                      onEdit={() => setModal({ type: 'edit', user: u })}
-                      onToggleStatus={() => toggleStatus.mutate({ id: u.id, status: u.status })}
-                      onUnlock={() => unlock.mutate(u.id)}
-                      onResetPassword={() => resetPassword.mutate(u.id)}
-                      onDelete={() => {
-                        if (
-                          window.confirm(
-                            `¿Eliminar a ${u.firstName} ${u.lastName}? Esta acción no se puede deshacer.`,
-                          )
-                        ) {
-                          remove.mutate(u.id);
-                        }
-                      }}
-                    />
-                  </td>
+          <div className="data-scroll data-scroll-lg">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="bg-muted/50 text-xs text-muted-foreground uppercase tracking-wide border-b border-border">
+                  <th className="text-left px-5 py-3">Usuario</th>
+                  <th className="text-left px-5 py-3 hidden md:table-cell">Rol</th>
+                  <th className="text-left px-5 py-3 hidden lg:table-cell">Último acceso</th>
+                  <th className="text-left px-5 py-3">Estado</th>
+                  <th className="px-3 py-3 w-10" />
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {filtered.map((u) => (
+                  <tr
+                    key={u.id}
+                    className="border-t border-border hover:bg-muted/20 transition-colors"
+                  >
+                    <td className="px-5 py-3.5">
+                      <div className="flex items-center gap-3">
+                        <Avatar user={u} />
+                        <div className="min-w-0">
+                          <p className="font-medium truncate">
+                            {u.firstName} {u.lastName}
+                          </p>
+                          <p className="text-xs text-muted-foreground truncate">{u.email}</p>
+                          <div className="mt-1 flex flex-wrap gap-1 md:hidden">
+                            {u.schoolRoles.length > 0 ? (
+                              u.schoolRoles.map((r) => <RoleBadge key={r.role} role={r.role} />)
+                            ) : (
+                              <span className="text-xs text-muted-foreground">Sin rol</span>
+                            )}
+                          </div>
+                          <p className="mt-1 text-[11px] text-muted-foreground lg:hidden">
+                            Último acceso: {timeAgo(u.lastLoginAt)}
+                          </p>
+                        </div>
+                      </div>
+                    </td>
+                    <td className="px-5 py-3.5 hidden md:table-cell">
+                      <div className="flex flex-wrap gap-1">
+                        {u.schoolRoles.length > 0 ? (
+                          u.schoolRoles.map((r) => <RoleBadge key={r.role} role={r.role} />)
+                        ) : (
+                          <span className="text-xs text-muted-foreground">—</span>
+                        )}
+                      </div>
+                    </td>
+                    <td className="px-5 py-3.5 hidden lg:table-cell text-xs text-muted-foreground">
+                      {timeAgo(u.lastLoginAt)}
+                    </td>
+                    <td className="px-5 py-3.5">
+                      <div className="flex items-center gap-1.5">
+                        <StatusPill status={u.status} />
+                        {u.status === 'LOCKED' && <Lock className="h-3 w-3 text-destructive" />}
+                      </div>
+                    </td>
+                    <td className="px-3 py-3.5">
+                      <ActionMenu
+                        user={u}
+                        canEdit={canEdit}
+                        onEdit={() => setModal({ type: 'edit', user: u })}
+                        onToggleStatus={() => toggleStatus.mutate({ id: u.id, status: u.status })}
+                        onUnlock={() => unlock.mutate(u.id)}
+                        onResetPassword={() => resetPassword.mutate(u.id)}
+                        onDelete={() => {
+                          if (
+                            window.confirm(
+                              `¿Eliminar a ${u.firstName} ${u.lastName}? Esta acción no se puede deshacer.`,
+                            )
+                          ) {
+                            remove.mutate(u.id);
+                          }
+                        }}
+                      />
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
           <div className="px-5 py-3 border-t border-border text-xs text-muted-foreground">
             {filtered.length} de {users.length} usuario{users.length !== 1 ? 's' : ''}
           </div>

@@ -78,6 +78,50 @@ body {
   -moz-osx-font-smoothing: grayscale;
 }
 
+.data-scroll {
+  width: 100%;
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  -webkit-overflow-scrolling: touch;
+}
+
+.data-scroll > table {
+  min-width: var(--data-table-min-width, 44rem);
+}
+
+.data-scroll-sm > table {
+  min-width: var(--data-table-min-width, 34rem);
+}
+
+.data-scroll-lg > table {
+  min-width: var(--data-table-min-width, 56rem);
+}
+
+.overflow-x-auto > table:not([class*='min-w-']) {
+  min-width: var(--data-table-min-width, 44rem);
+}
+
+.data-scroll::-webkit-scrollbar {
+  height: 0.625rem;
+}
+
+.data-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.data-scroll::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--color-muted-foreground) 35%, transparent);
+  border: 0.1875rem solid transparent;
+  border-radius: 999px;
+  background-clip: padding-box;
+}
+
+.data-scroll::-webkit-scrollbar-thumb:hover {
+  background: color-mix(in srgb, var(--color-muted-foreground) 55%, transparent);
+  border: 0.1875rem solid transparent;
+  background-clip: padding-box;
+}
+
 *:focus-visible {
   outline: 2px solid var(--color-ring);
   outline-offset: 2px;

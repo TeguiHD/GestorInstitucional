@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link, useParams, useSearch } from '@tanstack/react-router';
-import { ArrowLeft, Copy, Star, Trash2, UserPlus } from 'lucide-react';
+import { AlertTriangle, ArrowLeft, Copy, Star, Trash2, UserPlus } from 'lucide-react';
 import { useState } from 'react';
 import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import { toast } from 'sonner';
@@ -313,8 +313,9 @@ export function StudentDetailPage() {
       {/* Pattern alert */}
       {absencePatterns.length > 0 && (
         <div className="rounded-xl border border-orange-200 bg-orange-50 dark:bg-orange-900/10 p-4 space-y-1">
-          <p className="text-sm font-semibold text-orange-800 dark:text-orange-300">
-            ⚠️ Patrón de ausencias detectado
+          <p className="flex items-center gap-2 text-sm font-semibold text-orange-800 dark:text-orange-300">
+            <AlertTriangle className="size-4 shrink-0" />
+            Patrón de ausencias detectado
           </p>
           {absencePatterns.map((d) => (
             <p key={d.name} className="text-sm text-orange-700 dark:text-orange-400">
@@ -456,53 +457,57 @@ export function StudentDetailPage() {
               Sin apoderados vinculados
             </p>
           ) : (
-            <table className="w-full text-sm">
-              <tbody>
-                {guardians.map((g) => (
-                  <tr
-                    key={g.guardianId}
-                    className="border-t border-border hover:bg-muted/20 transition"
-                  >
-                    <td className="px-5 py-3">
-                      <div className="font-medium flex items-center gap-1.5">
-                        {g.guardian.firstName} {g.guardian.lastName}
-                        {g.isPrimary && <Star className="size-3.5 text-amber-500 fill-amber-500" />}
-                      </div>
-                      <div className="text-xs text-muted-foreground">{g.guardian.email}</div>
-                    </td>
-                    <td className="px-5 py-3 text-xs text-muted-foreground">{g.relation}</td>
-                    <td className="px-5 py-3">
-                      <span
-                        className={`text-xs px-2 py-0.5 rounded-full ${g.guardian.status === 'ACTIVE' ? 'bg-green-100 text-green-700 dark:bg-green-900/20 dark:text-green-400' : 'bg-muted text-muted-foreground'}`}
-                      >
-                        {g.guardian.status === 'ACTIVE' ? 'Activo' : 'Inactivo'}
-                      </span>
-                    </td>
-                    <td className="px-3 py-3 text-right">
-                      <div className="flex items-center justify-end gap-1">
-                        <button
-                          title="Copiar email"
-                          onClick={() => {
-                            void navigator.clipboard.writeText(g.guardian.email);
-                            toast.success('Email copiado');
-                          }}
-                          className="p-1.5 rounded hover:bg-muted text-muted-foreground"
+            <div className="data-scroll">
+              <table className="w-full text-sm">
+                <tbody>
+                  {guardians.map((g) => (
+                    <tr
+                      key={g.guardianId}
+                      className="border-t border-border hover:bg-muted/20 transition"
+                    >
+                      <td className="px-5 py-3">
+                        <div className="font-medium flex items-center gap-1.5">
+                          {g.guardian.firstName} {g.guardian.lastName}
+                          {g.isPrimary && (
+                            <Star className="size-3.5 text-amber-500 fill-amber-500" />
+                          )}
+                        </div>
+                        <div className="text-xs text-muted-foreground">{g.guardian.email}</div>
+                      </td>
+                      <td className="px-5 py-3 text-xs text-muted-foreground">{g.relation}</td>
+                      <td className="px-5 py-3">
+                        <span
+                          className={`text-xs px-2 py-0.5 rounded-full ${g.guardian.status === 'ACTIVE' ? 'bg-green-100 text-green-700 dark:bg-green-900/20 dark:text-green-400' : 'bg-muted text-muted-foreground'}`}
                         >
-                          <Copy className="size-3.5" />
-                        </button>
-                        <button
-                          title="Desvincular"
-                          onClick={() => removeGuardianMut.mutate(g.guardianId)}
-                          className="p-1.5 rounded hover:bg-destructive/10 text-muted-foreground hover:text-destructive"
-                        >
-                          <Trash2 className="size-3.5" />
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+                          {g.guardian.status === 'ACTIVE' ? 'Activo' : 'Inactivo'}
+                        </span>
+                      </td>
+                      <td className="px-3 py-3 text-right">
+                        <div className="flex items-center justify-end gap-1">
+                          <button
+                            title="Copiar email"
+                            onClick={() => {
+                              void navigator.clipboard.writeText(g.guardian.email);
+                              toast.success('Email copiado');
+                            }}
+                            className="p-1.5 rounded hover:bg-muted text-muted-foreground"
+                          >
+                            <Copy className="size-3.5" />
+                          </button>
+                          <button
+                            title="Desvincular"
+                            onClick={() => removeGuardianMut.mutate(g.guardianId)}
+                            className="p-1.5 rounded hover:bg-destructive/10 text-muted-foreground hover:text-destructive"
+                          >
+                            <Trash2 className="size-3.5" />
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           )}
         </div>
       )}

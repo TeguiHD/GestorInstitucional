@@ -276,54 +276,56 @@ export function CalendarPage() {
           <div className="px-4 py-3 border-b border-border">
             <h2 className="text-sm font-semibold">Días especiales — {MONTH_NAMES[month]}</h2>
           </div>
-          <table className="w-full text-sm">
-            <tbody>
-              {monthDays.map((d) => {
-                const dt = new Date(d.date.split('T')[0]! + 'T12:00');
-                const cfg = TYPE_STYLE[d.type];
-                return (
-                  <tr key={d.id} className="border-t border-border hover:bg-muted/20 transition">
-                    <td className="px-4 py-2.5 tabular-nums text-muted-foreground w-28">
-                      {dt.toLocaleDateString('es-CL', {
-                        day: '2-digit',
-                        month: 'short',
-                        weekday: 'short',
-                      })}
-                    </td>
-                    <td className="px-4 py-2.5">
-                      <span
-                        className={`inline-block rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase ${cfg.cls}`}
-                      >
-                        {cfg.label}
-                      </span>
-                    </td>
-                    <td className="px-4 py-2.5">{d.description}</td>
-                    {canEdit && (
-                      <td className="px-4 py-2.5">
-                        <div className="flex items-center gap-1 justify-end">
-                          <button
-                            onClick={() => notifyMut.mutate(d.id)}
-                            disabled={notifyMut.isPending}
-                            className="text-muted-foreground hover:text-primary transition disabled:opacity-50"
-                            title="Avisar apoderados"
-                          >
-                            <Send className="size-3.5" />
-                          </button>
-                          <button
-                            onClick={() => delMut.mutate(d.id)}
-                            className="text-muted-foreground hover:text-destructive transition"
-                            title="Eliminar"
-                          >
-                            <Trash2 className="size-3.5" />
-                          </button>
-                        </div>
+          <div className="data-scroll">
+            <table className="w-full text-sm">
+              <tbody>
+                {monthDays.map((d) => {
+                  const dt = new Date(d.date.split('T')[0]! + 'T12:00');
+                  const cfg = TYPE_STYLE[d.type];
+                  return (
+                    <tr key={d.id} className="border-t border-border hover:bg-muted/20 transition">
+                      <td className="px-4 py-2.5 tabular-nums text-muted-foreground w-28">
+                        {dt.toLocaleDateString('es-CL', {
+                          day: '2-digit',
+                          month: 'short',
+                          weekday: 'short',
+                        })}
                       </td>
-                    )}
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
+                      <td className="px-4 py-2.5">
+                        <span
+                          className={`inline-block rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase ${cfg.cls}`}
+                        >
+                          {cfg.label}
+                        </span>
+                      </td>
+                      <td className="px-4 py-2.5">{d.description}</td>
+                      {canEdit && (
+                        <td className="px-4 py-2.5">
+                          <div className="flex items-center gap-1 justify-end">
+                            <button
+                              onClick={() => notifyMut.mutate(d.id)}
+                              disabled={notifyMut.isPending}
+                              className="text-muted-foreground hover:text-primary transition disabled:opacity-50"
+                              title="Avisar apoderados"
+                            >
+                              <Send className="size-3.5" />
+                            </button>
+                            <button
+                              onClick={() => delMut.mutate(d.id)}
+                              className="text-muted-foreground hover:text-destructive transition"
+                              title="Eliminar"
+                            >
+                              <Trash2 className="size-3.5" />
+                            </button>
+                          </div>
+                        </td>
+                      )}
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
         </div>
       )}
 

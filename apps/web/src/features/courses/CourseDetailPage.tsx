@@ -11,7 +11,9 @@ import {
   BookOpen,
   CheckSquare,
   BarChart3,
+  Info,
   ShieldAlert,
+  XCircle,
 } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { toast } from 'sonner';
@@ -536,26 +538,28 @@ export function CourseDetailPage() {
                 </div>
               </div>
               <div className="max-h-60 overflow-y-auto text-xs">
-                <table className="w-full">
-                  <thead className="bg-muted/50 sticky top-0">
-                    <tr>
-                      <th className="text-left px-2 py-1.5">N°</th>
-                      <th className="text-left px-2 py-1.5">RUT</th>
-                      <th className="text-left px-2 py-1.5">Alumno</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {importPreview.slice(0, 30).map((r, i) => (
-                      <tr key={i} className="border-t border-border">
-                        <td className="px-2 py-1">{r.enrollmentNumber}</td>
-                        <td className="px-2 py-1 font-mono">{r.rut}</td>
-                        <td className="px-2 py-1">
-                          {r.lastName} {r.secondLastName ?? ''}, {r.firstName}
-                        </td>
+                <div className="data-scroll data-scroll-sm">
+                  <table className="w-full">
+                    <thead className="bg-muted/50 sticky top-0">
+                      <tr>
+                        <th className="text-left px-2 py-1.5">N°</th>
+                        <th className="text-left px-2 py-1.5">RUT</th>
+                        <th className="text-left px-2 py-1.5">Alumno</th>
                       </tr>
-                    ))}
-                  </tbody>
-                </table>
+                    </thead>
+                    <tbody>
+                      {importPreview.slice(0, 30).map((r, i) => (
+                        <tr key={i} className="border-t border-border">
+                          <td className="px-2 py-1">{r.enrollmentNumber}</td>
+                          <td className="px-2 py-1 font-mono">{r.rut}</td>
+                          <td className="px-2 py-1">
+                            {r.lastName} {r.secondLastName ?? ''}, {r.firstName}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
                 {importPreview.length > 30 && (
                   <p className="text-xs text-muted-foreground mt-2">
                     …y {importPreview.length - 30} más
@@ -643,62 +647,64 @@ export function CourseDetailPage() {
                 ))}
               </div>
             ) : (
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="bg-muted/50 text-xs text-muted-foreground uppercase tracking-wide">
-                    <th className="text-left px-4 py-3 w-10">#</th>
-                    <th className="text-left px-4 py-3">Alumno</th>
-                    <th className="text-center px-4 py-3 w-28">Estado</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {courseStudents.map((student) => {
-                    const status = localStatus[student.id];
-                    const cfg = status ? STATUS_CONFIG[status] : UNMARKED_CONFIG;
-                    return (
-                      <tr
-                        key={student.id}
-                        className="border-t border-border hover:bg-muted/20 transition"
-                      >
-                        <td className="px-4 py-3 text-muted-foreground tabular-nums text-xs">
-                          {student.enrollmentNumber}
-                        </td>
-                        <td className="px-4 py-3 font-medium">
-                          <Link
-                            to="/alumnos/$studentId"
-                            params={{ studentId: student.id }}
-                            search={{ courseId }}
-                            className="hover:text-primary hover:underline underline-offset-2 transition-colors"
-                          >
-                            {student.lastName}, {student.firstName}
-                          </Link>
-                          <span className="ml-2 text-xs text-muted-foreground hidden sm:inline">
-                            {student.rut}
-                          </span>
-                        </td>
-                        <td className="px-3 py-2 text-center">
-                          <button
-                            onPointerDown={() => startLongPress(student.id)}
-                            onPointerUp={() => endLongPress(student.id)}
-                            onPointerLeave={cancelLongPress}
-                            onPointerCancel={cancelLongPress}
-                            onContextMenu={(e) => e.preventDefault()}
-                            className={cn(
-                              'inline-flex min-h-[44px] w-24 select-none items-center justify-center rounded-lg text-xs font-semibold transition-all hover:opacity-90 active:scale-95 touch-none',
-                              cfg.bg,
-                              cfg.text,
-                            )}
-                            title="Cambiar estado"
-                          >
-                            <span className="hidden sm:inline">{cfg.label}</span>
-                            <span className="sm:hidden text-sm">{cfg.short}</span>
-                          </button>
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
+              <div className="data-scroll data-scroll-sm">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="bg-muted/50 text-xs text-muted-foreground uppercase tracking-wide">
+                      <th className="text-left px-4 py-3 w-10">#</th>
+                      <th className="text-left px-4 py-3">Alumno</th>
+                      <th className="text-center px-4 py-3 w-28">Estado</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {courseStudents.map((student) => {
+                      const status = localStatus[student.id];
+                      const cfg = status ? STATUS_CONFIG[status] : UNMARKED_CONFIG;
+                      return (
+                        <tr
+                          key={student.id}
+                          className="border-t border-border hover:bg-muted/20 transition"
+                        >
+                          <td className="px-4 py-3 text-muted-foreground tabular-nums text-xs">
+                            {student.enrollmentNumber}
+                          </td>
+                          <td className="px-4 py-3 font-medium">
+                            <Link
+                              to="/alumnos/$studentId"
+                              params={{ studentId: student.id }}
+                              search={{ courseId }}
+                              className="hover:text-primary hover:underline underline-offset-2 transition-colors"
+                            >
+                              {student.lastName}, {student.firstName}
+                            </Link>
+                            <span className="ml-2 text-xs text-muted-foreground hidden sm:inline">
+                              {student.rut}
+                            </span>
+                          </td>
+                          <td className="px-3 py-2 text-center">
+                            <button
+                              onPointerDown={() => startLongPress(student.id)}
+                              onPointerUp={() => endLongPress(student.id)}
+                              onPointerLeave={cancelLongPress}
+                              onPointerCancel={cancelLongPress}
+                              onContextMenu={(e) => e.preventDefault()}
+                              className={cn(
+                                'inline-flex min-h-[44px] w-24 select-none items-center justify-center rounded-lg text-xs font-semibold transition-all hover:opacity-90 active:scale-95 touch-none',
+                                cfg.bg,
+                                cfg.text,
+                              )}
+                              title="Cambiar estado"
+                            >
+                              <span className="hidden sm:inline">{cfg.label}</span>
+                              <span className="sm:hidden text-sm">{cfg.short}</span>
+                            </button>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
             )}
           </div>
 
@@ -718,11 +724,16 @@ export function CourseDetailPage() {
                     warn: 'border-amber-500/30 bg-amber-500/5 text-amber-700 dark:text-amber-400',
                     critical: 'border-red-500/30 bg-red-500/5 text-red-700 dark:text-red-400',
                   }[ins.severity];
-                  const icon = { info: 'ℹ', warn: '⚠', critical: '⛔' }[ins.severity];
+                  const Icon =
+                    ins.severity === 'info'
+                      ? Info
+                      : ins.severity === 'warn'
+                        ? ShieldAlert
+                        : XCircle;
                   return (
                     <div key={i} className={`rounded-lg border px-3 py-2 ${styles}`}>
                       <p className="text-sm font-semibold flex items-center gap-2">
-                        <span>{icon}</span>
+                        <Icon className="size-4 shrink-0" />
                         {ins.title}
                       </p>
                       <p className="text-xs mt-0.5 text-foreground/80">{ins.detail}</p>

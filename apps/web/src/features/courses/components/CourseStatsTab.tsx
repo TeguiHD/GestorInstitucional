@@ -10,7 +10,7 @@ import {
   XAxis,
   YAxis,
 } from 'recharts';
-import { AlertTriangle, Users } from 'lucide-react';
+import { AlertTriangle, Info, Users, XCircle } from 'lucide-react';
 
 import { api } from '@/lib/api';
 import { cn } from '@/lib/cn';
@@ -329,47 +329,49 @@ export function CourseStatsTab({ courseId }: { courseId: string }) {
           <div className="px-5 py-3 border-b border-border">
             <h3 className="text-sm font-semibold">Ranking de asistencia</h3>
           </div>
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="bg-muted/30 text-xs text-muted-foreground uppercase tracking-wide border-b border-border">
-                <th className="text-left px-5 py-2.5">#</th>
-                <th className="text-left px-5 py-2.5">Alumno</th>
-                <th className="text-center px-3 py-2.5">Presentes</th>
-                <th className="text-center px-3 py-2.5">Ausentes</th>
-                <th className="text-center px-3 py-2.5">Justif.</th>
-                <th className="text-right px-5 py-2.5">%</th>
-              </tr>
-            </thead>
-            <tbody>
-              {sorted.map((s, i) => (
-                <tr key={s.id} className="border-t border-border hover:bg-muted/20 transition">
-                  <td className="px-5 py-2.5 text-muted-foreground text-xs">{i + 1}</td>
-                  <td className="px-5 py-2.5 font-medium">
-                    {s.lastName}, {s.firstName}
-                  </td>
-                  <td className="px-3 py-2.5 text-center tabular-nums text-green-600 dark:text-green-400">
-                    {s.present}
-                  </td>
-                  <td className="px-3 py-2.5 text-center tabular-nums text-red-600 dark:text-red-400">
-                    {s.absent}
-                  </td>
-                  <td className="px-3 py-2.5 text-center tabular-nums text-yellow-600 dark:text-yellow-400">
-                    {s.justified}
-                  </td>
-                  <td className="px-5 py-2.5 text-right">
-                    <span
-                      className={cn(
-                        'inline-block rounded-full px-2 py-0.5 text-xs font-semibold',
-                        rateBg(s.rate),
-                      )}
-                    >
-                      {s.rate != null ? `${(s.rate * 100).toFixed(1)}%` : '—'}
-                    </span>
-                  </td>
+          <div className="data-scroll">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="bg-muted/30 text-xs text-muted-foreground uppercase tracking-wide border-b border-border">
+                  <th className="text-left px-5 py-2.5">#</th>
+                  <th className="text-left px-5 py-2.5">Alumno</th>
+                  <th className="text-center px-3 py-2.5">Presentes</th>
+                  <th className="text-center px-3 py-2.5">Ausentes</th>
+                  <th className="text-center px-3 py-2.5">Justif.</th>
+                  <th className="text-right px-5 py-2.5">%</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {sorted.map((s, i) => (
+                  <tr key={s.id} className="border-t border-border hover:bg-muted/20 transition">
+                    <td className="px-5 py-2.5 text-muted-foreground text-xs">{i + 1}</td>
+                    <td className="px-5 py-2.5 font-medium">
+                      {s.lastName}, {s.firstName}
+                    </td>
+                    <td className="px-3 py-2.5 text-center tabular-nums text-green-600 dark:text-green-400">
+                      {s.present}
+                    </td>
+                    <td className="px-3 py-2.5 text-center tabular-nums text-red-600 dark:text-red-400">
+                      {s.absent}
+                    </td>
+                    <td className="px-3 py-2.5 text-center tabular-nums text-yellow-600 dark:text-yellow-400">
+                      {s.justified}
+                    </td>
+                    <td className="px-5 py-2.5 text-right">
+                      <span
+                        className={cn(
+                          'inline-block rounded-full px-2 py-0.5 text-xs font-semibold',
+                          rateBg(s.rate),
+                        )}
+                      >
+                        {s.rate != null ? `${(s.rate * 100).toFixed(1)}%` : '—'}
+                      </span>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </div>
       )}
 
@@ -387,25 +389,26 @@ export function CourseStatsTab({ courseId }: { courseId: string }) {
                   bg: 'bg-blue-50 dark:bg-blue-900/20',
                   border: 'border-blue-200 dark:border-blue-800',
                   text: 'text-blue-800 dark:text-blue-300',
-                  icon: 'ℹ️',
+                  icon: Info,
                 },
                 warn: {
                   bg: 'bg-amber-50 dark:bg-amber-900/20',
                   border: 'border-amber-200 dark:border-amber-800',
                   text: 'text-amber-800 dark:text-amber-300',
-                  icon: '⚠️',
+                  icon: AlertTriangle,
                 },
                 critical: {
                   bg: 'bg-red-50 dark:bg-red-900/20',
                   border: 'border-red-200 dark:border-red-800',
                   text: 'text-red-800 dark:text-red-300',
-                  icon: '🚨',
+                  icon: XCircle,
                 },
               }[ins.severity];
+              const Icon = cfg.icon;
               return (
                 <div key={i} className={cn('rounded-lg border p-3', cfg.bg, cfg.border)}>
                   <div className={cn('text-xs font-semibold flex items-center gap-1.5', cfg.text)}>
-                    <span>{cfg.icon}</span> {ins.title}
+                    <Icon className="size-3.5 shrink-0" /> {ins.title}
                   </div>
                   <p className={cn('text-xs mt-1 opacity-80', cfg.text)}>{ins.detail}</p>
                 </div>
