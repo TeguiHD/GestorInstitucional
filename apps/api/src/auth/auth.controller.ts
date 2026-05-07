@@ -166,8 +166,29 @@ export class AuthController {
     return { success: true, message: '2FA activado' };
   }
 
+  @Get('2fa/status')
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Estado 2FA propio' })
+  async status2fa(@CurrentUser() user: JwtPayload) {
+    const enabled = await this.totp.isEnabled(user.sub);
+    return {
+      enabled,
+      backupCodesRemaining: enabled ? await this.totp.countBackupCodes(user.sub) : 0,
+    };
+  }
+
+  @Post('2fa/backup-codes')
+  @HttpCode(HttpStatus.OK)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Regenerar códigos de respaldo 2FA (requiere TOTP)' })
+  async regenerateBackupCodes(@CurrentUser() user: JwtPayload, @Body('code') code: string) {
+    const valid = await this.totp.verify(user.sub, code);
+    if (!valid) throw new UnauthorizedException('Código 2FA inválido');
+    return { backupCodes: await this.totp.regenerateBackupCodes(user.sub) };
+  }
+
   @Delete('2fa')
-  @HttpCode(HttpStatus.NO_CONTENT)
+  @HttpCode(HttpStatus.OK)
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Desactivar 2FA (requiere código TOTP vigente)' })
   async disable2fa(
@@ -175,7 +196,7 @@ export class AuthController {
     @Body('code') code: string,
   ): Promise<{ success: boolean }> {
     const valid = await this.totp.verify(user.sub, code);
-    if (!valid) return { success: false };
+    if (!valid) throw new UnauthorizedException('Código 2FA inválido');
     await this.totp.disable(user.sub);
     return { success: true };
   }

@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   Body,
   Controller,
   Delete,
@@ -9,6 +10,8 @@ import {
   Patch,
   Post,
   Query,
+  Req,
+  Res,
   UseGuards,
 } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiQuery, ApiTags } from '@nestjs/swagger';
@@ -25,6 +28,7 @@ import {
 import { ApiProperty } from '@nestjs/swagger';
 import { Transform } from 'class-transformer';
 import { SystemRole, UserStatus } from '@prisma/client';
+import type { FastifyReply, FastifyRequest } from 'fastify';
 
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard.js';
 import { RolesGuard } from '../common/guards/roles.guard.js';
@@ -122,6 +126,28 @@ class ChangeOwnPasswordDto {
   newPassword!: string;
 }
 
+class UpdateOwnProfileDto {
+  @ApiProperty({ required: false })
+  @IsOptional()
+  @IsString()
+  @MinLength(1)
+  @MaxLength(80)
+  firstName?: string;
+
+  @ApiProperty({ required: false })
+  @IsOptional()
+  @IsString()
+  @MinLength(1)
+  @MaxLength(80)
+  lastName?: string;
+
+  @ApiProperty({ required: false })
+  @IsOptional()
+  @IsString()
+  @MaxLength(30)
+  phone?: string;
+}
+
 @ApiTags('schools')
 @UseGuards(JwtAuthGuard, RolesGuard)
 @ApiBearerAuth()
@@ -154,11 +180,47 @@ export class UsersController {
     return this.users.findById(user.sub);
   }
 
+  @Patch('me')
+  @ApiOperation({ summary: 'Actualizar perfil propio' })
+  updateMe(@Body() dto: UpdateOwnProfileDto, @CurrentUser() user: JwtPayload) {
+    return this.users.updateOwnProfile(user.sub, dto);
+  }
+
   @Post('me/password')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Cambiar contraseña propia' })
   changeOwnPassword(@Body() dto: ChangeOwnPasswordDto, @CurrentUser() user: JwtPayload) {
     return this.users.changeOwnPassword(user.sub, dto);
+  }
+
+  @Post('me/avatar')
+  @ApiOperation({ summary: 'Subir imagen de perfil propia (multipart: file)' })
+  async uploadOwnAvatar(@Req() req: FastifyRequest, @CurrentUser() user: JwtPayload) {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const mp = await (req as any).file();
+    if (!mp) throw new BadRequestException('Archivo requerido');
+    return this.users.setOwnAvatar({
+      userId: user.sub,
+      filename: mp.filename,
+      mimetype: mp.mimetype,
+      stream: mp.file,
+    });
+  }
+
+  @Get('me/avatar')
+  @ApiOperation({ summary: 'Descargar imagen de perfil propia' })
+  async getOwnAvatar(@CurrentUser() user: JwtPayload, @Res() res: FastifyReply) {
+    const avatar = await this.users.getOwnAvatar(user.sub);
+    void res.header('Content-Type', avatar.mimeType);
+    void res.header('Cache-Control', 'private, max-age=300');
+    void res.send(avatar.buffer);
+  }
+
+  @Delete('me/avatar')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Eliminar imagen de perfil propia' })
+  removeOwnAvatar(@CurrentUser() user: JwtPayload) {
+    return this.users.removeOwnAvatar(user.sub);
   }
 
   @Get('trash')

@@ -81,6 +81,23 @@ export async function downloadBlob(path: string, filename: string): Promise<void
   URL.revokeObjectURL(url);
 }
 
+export async function fetchBlob(path: string): Promise<Blob> {
+  const token = _accessToken;
+  const headers: Record<string, string> = {};
+  if (token) headers['Authorization'] = `Bearer ${token}`;
+
+  const res = await fetch(`${BASE}${path}`, { headers, credentials: 'include' });
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    const message =
+      typeof (data as { message?: unknown }).message === 'string'
+        ? (data as { message: string }).message
+        : res.statusText;
+    throw new ApiError(res.status, message, data);
+  }
+  return res.blob();
+}
+
 export async function uploadFormData<T>(path: string, formData: FormData): Promise<T> {
   const token = _accessToken;
   const headers: Record<string, string> = {};
@@ -114,6 +131,7 @@ export const api = {
   put: <T>(path: string, body?: unknown) => request<T>(path, { method: 'PUT', body }),
   patch: <T>(path: string, body?: unknown) => request<T>(path, { method: 'PATCH', body }),
   del: <T>(path: string) => request<T>(path, { method: 'DELETE' }),
+  delWithBody: <T>(path: string, body?: unknown) => request<T>(path, { method: 'DELETE', body }),
 };
 
 /** Safe HTML — sanitize any user-generated content before render. */

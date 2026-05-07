@@ -1,0 +1,4 @@
+ALTER TABLE `users`
+  ADD COLUMN `avatarPath` VARCHAR(500) NULL,
+  ADD COLUMN `avatarMime` VARCHAR(80) NULL,
+  ADD COLUMN `avatarUpdatedAt` DATETIME(3) NULL;

@@ -149,20 +149,23 @@ model School {
 // =============================================================================
 
 model User {
-  id           String     @id @default(uuid()) @db.Char(36)
-  email        String     @unique @db.VarChar(255)
-  passwordHash String     @db.VarChar(500)
-  firstName    String     @db.VarChar(80)
-  lastName     String     @db.VarChar(80)
-  phone        String?    @db.VarChar(30)
-  status       UserStatus @default(ACTIVE)
-  failedLogins Int        @default(0)
-  lockedUntil  DateTime?
-  lastLoginAt  DateTime?
-  lastLoginIp  String?    @db.VarChar(45)
-  createdAt    DateTime   @default(now())
-  updatedAt    DateTime   @updatedAt
-  deletedAt    DateTime?
+  id              String     @id @default(uuid()) @db.Char(36)
+  email           String     @unique @db.VarChar(255)
+  passwordHash    String     @db.VarChar(500)
+  firstName       String     @db.VarChar(80)
+  lastName        String     @db.VarChar(80)
+  phone           String?    @db.VarChar(30)
+  status          UserStatus @default(ACTIVE)
+  failedLogins    Int        @default(0)
+  lockedUntil     DateTime?
+  lastLoginAt     DateTime?
+  lastLoginIp     String?    @db.VarChar(45)
+  avatarPath      String?    @db.VarChar(500)
+  avatarMime      String?    @db.VarChar(80)
+  avatarUpdatedAt DateTime?
+  createdAt       DateTime   @default(now())
+  updatedAt       DateTime   @updatedAt
+  deletedAt       DateTime?
 
   schoolRoles            UserSchoolRole[]
   totpSecrets            TotpSecret[]

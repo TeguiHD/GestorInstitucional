@@ -16,6 +16,7 @@ import { Route as AuthUsuariosRouteImport } from './routes/_auth.usuarios';
 import { Route as AuthUsersRouteImport } from './routes/_auth.users';
 import { Route as AuthReportsRouteImport } from './routes/_auth.reports';
 import { Route as AuthReportesRouteImport } from './routes/_auth.reportes';
+import { Route as AuthPerfilRouteImport } from './routes/_auth.perfil';
 import { Route as AuthPapeleraRouteImport } from './routes/_auth.papelera';
 import { Route as AuthMyChildrenRouteImport } from './routes/_auth.my-children';
 import { Route as AuthMisPupilosRouteImport } from './routes/_auth.mis-pupilos';
@@ -68,6 +69,11 @@ const AuthReportsRoute = AuthReportsRouteImport.update({
 const AuthReportesRoute = AuthReportesRouteImport.update({
   id: '/reportes',
   path: '/reportes',
+  getParentRoute: () => AuthRoute,
+} as any);
+const AuthPerfilRoute = AuthPerfilRouteImport.update({
+  id: '/perfil',
+  path: '/perfil',
   getParentRoute: () => AuthRoute,
 } as any);
 const AuthPapeleraRoute = AuthPapeleraRouteImport.update({
@@ -183,6 +189,7 @@ export interface FileRoutesByFullPath {
   '/mis-pupilos': typeof AuthMisPupilosRoute;
   '/my-children': typeof AuthMyChildrenRoute;
   '/papelera': typeof AuthPapeleraRoute;
+  '/perfil': typeof AuthPerfilRoute;
   '/reportes': typeof AuthReportesRoute;
   '/reports': typeof AuthReportsRoute;
   '/users': typeof AuthUsersRoute;
@@ -208,6 +215,7 @@ export interface FileRoutesByTo {
   '/mis-pupilos': typeof AuthMisPupilosRoute;
   '/my-children': typeof AuthMyChildrenRoute;
   '/papelera': typeof AuthPapeleraRoute;
+  '/perfil': typeof AuthPerfilRoute;
   '/reportes': typeof AuthReportesRoute;
   '/reports': typeof AuthReportsRoute;
   '/users': typeof AuthUsersRoute;
@@ -237,6 +245,7 @@ export interface FileRoutesById {
   '/_auth/mis-pupilos': typeof AuthMisPupilosRoute;
   '/_auth/my-children': typeof AuthMyChildrenRoute;
   '/_auth/papelera': typeof AuthPapeleraRoute;
+  '/_auth/perfil': typeof AuthPerfilRoute;
   '/_auth/reportes': typeof AuthReportesRoute;
   '/_auth/reports': typeof AuthReportsRoute;
   '/_auth/users': typeof AuthUsersRoute;
@@ -267,6 +276,7 @@ export interface FileRouteTypes {
     | '/mis-pupilos'
     | '/my-children'
     | '/papelera'
+    | '/perfil'
     | '/reportes'
     | '/reports'
     | '/users'
@@ -292,6 +302,7 @@ export interface FileRouteTypes {
     | '/mis-pupilos'
     | '/my-children'
     | '/papelera'
+    | '/perfil'
     | '/reportes'
     | '/reports'
     | '/users'
@@ -320,6 +331,7 @@ export interface FileRouteTypes {
     | '/_auth/mis-pupilos'
     | '/_auth/my-children'
     | '/_auth/papelera'
+    | '/_auth/perfil'
     | '/_auth/reportes'
     | '/_auth/reports'
     | '/_auth/users'
@@ -386,6 +398,13 @@ declare module '@tanstack/react-router' {
       path: '/reportes';
       fullPath: '/reportes';
       preLoaderRoute: typeof AuthReportesRouteImport;
+      parentRoute: typeof AuthRoute;
+    };
+    '/_auth/perfil': {
+      id: '/_auth/perfil';
+      path: '/perfil';
+      fullPath: '/perfil';
+      preLoaderRoute: typeof AuthPerfilRouteImport;
       parentRoute: typeof AuthRoute;
     };
     '/_auth/papelera': {
@@ -561,6 +580,7 @@ interface AuthRouteChildren {
   AuthMisPupilosRoute: typeof AuthMisPupilosRoute;
   AuthMyChildrenRoute: typeof AuthMyChildrenRoute;
   AuthPapeleraRoute: typeof AuthPapeleraRoute;
+  AuthPerfilRoute: typeof AuthPerfilRoute;
   AuthReportesRoute: typeof AuthReportesRoute;
   AuthReportsRoute: typeof AuthReportsRoute;
   AuthUsersRoute: typeof AuthUsersRoute;
@@ -585,6 +605,7 @@ const AuthRouteChildren: AuthRouteChildren = {
   AuthMisPupilosRoute: AuthMisPupilosRoute,
   AuthMyChildrenRoute: AuthMyChildrenRoute,
   AuthPapeleraRoute: AuthPapeleraRoute,
+  AuthPerfilRoute: AuthPerfilRoute,
   AuthReportesRoute: AuthReportesRoute,
   AuthReportsRoute: AuthReportsRoute,
   AuthUsersRoute: AuthUsersRoute,

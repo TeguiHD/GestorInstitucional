@@ -1,4 +1,6 @@
 import * as crypto from 'node:crypto';
+import { mkdir, readFile, unlink, writeFile } from 'node:fs/promises';
+import { extname, join, resolve } from 'node:path';
 
 import {
   BadRequestException,
@@ -13,6 +15,10 @@ import { AuditService } from '../audit/audit.service.js';
 import { MailService } from '../mail/mail.service.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 import type { JwtPayload } from '../common/decorators/current-user.decorator.js';
+
+const AVATAR_MIME = new Set(['image/jpeg', 'image/png', 'image/webp']);
+const MAX_AVATAR_BYTES = 2 * 1024 * 1024;
+const UPLOADS_ROOT = process.env.UPLOADS_DIR ?? join(process.cwd(), 'uploads');
 
 @Injectable()
 export class UsersService {
@@ -34,16 +40,24 @@ export class UsersService {
         status: true,
         lastLoginAt: true,
         createdAt: true,
+        phone: true,
+        avatarPath: true,
+        avatarUpdatedAt: true,
         schoolRoles: { select: { schoolId: true, role: true } },
         totpSecrets: { select: { verified: true } },
       },
     });
     if (!user) throw new NotFoundException('Usuario no encontrado');
-    return { ...user, twoFactorEnabled: user.totpSecrets.some((t) => t.verified) };
+    const { avatarPath: _avatarPath, ...profile } = user;
+    return {
+      ...profile,
+      twoFactorEnabled: user.totpSecrets.some((t) => t.verified),
+      hasAvatar: Boolean(user.avatarPath),
+    };
   }
 
   async findBySchool(schoolId: string, roles?: SystemRole[]) {
-    return this.prisma.user.findMany({
+    const users = await this.prisma.user.findMany({
       where: {
         deletedAt: null,
         schoolRoles: {
@@ -58,11 +72,17 @@ export class UsersService {
         phone: true,
         status: true,
         lastLoginAt: true,
+        avatarPath: true,
+        avatarUpdatedAt: true,
         schoolRoles: { where: { schoolId }, select: { role: true } },
         totpSecrets: { select: { verified: true } },
       },
       orderBy: [{ lastName: 'asc' }, { firstName: 'asc' }],
     });
+    return users.map(({ avatarPath, ...user }) => ({
+      ...user,
+      hasAvatar: Boolean(avatarPath),
+    }));
   }
 
   async findByIdForActor(id: string, actor: JwtPayload) {
@@ -314,6 +334,124 @@ export class UsersService {
       action: 'PASSWORD_CHANGE',
       entity: 'User',
       entityId: userId,
+    });
+    return { ok: true };
+  }
+
+  async updateOwnProfile(
+    userId: string,
+    dto: { firstName?: string; lastName?: string; phone?: string },
+  ) {
+    const user = await this.prisma.user.findUnique({ where: { id: userId, deletedAt: null } });
+    if (!user) throw new NotFoundException('Usuario no encontrado');
+    await this.prisma.user.update({
+      where: { id: userId },
+      data: {
+        ...(dto.firstName ? { firstName: dto.firstName.trim() } : {}),
+        ...(dto.lastName ? { lastName: dto.lastName.trim() } : {}),
+        ...(dto.phone !== undefined ? { phone: dto.phone.trim() || null } : {}),
+      },
+    });
+    await this.audit.log({
+      userId,
+      action: 'UPDATE',
+      entity: 'User',
+      entityId: userId,
+      meta: { ownProfile: true },
+    });
+    return this.findById(userId);
+  }
+
+  async setOwnAvatar(params: {
+    userId: string;
+    filename: string;
+    mimetype: string;
+    stream: NodeJS.ReadableStream;
+  }): Promise<{ ok: true; avatarUpdatedAt: Date }> {
+    if (!AVATAR_MIME.has(params.mimetype)) {
+      throw new BadRequestException('Formato no permitido. Usa JPG, PNG o WEBP.');
+    }
+
+    const current = await this.prisma.user.findUnique({
+      where: { id: params.userId, deletedAt: null },
+      select: { avatarPath: true },
+    });
+    if (!current) throw new NotFoundException('Usuario no encontrado');
+
+    const chunks: Buffer[] = [];
+    let size = 0;
+    for await (const chunk of params.stream as AsyncIterable<Buffer | Uint8Array>) {
+      const buf = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+      size += buf.length;
+      if (size > MAX_AVATAR_BYTES) {
+        throw new BadRequestException('La imagen supera 2 MB.');
+      }
+      chunks.push(buf);
+    }
+
+    const dir = join(UPLOADS_ROOT, 'avatars');
+    await mkdir(dir, { recursive: true });
+    const rawExt = extname(params.filename).toLowerCase();
+    const ext =
+      rawExt && ['.jpg', '.jpeg', '.png', '.webp'].includes(rawExt)
+        ? rawExt
+        : params.mimetype === 'image/png'
+          ? '.png'
+          : params.mimetype === 'image/webp'
+            ? '.webp'
+            : '.jpg';
+    const filePath = join(dir, `${params.userId}-${crypto.randomUUID()}${ext}`);
+    await writeFile(filePath, Buffer.concat(chunks));
+
+    const avatarUpdatedAt = new Date();
+    await this.prisma.user.update({
+      where: { id: params.userId },
+      data: { avatarPath: filePath, avatarMime: params.mimetype, avatarUpdatedAt },
+    });
+    if (current.avatarPath) {
+      await unlink(current.avatarPath).catch(() => undefined);
+    }
+    await this.audit.log({
+      userId: params.userId,
+      action: 'UPDATE',
+      entity: 'User',
+      entityId: params.userId,
+      meta: { avatar: true, size },
+    });
+    return { ok: true, avatarUpdatedAt };
+  }
+
+  async getOwnAvatar(userId: string): Promise<{ buffer: Buffer; mimeType: string }> {
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId, deletedAt: null },
+      select: { avatarPath: true, avatarMime: true },
+    });
+    if (!user?.avatarPath || !user.avatarMime) throw new NotFoundException('Avatar no configurado');
+    const safePath = resolve(user.avatarPath);
+    const allowedRoot = resolve(UPLOADS_ROOT, 'avatars');
+    if (!safePath.startsWith(allowedRoot + '/') && safePath !== allowedRoot) {
+      throw new ForbiddenException('Ruta de avatar inválida');
+    }
+    return { buffer: await readFile(safePath), mimeType: user.avatarMime };
+  }
+
+  async removeOwnAvatar(userId: string): Promise<{ ok: true }> {
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId, deletedAt: null },
+      select: { avatarPath: true },
+    });
+    if (!user) throw new NotFoundException('Usuario no encontrado');
+    await this.prisma.user.update({
+      where: { id: userId },
+      data: { avatarPath: null, avatarMime: null, avatarUpdatedAt: null },
+    });
+    if (user.avatarPath) await unlink(user.avatarPath).catch(() => undefined);
+    await this.audit.log({
+      userId,
+      action: 'UPDATE',
+      entity: 'User',
+      entityId: userId,
+      meta: { avatarRemoved: true },
     });
     return { ok: true };
   }

@@ -96,6 +96,26 @@ export class TotpService {
     return false;
   }
 
+  async regenerateBackupCodes(userId: string): Promise<string[]> {
+    const record = await this.prisma.totpSecret.findUnique({ where: { userId } });
+    if (!record?.verified) throw new UnauthorizedException('2FA no configurado');
+    const backupCodes = this.generateBackupCodes();
+    const hashedCodes = await Promise.all(backupCodes.map((c) => this.passwords.hash(c)));
+    await this.prisma.totpSecret.update({
+      where: { userId },
+      data: { backupCodes: hashedCodes },
+    });
+    return backupCodes;
+  }
+
+  async countBackupCodes(userId: string): Promise<number> {
+    const record = await this.prisma.totpSecret.findUnique({
+      where: { userId },
+      select: { backupCodes: true },
+    });
+    return Array.isArray(record?.backupCodes) ? record.backupCodes.length : 0;
+  }
+
   async disable(userId: string): Promise<void> {
     await this.prisma.totpSecret.deleteMany({ where: { userId } });
   }
