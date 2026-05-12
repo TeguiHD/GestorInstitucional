@@ -383,10 +383,10 @@ export function CourseDetailPage() {
   const headTeacher = course?.teachers.find((t) => t.isHead) ?? course?.teachers[0];
 
   return (
-    <div className="max-w-full space-y-0 overflow-hidden -mt-4 lg:-mt-6">
+    <div className="max-w-full space-y-0 -mt-3 sm:-mt-4 lg:-mt-6">
       {/* ── Header ─────────────────────────────────────── */}
       <div
-        className="px-4 pt-6 pb-5 lg:px-6 -mx-4 lg:-mx-6 mb-5"
+        className="px-3 pt-6 pb-5 sm:px-4 lg:px-6 -mx-3 sm:-mx-4 lg:-mx-6 mb-4"
         style={{ background: 'linear-gradient(135deg, #008269 0%, #004d40 100%)' }}
       >
         {/* Breadcrumb */}

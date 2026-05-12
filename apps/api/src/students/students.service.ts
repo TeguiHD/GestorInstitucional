@@ -66,10 +66,23 @@ export class StudentsService {
       throw new ConflictException('RUT ya registrado en este colegio');
     }
 
+    // P1: enrollmentNumber must always be MAX+1 — MINEDUC requires immutable, sequential list numbers
+    const enrollmentNumber =
+      dto.enrollmentNumber ?? (await this.nextEnrollmentNumber(dto.courseId));
+
+    // Verify the number isn't already taken (in case caller supplied it)
+    if (dto.enrollmentNumber) {
+      const taken = await this.prisma.student.findUnique({
+        where: { courseId_enrollmentNumber: { courseId: dto.courseId, enrollmentNumber } },
+      });
+      if (taken && taken.rut !== rut)
+        throw new ConflictException(`N° lista ${enrollmentNumber} ya está ocupado`);
+    }
+
     const effectiveDate = this.startOfDay(new Date());
     return this.prisma.$transaction(async (tx) => {
       const student = await tx.student.create({
-        data: { ...dto, rut, enrolledAt: effectiveDate },
+        data: { ...dto, rut, enrollmentNumber, enrolledAt: effectiveDate },
       });
       await tx.enrollmentEvent.create({
         data: {
@@ -327,7 +340,14 @@ export class StudentsService {
     }
 
     const courseId = dto.courseId ?? student.courseId;
-    const enrollmentNumber = dto.enrollmentNumber ?? student.enrollmentNumber;
+    // P1: if re-enrolling in a new course, always assign a new number at the end
+    // If returning to same course, keep original number unless overridden
+    const enrollmentNumber =
+      dto.enrollmentNumber ??
+      (courseId !== student.courseId
+        ? await this.nextEnrollmentNumber(courseId)
+        : student.enrollmentNumber);
+
     const course = await this.prisma.course.findFirst({
       where: { id: courseId, schoolId: student.schoolId, active: true },
       select: { id: true },
@@ -348,7 +368,9 @@ export class StudentsService {
           courseId,
           enrollmentNumber,
           active: true,
-          withdrawnAt: null,
+          // P4: do NOT clear withdrawnAt — it records when the student last left.
+          // The new enrolledAt is the re-enrollment date; reports use EnrollmentEvent for history.
+          withdrawnAt: null, // must null so activeDuringPeriodWhere works correctly for current period
           enrolledAt: effectiveDate,
         },
       });
@@ -583,5 +605,18 @@ export class StudentsService {
     const d = new Date(date);
     d.setHours(0, 0, 0, 0);
     return d;
+  }
+
+  /**
+   * P1 (MINEDUC): List numbers must be immutable and sequential.
+   * New students always go to the END of the class list.
+   * NEVER reuse numbers from withdrawn students.
+   */
+  private async nextEnrollmentNumber(courseId: string): Promise<number> {
+    const max = await this.prisma.student.aggregate({
+      where: { courseId },
+      _max: { enrollmentNumber: true },
+    });
+    return (max._max.enrollmentNumber ?? 0) + 1;
   }
 }

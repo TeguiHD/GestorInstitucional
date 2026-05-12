@@ -17,6 +17,8 @@ import { ApiProperty } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard.js';
 import { RolesGuard } from '../common/guards/roles.guard.js';
 import { Roles } from '../common/decorators/roles.decorator.js';
+import { CurrentUser, type JwtPayload } from '../common/decorators/current-user.decorator.js';
+import { CoursesService } from '../courses/courses.service.js';
 import { CalendarService } from './calendar.service.js';
 
 class CreateCalendarDayDto {
@@ -40,11 +42,20 @@ class SeedHolidaysDto {
 @ApiBearerAuth()
 @Controller('calendar')
 export class CalendarController {
-  constructor(private readonly calendar: CalendarService) {}
+  constructor(
+    private readonly calendar: CalendarService,
+    private readonly courses: CoursesService,
+  ) {}
 
   @Get('school/:schoolId')
   @ApiOperation({ summary: 'Días especiales del colegio (feriados/suspendidos/eventos)' })
-  list(@Param('schoolId') schoolId: string, @Query('year') year?: number) {
+  list(
+    @Param('schoolId') schoolId: string,
+    @Query('year') year: number | undefined,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    // BUG-07: all staff roles can read calendar — validate school access only
+    this.courses.assertSchoolAccess(schoolId, user);
     return this.calendar.listBySchool(schoolId, year ? Number(year) : undefined);
   }
 

@@ -1,9 +1,10 @@
-import { createFileRoute } from '@tanstack/react-router';
+import { createFileRoute, redirect } from '@tanstack/react-router';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { useState, useMemo, useRef } from 'react';
+import { useState, useMemo, useRef, useEffect } from 'react';
 import {
   Check,
   Copy,
+  Edit2,
   Eye,
   EyeOff,
   KeyRound,
@@ -20,11 +21,18 @@ import { toast } from 'sonner';
 
 import { api } from '@/lib/api';
 import { useUser } from '@/stores/auth.store';
+import { useAuthStore } from '@/stores/auth.store';
 import { useEffectiveSchoolId } from '@/stores/school.store';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { ErrorState } from '@/components/ui/ErrorState';
 
 export const Route = createFileRoute('/_auth/usuarios')({
+  // BUG-01: restrict route to SUPER_ADMIN and DIRECTOR only
+  beforeLoad: () => {
+    const user = useAuthStore.getState().user;
+    const allowed = user?.roles?.some((r) => ['SUPER_ADMIN', 'DIRECTOR'].includes(r)) ?? false;
+    if (!allowed) throw redirect({ to: '/' });
+  },
   component: UsersPage,
 });
 
@@ -86,6 +94,16 @@ function timeAgo(date: string | null): string {
   return `Hace ${months} mes${months !== 1 ? 'es' : ''}`;
 }
 
+// BUG-13: dynamic timeAgo that refreshes every minute
+function useNow(intervalMs = 60_000) {
+  const [now, setNow] = useState(Date.now);
+  useEffect(() => {
+    const id = setInterval(() => setNow(Date.now()), intervalMs);
+    return () => clearInterval(id);
+  }, [intervalMs]);
+  return now;
+}
+
 function Avatar({ user }: { user: User }) {
   const primaryRole = user.schoolRoles[0]?.role ?? 'APODERADO';
   const initials = `${user.firstName[0] ?? ''}${user.lastName[0] ?? ''}`.toUpperCase();
@@ -136,16 +154,20 @@ function ActionMenu({
   onToggleStatus,
   onUnlock,
   onResetPassword,
+  onSetPassword,
   onDelete,
   canEdit,
+  isSuperAdmin,
 }: {
   user: User;
   onEdit: () => void;
   onToggleStatus: () => void;
   onUnlock: () => void;
   onResetPassword: () => void;
+  onSetPassword: () => void;
   onDelete: () => void;
   canEdit: boolean;
+  isSuperAdmin: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const [menuPos, setMenuPos] = useState<{ top?: number; bottom?: number; right: number }>({
@@ -222,6 +244,17 @@ function ActionMenu({
             >
               <KeyRound className="h-3.5 w-3.5" /> Resetear contraseña
             </button>
+            {isSuperAdmin && !user.schoolRoles.some((r) => r.role === 'SUPER_ADMIN') && (
+              <button
+                onClick={() => {
+                  onSetPassword();
+                  setOpen(false);
+                }}
+                className="w-full text-left px-4 py-2 hover:bg-muted transition-colors flex items-center gap-2"
+              >
+                <Edit2 className="h-3.5 w-3.5" /> Cambiar contraseña
+              </button>
+            )}
             <div className="border-t border-border my-1" />
             <button
               onClick={() => {
@@ -244,6 +277,7 @@ type ModalState =
   | { type: 'create' }
   | { type: 'edit'; user: User }
   | { type: 'password'; userId: string; tempPassword: string }
+  | { type: 'setPassword'; user: User }
   | null;
 
 function UserModal({
@@ -374,17 +408,25 @@ function UserModal({
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (isEdit && state?.type === 'edit') {
-      await (edit.mutateAsync as (v: object) => Promise<unknown>)({
-        id: state.user.id,
-        firstName,
-        lastName,
-        phone,
-      });
-      await (editRoles.mutateAsync as (v: object) => Promise<unknown>)({
-        id: state.user.id,
-        roles: [role],
-        schoolId,
-      });
+      // BUG-12: run both mutations; if roles fails, user sees error but profile was updated
+      // Use Promise.all to surface both errors, or sequential with rollback
+      try {
+        await (edit.mutateAsync as (v: object) => Promise<unknown>)({
+          id: state.user.id,
+          firstName,
+          lastName,
+          phone,
+        });
+        await (editRoles.mutateAsync as (v: object) => Promise<unknown>)({
+          id: state.user.id,
+          roles: [role],
+          schoolId,
+        });
+      } catch (err) {
+        // If roles failed after profile saved, invalidate to show current state
+        qc.invalidateQueries({ queryKey: ['users', schoolId] });
+        throw err;
+      }
     } else {
       await create.mutateAsync({
         email,
@@ -517,12 +559,142 @@ function Modal({
   );
 }
 
+// ── Set Password modal (SUPER_ADMIN) ─────────────────────────────────────────
+function SetPasswordModal({
+  user,
+  schoolId,
+  onClose,
+}: {
+  user: User;
+  schoolId: string;
+  onClose: () => void;
+}) {
+  const qc = useQueryClient();
+  const [newPassword, setNewPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [showPass, setShowPass] = useState(false);
+
+  const requirements = useMemo(
+    () => [
+      { label: '8 caracteres o más', ok: newPassword.length >= 8 },
+      {
+        label: 'Mayúscula y minúscula',
+        ok: /[A-Z]/.test(newPassword) && /[a-z]/.test(newPassword),
+      },
+      { label: 'Número o símbolo', ok: /[\d\W_]/.test(newPassword) },
+      {
+        label: 'Coincide con la confirmación',
+        ok: newPassword.length > 0 && newPassword === confirmPassword,
+      },
+    ],
+    [newPassword, confirmPassword],
+  );
+
+  const ready = requirements.every((r) => r.ok);
+
+  const setPassword = useMutation({
+    mutationFn: () => api.post(`/users/${user.id}/set-password`, { newPassword }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['users', schoolId] });
+      toast.success('Contraseña actualizada', {
+        description: `Se cambió la contraseña de ${user.firstName} ${user.lastName}.`,
+      });
+      onClose();
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
+
+  return (
+    <Modal onClose={onClose} title={`Cambiar contraseña — ${user.firstName} ${user.lastName}`}>
+      <form
+        onSubmit={(e) => {
+          e.preventDefault();
+          setPassword.mutate();
+        }}
+        className="space-y-4"
+      >
+        <div className="rounded-lg border border-amber-200 bg-amber-50 dark:border-amber-800 dark:bg-amber-950/40 px-4 py-3 text-sm text-amber-800 dark:text-amber-300">
+          Estás estableciendo una nueva contraseña para <strong>{user.email}</strong>. El usuario
+          deberá usar esta contraseña en su próximo inicio de sesión.
+        </div>
+        <div className="flex flex-col gap-1">
+          <label className="text-xs text-muted-foreground font-medium">Nueva contraseña</label>
+          <div className="relative">
+            <input
+              type={showPass ? 'text' : 'password'}
+              required
+              value={newPassword}
+              onChange={(e) => setNewPassword(e.target.value)}
+              className="w-full rounded-lg border border-border bg-background px-3 py-2 pr-10 text-sm"
+              placeholder="Mínimo 8 caracteres"
+              autoComplete="new-password"
+            />
+            <button
+              type="button"
+              onClick={() => setShowPass((v) => !v)}
+              className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors"
+            >
+              {showPass ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+            </button>
+          </div>
+        </div>
+        <div className="flex flex-col gap-1">
+          <label className="text-xs text-muted-foreground font-medium">Confirmar contraseña</label>
+          <input
+            type={showPass ? 'text' : 'password'}
+            required
+            value={confirmPassword}
+            onChange={(e) => setConfirmPassword(e.target.value)}
+            className="rounded-lg border border-border bg-background px-3 py-2 text-sm"
+            placeholder="Repetir contraseña"
+            autoComplete="new-password"
+          />
+        </div>
+        <div className="grid grid-cols-2 gap-2">
+          {requirements.map((req) => (
+            <div
+              key={req.label}
+              className={`flex items-center gap-2 rounded-lg px-3 py-2 text-xs ${
+                req.ok
+                  ? 'bg-green-500/10 text-green-700 dark:text-green-400'
+                  : 'bg-muted text-muted-foreground'
+              }`}
+            >
+              <Check className="h-3.5 w-3.5" />
+              {req.label}
+            </div>
+          ))}
+        </div>
+        <div className="flex gap-2 pt-2">
+          <button
+            type="button"
+            onClick={onClose}
+            className="flex-1 py-2 rounded-lg border border-border text-sm hover:bg-muted transition-colors"
+          >
+            Cancelar
+          </button>
+          <button
+            type="submit"
+            disabled={!ready || setPassword.isPending}
+            className="flex-1 py-2 rounded-lg bg-primary text-primary-foreground text-sm hover:bg-primary/90 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+          >
+            {setPassword.isPending ? 'Guardando…' : 'Cambiar contraseña'}
+          </button>
+        </div>
+      </form>
+    </Modal>
+  );
+}
+
 // ── Main page ────────────────────────────────────────────────────────────────
 function UsersPage() {
   const currentUser = useUser();
   const qc = useQueryClient();
   const schoolId = useEffectiveSchoolId();
   const canEdit = currentUser?.roles?.some((r) => ['SUPER_ADMIN', 'DIRECTOR'].includes(r)) ?? false;
+  const isSuperAdmin = currentUser?.roles?.includes('SUPER_ADMIN') ?? false;
+  // BUG-13: refresh timestamps every minute
+  useNow();
 
   const [search, setSearch] = useState('');
   const [filterRole, setFilterRole] = useState<string>('Todos');
@@ -760,10 +932,12 @@ function UsersPage() {
                       <ActionMenu
                         user={u}
                         canEdit={canEdit}
+                        isSuperAdmin={isSuperAdmin}
                         onEdit={() => setModal({ type: 'edit', user: u })}
                         onToggleStatus={() => toggleStatus.mutate({ id: u.id, status: u.status })}
                         onUnlock={() => unlock.mutate(u.id)}
                         onResetPassword={() => resetPassword.mutate(u.id)}
+                        onSetPassword={() => setModal({ type: 'setPassword', user: u })}
                         onDelete={() => {
                           if (
                             window.confirm(
@@ -812,6 +986,9 @@ function UsersPage() {
           onSuccess={() => setPendingPassword(null)}
           onPasswordGenerated={() => undefined}
         />
+      )}
+      {modal?.type === 'setPassword' && (
+        <SetPasswordModal user={modal.user} schoolId={schoolId} onClose={() => setModal(null)} />
       )}
     </div>
   );

@@ -57,6 +57,19 @@ export class ReportsService {
       select: { studentId: true, date: true, status: true },
     });
 
+    // P3: load enrollment events for the period (incorporated and withdrawn students)
+    const events = await this.prisma.enrollmentEvent.findMany({
+      where: {
+        courseId,
+        effectiveDate: { gte: from, lte: to },
+        status: { in: ['ACTIVE', 'WITHDRAWN', 'RE_ENROLLED', 'TRANSFERRED_IN', 'TRANSFERRED_OUT'] },
+      },
+      include: {
+        student: { select: { firstName: true, lastName: true, rut: true, enrollmentNumber: true } },
+      },
+      orderBy: { effectiveDate: 'asc' },
+    });
+
     const recordMap = new Map<string, Map<string, string>>();
     const SYMBOL: Record<string, string> = {
       PRESENT: '1',
@@ -82,6 +95,9 @@ export class ReportsService {
       to,
       records: recordMap,
     });
+
+    // P3: add MINEDUC Control de Subvenciones sheet
+    this.buildMovimientosSheet(wb, { course, year, month, from, to, events });
 
     await this.audit.log({
       userId: requestedById,
@@ -776,9 +792,22 @@ export class ReportsService {
       byMonth.get(m)!.push(r);
     }
 
+    const allEvents = await this.prisma.enrollmentEvent.findMany({
+      where: {
+        courseId,
+        effectiveDate: { gte: semFrom, lte: semTo },
+        status: { in: ['ACTIVE', 'WITHDRAWN', 'RE_ENROLLED', 'TRANSFERRED_IN', 'TRANSFERRED_OUT'] },
+      },
+      include: {
+        student: { select: { firstName: true, lastName: true, rut: true, enrollmentNumber: true } },
+      },
+      orderBy: { effectiveDate: 'asc' },
+    });
+
     for (const month of months) {
       const records = byMonth.get(month) ?? [];
       const to = new Date(year, month, 0);
+      const from = new Date(year, month - 1, 1);
       const recordMap = new Map<string, Map<string, string>>();
       for (const r of records) {
         const key = r.date.toISOString().split('T')[0]!;
@@ -786,6 +815,13 @@ export class ReportsService {
         recordMap.get(r.studentId)!.set(key, SYMBOL[r.status] ?? '-');
       }
       this.buildMonthSheet(wb, { course, year, month, to, records: recordMap });
+
+      // Add monthly control subvenciones sheet for each month
+      const monthEvents = allEvents.filter((e) => {
+        const d = this.startOfDay(e.effectiveDate);
+        return d >= from && d <= to;
+      });
+      this.buildMovimientosSheet(wb, { course, year, month, from, to, events: monthEvents });
 
       for (const r of records) {
         const e = summary.get(r.studentId);
@@ -826,12 +862,15 @@ export class ReportsService {
       c.border = borderAll;
     });
 
-    course.students.forEach((student, idx) => {
-      const r = idx + 3;
+    let rowIdx = 0;
+    course.students.forEach((student) => {
+      const r = rowIdx + 3;
       const e = summary.get(student.id) ?? { p: 0, a: 0, j: 0 };
-      const total = e.p + e.a + e.j;
-      const pct = total > 0 ? e.p / total : 0;
-      ws.getCell(r, 1).value = idx + 1;
+      // P2 FIX: denominator = active school days over the whole semester period
+      const activeDays = this.countActiveSchoolDays(student, semFrom, semTo);
+      const pct = activeDays > 0 ? e.p / activeDays : 0;
+      // P2: use real enrollmentNumber
+      ws.getCell(r, 1).value = student.enrollmentNumber;
       ws.getCell(r, 1).border = borderAll;
       ws.getCell(r, 1).alignment = centerMid;
       ws.getCell(r, 2).value =
@@ -854,12 +893,13 @@ export class ReportsService {
       pctCell.fill = {
         type: 'pattern',
         pattern: 'solid',
-        fgColor: { argb: pct >= 0.9 ? 'FFE2EFDA' : pct >= 0.7 ? 'FFFFF2CC' : 'FFFCE4E4' },
+        fgColor: { argb: pct >= 0.85 ? 'FFE2EFDA' : pct >= 0.7 ? 'FFFFF2CC' : 'FFFCE4E4' },
       };
       ws.getCell(r, 6).value = e.j;
       ws.getCell(r, 6).border = borderAll;
       ws.getCell(r, 6).alignment = centerMid;
       ws.getCell(r, 6).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFFF2CC' } };
+      rowIdx++;
     });
 
     await this.audit.log({
@@ -1375,6 +1415,7 @@ export class ReportsService {
           firstName: string;
           lastName: string;
           secondLastName: string | null;
+          enrollmentNumber: number;
           enrolledAt: Date;
           withdrawnAt: Date | null;
         }>;
@@ -1565,12 +1606,17 @@ export class ReportsService {
 
     // ---- Student rows (14..) ----
     let r = 14;
-    for (const [idx, student] of course.students.entries()) {
+    // P2: We need the period boundaries to compute correct denominators
+    const periodFrom = new Date(year, month - 1, 1);
+    const periodTo = new Date(year, month, 0);
+
+    for (const student of course.students) {
       const row = ws.getRow(r);
       row.height = 18;
 
+      // P2: Use real enrollmentNumber (MINEDUC: immutable list number)
       const numCell = ws.getCell(r, 2);
-      numCell.value = idx + 1;
+      numCell.value = student.enrollmentNumber;
       numCell.alignment = centerMid;
       numCell.border = borderAll;
       numCell.font = { bold: true };
@@ -1624,11 +1670,17 @@ export class ReportsService {
           cell.font = { size: 9, bold: true, color: { argb: 'FFFFFFFF' } };
           late++;
           present++; // late counts as present for attendance %
+        } else if (sym === '-') {
+          // Withdrawn — grey cell
+          cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: GRAY } };
+          cell.value = '-';
+          cell.font = { size: 8, color: { argb: 'FF666666' } };
         }
       }
 
-      const total = present + absent + justified;
-      const pct = total > 0 ? present / total : 0;
+      // P2 FIX: denominator = active school days for this student, not total records
+      const activeDays = this.countActiveSchoolDays(student, periodFrom, periodTo);
+      const pct = activeDays > 0 ? present / activeDays : 0;
 
       const a = ws.getCell(r, 36);
       a.value = present;
@@ -1651,7 +1703,7 @@ export class ReportsService {
       p.fill = {
         type: 'pattern',
         pattern: 'solid',
-        fgColor: { argb: pct >= 0.9 ? 'FFE2EFDA' : pct >= 0.7 ? 'FFFFF2CC' : 'FFFCE4E4' },
+        fgColor: { argb: pct >= 0.85 ? 'FFE2EFDA' : pct >= 0.7 ? 'FFFFF2CC' : 'FFFCE4E4' },
       };
 
       const j = ws.getCell(r, 39);
@@ -1698,6 +1750,248 @@ export class ReportsService {
       OR: [{ withdrawnAt: null }, { withdrawnAt: { gte: from } }],
     };
   }
+
+  /**
+   * P2 (Decreto 67): Count active school days for a student.
+   * The denominator for % attendance must exclude days before enrolledAt
+   * and days after withdrawnAt (i.e., only days the student was enrolled).
+   * Also excludes weekends.
+   */
+  private countActiveSchoolDays(
+    student: { enrolledAt: Date; withdrawnAt: Date | null },
+    from: Date,
+    to: Date,
+  ): number {
+    const start = this.startOfDay(student.enrolledAt > from ? student.enrolledAt : from);
+    const end = this.startOfDay(
+      student.withdrawnAt && student.withdrawnAt < to ? student.withdrawnAt : to,
+    );
+    let days = 0;
+    const cursor = new Date(start);
+    while (cursor <= end) {
+      const dow = cursor.getDay();
+      if (dow !== 0 && dow !== 6) days++;
+      cursor.setDate(cursor.getDate() + 1);
+    }
+    return days;
+  }
+
+  /**
+   * P3 (MINEDUC Control de Subvenciones): Build a dedicated sheet
+   * with the official movement summary required by MINEDUC.
+   */
+  private buildMovimientosSheet(
+    wb: ExcelJS.Workbook,
+    ctx: {
+      course: {
+        name: string;
+        school: { name: string };
+        students: Array<{
+          id: string;
+          firstName: string;
+          lastName: string;
+          rut: string;
+          enrollmentNumber: number;
+          enrolledAt: Date;
+          withdrawnAt: Date | null;
+        }>;
+      };
+      year: number;
+      month: number;
+      from: Date;
+      to: Date;
+      events: Array<{
+        status: string;
+        effectiveDate: Date;
+        reason: string | null;
+        student: { firstName: string; lastName: string; rut: string; enrollmentNumber: number };
+      }>;
+    },
+  ) {
+    const { course, year, month, from, to, events } = ctx;
+    const BLUE = 'FF1F4E79';
+    const LIGHT_BLUE = 'FFDCE6F1';
+    const GREEN = 'FFE2EFDA';
+    const RED = 'FFFCE4E4';
+    const thin = { style: 'thin' as const, color: { argb: 'FF000000' } };
+    const borderAll = { top: thin, bottom: thin, left: thin, right: thin };
+    const centerMid = { horizontal: 'center' as const, vertical: 'middle' as const };
+    const monthName = MONTH_NAMES_ES[month - 1] ?? '';
+
+    const ws = wb.addWorksheet('CONTROL SUBVENCIONES', { views: [{ showGridLines: false }] });
+    ws.getColumn(1).width = 6;
+    ws.getColumn(2).width = 8;
+    ws.getColumn(3).width = 38;
+    ws.getColumn(4).width = 14;
+    ws.getColumn(5).width = 40;
+
+    // Title
+    ws.mergeCells('A1:E1');
+    const title = ws.getCell('A1');
+    title.value = `CONTROL DE SUBVENCIONES — ${monthName.toUpperCase()} ${year}`;
+    title.font = { bold: true, size: 14, color: { argb: 'FFFFFFFF' } };
+    title.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: BLUE } };
+    title.alignment = centerMid;
+    ws.getRow(1).height = 26;
+
+    ws.mergeCells('A2:E2');
+    ws.getCell('A2').value = `${course.school.name}  —  Curso: ${course.name}`;
+    ws.getCell('A2').font = { bold: true, size: 11 };
+    ws.getCell('A2').alignment = centerMid;
+    ws.getRow(2).height = 18;
+
+    let r = 4;
+
+    // --- Section 1: enrollment summary ---
+    const incorporated = events.filter((e) =>
+      ['ACTIVE', 'RE_ENROLLED', 'TRANSFERRED_IN'].includes(e.status),
+    );
+    const withdrawn = events.filter((e) => ['WITHDRAWN', 'TRANSFERRED_OUT'].includes(e.status));
+
+    const matriculaInicio =
+      course.students.filter((s) => this.startOfDay(s.enrolledAt) <= from).length +
+      withdrawn.filter((e) => this.startOfDay(e.effectiveDate) >= from).length -
+      incorporated.filter((e) => this.startOfDay(e.effectiveDate) >= from).length;
+    const matriculaFin = course.students.length;
+
+    const sectionHeader = (label: string) => {
+      ws.mergeCells(r, 1, r, 5);
+      const cell = ws.getCell(r, 1);
+      cell.value = label;
+      cell.font = { bold: true, size: 11, color: { argb: 'FFFFFFFF' } };
+      cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: BLUE } };
+      cell.alignment = { horizontal: 'left', vertical: 'middle' };
+      ws.getRow(r).height = 20;
+      r++;
+    };
+
+    const dataRow = (label: string, value: string | number, bgArgb?: string) => {
+      ws.getCell(r, 1).value = label;
+      ws.getCell(r, 1).font = { bold: true };
+      ws.mergeCells(r, 2, r, 2);
+      ws.getCell(r, 2).value = value;
+      ws.getCell(r, 2).alignment = centerMid;
+      ws.getCell(r, 2).border = borderAll;
+      if (bgArgb)
+        ws.getCell(r, 2).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: bgArgb } };
+      r++;
+    };
+
+    sectionHeader('1. RESUMEN DE MATRÍCULA');
+    dataRow('Matrícula inicio del mes', matriculaInicio);
+    dataRow('Alumnos incorporados en el mes', incorporated.length, GREEN);
+    dataRow('Alumnos retirados en el mes', withdrawn.length, RED);
+    dataRow('Matrícula fin del mes', matriculaFin);
+    r++;
+
+    // --- Section 2: incorporated list ---
+    sectionHeader('2. ALUMNOS INCORPORADOS EN EL MES');
+    if (incorporated.length === 0) {
+      ws.mergeCells(r, 1, r, 5);
+      ws.getCell(r, 1).value = 'Sin incorporaciones en el período';
+      ws.getCell(r, 1).font = { italic: true, color: { argb: 'FF666666' } };
+      r++;
+    } else {
+      // Header row
+      ['N° Lista', 'Nombres y Apellidos', 'RUT', 'Fecha Incorporación', 'Motivo'].forEach(
+        (h, i) => {
+          const cell = ws.getCell(r, i + 1);
+          cell.value = h;
+          cell.font = { bold: true, color: { argb: 'FFFFFFFF' } };
+          cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF4472C4' } };
+          cell.border = borderAll;
+          cell.alignment = centerMid;
+        },
+      );
+      r++;
+      for (const e of incorporated) {
+        ws.getCell(r, 1).value = e.student.enrollmentNumber;
+        ws.getCell(r, 2).value = `${e.student.lastName}, ${e.student.firstName}`;
+        ws.getCell(r, 3).value = e.student.rut;
+        ws.getCell(r, 4).value = e.effectiveDate.toLocaleDateString('es-CL');
+        ws.getCell(r, 5).value = e.reason ?? '—';
+        for (let c = 1; c <= 5; c++) {
+          ws.getCell(r, c).border = borderAll;
+          ws.getCell(r, c).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: GREEN } };
+        }
+        r++;
+      }
+    }
+    r++;
+
+    // --- Section 3: withdrawn list ---
+    sectionHeader('3. ALUMNOS RETIRADOS EN EL MES');
+    if (withdrawn.length === 0) {
+      ws.mergeCells(r, 1, r, 5);
+      ws.getCell(r, 1).value = 'Sin retiros en el período';
+      ws.getCell(r, 1).font = { italic: true, color: { argb: 'FF666666' } };
+      r++;
+    } else {
+      ['N° Lista', 'Nombres y Apellidos', 'RUT', 'Fecha Retiro', 'Motivo'].forEach((h, i) => {
+        const cell = ws.getCell(r, i + 1);
+        cell.value = h;
+        cell.font = { bold: true, color: { argb: 'FFFFFFFF' } };
+        cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF4472C4' } };
+        cell.border = borderAll;
+        cell.alignment = centerMid;
+      });
+      r++;
+      for (const e of withdrawn) {
+        ws.getCell(r, 1).value = e.student.enrollmentNumber;
+        ws.getCell(r, 2).value = `${e.student.lastName}, ${e.student.firstName}`;
+        ws.getCell(r, 3).value = e.student.rut;
+        ws.getCell(r, 4).value = e.effectiveDate.toLocaleDateString('es-CL');
+        ws.getCell(r, 5).value = e.reason ?? '—';
+        for (let c = 1; c <= 5; c++) {
+          ws.getCell(r, c).border = borderAll;
+          ws.getCell(r, c).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: RED } };
+        }
+        r++;
+      }
+    }
+    r++;
+
+    // --- Section 4: asistencia media (P2 denominator fix) ---
+    sectionHeader('4. ASISTENCIA MEDIA DEL MES (Decreto 67/2018)');
+
+    // Count working days in the month (Mon-Fri only; calendar not configured)
+    const daysInMonth = to.getDate();
+    let schoolDaysMonth = 0;
+    for (let d = 1; d <= daysInMonth; d++) {
+      const dow = new Date(to.getFullYear(), to.getMonth(), d).getDay();
+      if (dow !== 0 && dow !== 6) schoolDaysMonth++;
+    }
+
+    let totalAlumnoDias = 0;
+    for (const student of course.students) {
+      const activeDays = this.countActiveSchoolDays(student, from, to);
+      totalAlumnoDias += activeDays;
+    }
+
+    dataRow('Días hábiles del mes (L-V)', schoolDaysMonth, LIGHT_BLUE);
+    dataRow('Total alumno×día posibles', totalAlumnoDias, LIGHT_BLUE);
+    dataRow('Alumnos activos al cierre', matriculaFin);
+    r++;
+
+    ws.mergeCells(r, 1, r, 5);
+    ws.getCell(r, 1).value =
+      'Nota: El porcentaje de asistencia individual en la hoja MINEDUC se calcula sobre los días ' +
+      'en que el alumno estuvo matriculado (Decreto 67/2018, Art. 12). ' +
+      'Los alumnos incorporados y retirados cuentan solo sus días activos.';
+    ws.getCell(r, 1).font = { italic: true, size: 9, color: { argb: 'FF444444' } };
+    ws.getCell(r, 1).alignment = { wrapText: true, vertical: 'top' };
+    ws.getRow(r).height = 40;
+    r++;
+
+    ws.mergeCells(r, 1, r, 5);
+    ws.getCell(r, 1).value =
+      `Documento generado automáticamente — ${course.school.name} · ` +
+      new Date().toLocaleDateString('es-CL');
+    ws.getCell(r, 1).font = { italic: true, size: 8, color: { argb: 'FF999999' } };
+  }
+
+  // activeDuringPeriodWhere is defined above (line 1741)
+  // Duplicate removed.
 
   private attendanceSymbolFor(
     student: { enrolledAt: Date; withdrawnAt: Date | null },

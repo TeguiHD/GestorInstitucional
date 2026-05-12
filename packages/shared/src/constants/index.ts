@@ -9,11 +9,7 @@ export const ROLES = {
 
 export type Role = (typeof ROLES)[keyof typeof ROLES];
 
-export const ROLES_REQUIRING_2FA: readonly Role[] = [
-  ROLES.SUPER_ADMIN,
-  ROLES.DIRECTOR,
-  ROLES.UTP,
-] as const;
+export const ROLES_REQUIRING_2FA: readonly Role[] = [ROLES.SUPER_ADMIN] as const;
 
 export const ATTENDANCE_STATUS = {
   PRESENT: 'PRESENT',

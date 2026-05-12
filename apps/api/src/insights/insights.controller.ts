@@ -1,4 +1,4 @@
-import { Controller, Get, Param, Query, UseGuards } from '@nestjs/common';
+import { BadRequestException, Controller, Get, Param, Query, UseGuards } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard.js';
@@ -26,7 +26,13 @@ export class InsightsController {
     @Query('month') month: string,
   ) {
     await this.courses.assertAccess(id, user);
-    return this.insights.getCourseInsights(id, Number(year), Number(month));
+    const y = Number(year);
+    const m = Number(month);
+    if (!Number.isInteger(y) || y < 2020 || y > 2100)
+      throw new BadRequestException('year inválido');
+    if (!Number.isInteger(m) || m < 1 || m > 12)
+      throw new BadRequestException('month debe estar entre 1 y 12');
+    return this.insights.getCourseInsights(id, y, m);
   }
 
   @Get('school/:id')
@@ -38,7 +44,13 @@ export class InsightsController {
     @Query('month') month: string,
   ) {
     this.courses.assertSchoolAdminAccess(id, user);
-    return this.insights.getSchoolInsights(id, Number(year), Number(month));
+    const y = Number(year);
+    const m = Number(month);
+    if (!Number.isInteger(y) || y < 2020 || y > 2100)
+      throw new BadRequestException('year inválido');
+    if (!Number.isInteger(m) || m < 1 || m > 12)
+      throw new BadRequestException('month debe estar entre 1 y 12');
+    return this.insights.getSchoolInsights(id, y, m);
   }
 
   @Get('school/:id/at-risk')
@@ -50,7 +62,13 @@ export class InsightsController {
     @Query('month') month: string,
   ) {
     this.courses.assertSchoolAdminAccess(id, user);
-    return this.insights.getAtRiskStudents(id, Number(year), Number(month));
+    const y = Number(year);
+    const m = Number(month);
+    if (!Number.isInteger(y) || y < 2020 || y > 2100)
+      throw new BadRequestException('year inválido');
+    if (!Number.isInteger(m) || m < 1 || m > 12)
+      throw new BadRequestException('month debe estar entre 1 y 12');
+    return this.insights.getAtRiskStudents(id, y, m);
   }
 
   @Get('school/:id/heatmap')
@@ -62,7 +80,13 @@ export class InsightsController {
     @Query('month') month: string,
   ) {
     this.courses.assertSchoolAdminAccess(id, user);
-    return this.insights.getWeekdayHeatmap(id, Number(year), Number(month));
+    const y = Number(year);
+    const m = Number(month);
+    if (!Number.isInteger(y) || y < 2020 || y > 2100)
+      throw new BadRequestException('year inválido');
+    if (!Number.isInteger(m) || m < 1 || m > 12)
+      throw new BadRequestException('month debe estar entre 1 y 12');
+    return this.insights.getWeekdayHeatmap(id, y, m);
   }
 
   @Get('school/:id/risk-prediction')

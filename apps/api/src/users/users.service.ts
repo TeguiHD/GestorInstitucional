@@ -103,6 +103,8 @@ export class UsersService {
     if (actor && actor.sub === id)
       throw new BadRequestException('No puedes eliminar tu propia cuenta');
     if (actor) await this.assertCanManageUser(actor, id);
+    // BUG-04: invalidate all active sessions before disabling account
+    await this.prisma.refreshToken.deleteMany({ where: { userId: id } });
     return this.prisma.user.update({
       where: { id },
       data: { deletedAt: new Date(), status: 'INACTIVE' },
@@ -175,16 +177,14 @@ export class UsersService {
     }
     const exists = await this.prisma.user.findUnique({ where: { email: dto.email.toLowerCase() } });
     if (exists) {
-      const hasRole = await this.prisma.userSchoolRole.findUnique({
+      // BUG-05: use upsert to avoid race condition on concurrent create requests
+      await this.prisma.userSchoolRole.upsert({
         where: {
           userId_schoolId_role: { userId: exists.id, schoolId: dto.schoolId, role: dto.role },
         },
+        update: {},
+        create: { userId: exists.id, schoolId: dto.schoolId, role: dto.role },
       });
-      if (!hasRole) {
-        await this.prisma.userSchoolRole.create({
-          data: { userId: exists.id, schoolId: dto.schoolId, role: dto.role },
-        });
-      }
       return { id: exists.id, email: exists.email, isExisting: true, tempPassword: null };
     }
 
@@ -283,11 +283,14 @@ export class UsersService {
 
   async resetPassword(userId: string, actor?: JwtPayload): Promise<{ tempPassword: string }> {
     if (actor) await this.assertCanManageUser(actor, userId);
+    // BUG-02: verify user exists and is not soft-deleted before updating
+    const target = await this.prisma.user.findUnique({ where: { id: userId, deletedAt: null } });
+    if (!target) throw new NotFoundException('Usuario no encontrado');
     const tempPassword = crypto.randomBytes(12).toString('base64url');
     const passwordHash = await this.passwords.hash(tempPassword);
     const user = await this.prisma.user.update({
       where: { id: userId },
-      data: { passwordHash },
+      data: { passwordHash, failedLogins: 0, lockedUntil: null },
       select: { email: true, firstName: true, lastName: true },
     });
     void this.mail
@@ -301,6 +304,63 @@ export class UsersService {
       })
       .catch(() => undefined);
     return { tempPassword };
+  }
+
+  /**
+   * SUPER_ADMIN sets a specific password for a non-SUPER_ADMIN user.
+   */
+  async setPasswordByAdmin(
+    targetUserId: string,
+    newPassword: string,
+    actor: JwtPayload,
+  ): Promise<{ ok: true }> {
+    // Only SUPER_ADMIN can use this
+    if (!actor.roles.includes(SystemRole.SUPER_ADMIN)) {
+      throw new ForbiddenException('Solo SUPER_ADMIN puede establecer contraseñas');
+    }
+
+    // Cannot change own password via this method
+    if (actor.sub === targetUserId) {
+      throw new BadRequestException('Usa el cambio de contraseña propio');
+    }
+
+    const user = await this.prisma.user.findUnique({
+      where: { id: targetUserId, deletedAt: null },
+      include: { schoolRoles: true },
+    });
+    if (!user) throw new NotFoundException('Usuario no encontrado');
+
+    // Cannot change password of another SUPER_ADMIN
+    if (user.schoolRoles.some((r) => r.role === SystemRole.SUPER_ADMIN)) {
+      throw new ForbiddenException('No se puede modificar la contraseña de otro SUPER_ADMIN');
+    }
+
+    // Validate minimum length
+    if (newPassword.length < 8) {
+      throw new BadRequestException('La contraseña debe tener al menos 8 caracteres');
+    }
+
+    // Pwned check
+    const pwned = await this.passwords.isPwned(newPassword);
+    if (pwned) {
+      throw new BadRequestException('La contraseña aparece en filtraciones conocidas');
+    }
+
+    const passwordHash = await this.passwords.hash(newPassword);
+    await this.prisma.user.update({
+      where: { id: targetUserId },
+      data: { passwordHash, failedLogins: 0, lockedUntil: null },
+    });
+
+    await this.audit.log({
+      userId: actor.sub,
+      action: 'PASSWORD_CHANGE',
+      entity: 'User',
+      entityId: targetUserId,
+      meta: { adminSetPassword: true },
+    });
+
+    return { ok: true };
   }
 
   async changeOwnPassword(
@@ -495,6 +555,8 @@ export class UsersService {
     if (actor.sub === id) throw new BadRequestException('No puedes purgar tu propia cuenta');
     const user = await this.prisma.user.findUnique({ where: { id } });
     if (!user) throw new NotFoundException('Usuario no encontrado');
+    // BUG-03: invalidate all active sessions before purging
+    await this.prisma.refreshToken.deleteMany({ where: { userId: id } });
     return this.prisma.user.update({
       where: { id },
       data: {
@@ -535,10 +597,9 @@ export class UsersService {
       where: { userId: targetUserId },
       select: { schoolId: true, role: true },
     });
-    this.assertCanReadUser(
-      actor,
-      roles.map((role) => role.schoolId),
-    );
+    // BUG-06: if target has no school roles yet, allow if actor is from same school
+    const schoolIds = roles.length > 0 ? roles.map((r) => r.schoolId) : [actor.schoolId]; // fallback: allow same-school actor to manage roleless users
+    this.assertCanReadUser(actor, schoolIds);
     if (roles.some((role) => role.role === SystemRole.SUPER_ADMIN)) {
       throw new ForbiddenException('Solo SUPER_ADMIN puede administrar SUPER_ADMIN');
     }

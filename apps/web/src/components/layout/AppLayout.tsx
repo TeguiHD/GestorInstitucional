@@ -296,7 +296,9 @@ export function AppLayout({ children }: Props) {
             Sin conexión — los cambios se guardarán localmente y sincronizarán al reconectar.
           </div>
         )}
-        <main className="flex-1 overflow-x-hidden overflow-y-auto p-4 lg:p-6">{children}</main>
+        <main className="flex-1 overflow-x-hidden overflow-y-auto p-3 sm:p-4 lg:p-6">
+          {children}
+        </main>
       </div>
     </div>
   );

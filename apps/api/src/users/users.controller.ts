@@ -126,6 +126,14 @@ class ChangeOwnPasswordDto {
   newPassword!: string;
 }
 
+class SetPasswordDto {
+  @ApiProperty({ description: 'Nueva contraseña para el usuario' })
+  @IsString()
+  @MinLength(8)
+  @MaxLength(128)
+  newPassword!: string;
+}
+
 class UpdateOwnProfileDto {
   @ApiProperty({ required: false })
   @IsOptional()
@@ -290,6 +298,20 @@ export class UsersController {
   @ApiOperation({ summary: 'Resetear contraseña (genera temporal)' })
   resetPassword(@Param('id') id: string, @CurrentUser() actor: JwtPayload) {
     return this.users.resetPassword(id, actor);
+  }
+
+  @Post(':id/set-password')
+  @HttpCode(HttpStatus.OK)
+  @Roles(SystemRole.SUPER_ADMIN)
+  @ApiOperation({
+    summary: 'Establecer contraseña específica (solo SUPER_ADMIN, no para otros SUPER_ADMIN)',
+  })
+  setPassword(
+    @Param('id') id: string,
+    @Body() dto: SetPasswordDto,
+    @CurrentUser() actor: JwtPayload,
+  ) {
+    return this.users.setPasswordByAdmin(id, dto.newPassword, actor);
   }
 
   @Post(':id/restore')
