@@ -79,23 +79,61 @@ export class StudentsService {
         throw new ConflictException(`N° lista ${enrollmentNumber} ya está ocupado`);
     }
 
-    const effectiveDate = this.startOfDay(new Date());
+    const effectiveDate = dto.effectiveDate
+      ? this.startOfDay(new Date(`${dto.effectiveDate}T00:00:00.000Z`))
+      : this.startOfDay(new Date());
+
+    const isTransfer = !!dto.transferOriginSchool?.trim();
+    const eventStatus = isTransfer ? EnrollmentStatus.TRANSFERRED_IN : EnrollmentStatus.ACTIVE;
+    const eventReason = isTransfer
+      ? `Traslado desde: ${dto.transferOriginSchool!.trim()}`
+      : 'Matrícula inicial';
+
     return this.prisma.$transaction(async (tx) => {
       const student = await tx.student.create({
-        data: { ...dto, rut, enrollmentNumber, enrolledAt: effectiveDate },
+        data: {
+          schoolId: dto.schoolId,
+          courseId: dto.courseId,
+          rut,
+          firstName: dto.firstName,
+          lastName: dto.lastName,
+          secondLastName: dto.secondLastName ?? null,
+          birthDate: dto.birthDate ? new Date(dto.birthDate) : null,
+          enrollmentNumber,
+          enrolledAt: effectiveDate,
+        },
       });
       await tx.enrollmentEvent.create({
         data: {
           studentId: student.id,
           schoolId: student.schoolId,
           courseId: student.courseId,
-          status: EnrollmentStatus.ACTIVE,
+          status: eventStatus,
           effectiveDate,
-          reason: 'Matrícula inicial',
+          reason: eventReason,
           recordedById: actor.sub,
         },
       });
       return student;
+    });
+  }
+
+  async getAllBySchool(schoolId: string, actor: JwtPayload) {
+    if (!actor.roles.includes(SystemRole.SUPER_ADMIN) && !this.isSchoolAdmin(actor, schoolId)) {
+      throw new ForbiddenException('Sin acceso');
+    }
+    return this.prisma.student.findMany({
+      where: { schoolId, active: true, firstName: { not: '[Eliminado]' } },
+      select: {
+        id: true,
+        firstName: true,
+        lastName: true,
+        rut: true,
+        enrollmentNumber: true,
+        enrolledAt: true,
+        course: { select: { id: true, code: true, name: true } },
+      },
+      orderBy: [{ course: { code: 'asc' } }, { enrollmentNumber: 'asc' }],
     });
   }
 
@@ -297,13 +335,25 @@ export class StudentsService {
   async withdraw(
     id: string,
     actor: JwtPayload,
-    dto: { effectiveDate?: string; reason?: string } = {},
+    dto: {
+      effectiveDate?: string;
+      reason?: string;
+      transferType?: 'WITHDRAWN' | 'TRANSFERRED_OUT';
+      transferredToSchool?: string;
+    } = {},
   ) {
     await this.assertCanAccessStudent(id, actor);
     const effectiveDate = this.parseDateOnly(dto.effectiveDate);
     const student = await this.prisma.student.findUnique({ where: { id } });
     if (!student) throw new NotFoundException('Alumno no encontrado');
     if (!student.active) throw new BadRequestException('El alumno ya está retirado');
+
+    const isTransfer = dto.transferType === 'TRANSFERRED_OUT';
+    if (isTransfer && !dto.transferredToSchool?.trim()) {
+      throw new BadRequestException('Debe indicar el establecimiento destino para un traslado');
+    }
+
+    const eventStatus = isTransfer ? EnrollmentStatus.TRANSFERRED_OUT : EnrollmentStatus.WITHDRAWN;
 
     return this.prisma.$transaction(async (tx) => {
       const updated = await tx.student.update({
@@ -315,9 +365,10 @@ export class StudentsService {
           studentId: id,
           schoolId: student.schoolId,
           courseId: student.courseId,
-          status: EnrollmentStatus.WITHDRAWN,
+          status: eventStatus,
           effectiveDate,
           reason: dto.reason?.trim() || null,
+          transferredToSchool: isTransfer ? dto.transferredToSchool!.trim() : null,
           recordedById: actor.sub,
         },
       });
@@ -480,8 +531,9 @@ export class StudentsService {
   }
 
   async findWithdrawn(schoolId: string, actor: JwtPayload) {
-    if (!actor.roles.includes(SystemRole.SUPER_ADMIN))
-      throw new ForbiddenException('Solo SUPER_ADMIN');
+    if (!actor.roles.includes(SystemRole.SUPER_ADMIN) && !this.isSchoolAdmin(actor, schoolId)) {
+      throw new ForbiddenException('Sin acceso');
+    }
     return this.prisma.student.findMany({
       where: { schoolId, active: false, firstName: { not: '[Eliminado]' } },
       select: {
@@ -491,15 +543,46 @@ export class StudentsService {
         rut: true,
         enrollmentNumber: true,
         withdrawnAt: true,
-        course: { select: { code: true, name: true } },
+        enrolledAt: true,
+        course: { select: { id: true, code: true, name: true } },
       },
       orderBy: { withdrawnAt: 'desc' },
     });
   }
 
+  async getMovements(schoolId: string, from: Date, to: Date, actor: JwtPayload) {
+    if (!actor.roles.includes(SystemRole.SUPER_ADMIN) && !this.isSchoolAdmin(actor, schoolId)) {
+      throw new ForbiddenException('Sin acceso');
+    }
+    return this.prisma.enrollmentEvent.findMany({
+      where: {
+        schoolId,
+        effectiveDate: { gte: from, lte: to },
+      },
+      include: {
+        student: {
+          select: { id: true, firstName: true, lastName: true, rut: true },
+        },
+        recordedBy: {
+          select: { id: true, firstName: true, lastName: true },
+        },
+      },
+      orderBy: [{ effectiveDate: 'desc' }, { createdAt: 'desc' }],
+    });
+  }
+
   async restore(id: string, actor: JwtPayload) {
-    if (!actor.roles.includes(SystemRole.SUPER_ADMIN))
-      throw new ForbiddenException('Solo SUPER_ADMIN');
+    const studentCheck = await this.prisma.student.findUnique({
+      where: { id },
+      select: { schoolId: true },
+    });
+    if (!studentCheck) throw new NotFoundException('Alumno no encontrado');
+    if (
+      !actor.roles.includes(SystemRole.SUPER_ADMIN) &&
+      !this.isSchoolAdmin(actor, studentCheck.schoolId)
+    ) {
+      throw new ForbiddenException('Sin acceso');
+    }
     const student = await this.prisma.student.findUnique({ where: { id } });
     if (!student) throw new NotFoundException('Alumno no encontrado');
     if (student.active) throw new BadRequestException('El alumno ya está activo');

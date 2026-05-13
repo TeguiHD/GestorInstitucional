@@ -19,6 +19,7 @@ import { Route as AuthReportesRouteImport } from './routes/_auth.reportes';
 import { Route as AuthPerfilRouteImport } from './routes/_auth.perfil';
 import { Route as AuthPapeleraRouteImport } from './routes/_auth.papelera';
 import { Route as AuthMyChildrenRouteImport } from './routes/_auth.my-children';
+import { Route as AuthMovimientosRouteImport } from './routes/_auth.movimientos';
 import { Route as AuthMisPupilosRouteImport } from './routes/_auth.mis-pupilos';
 import { Route as AuthMailRouteImport } from './routes/_auth.mail';
 import { Route as AuthJustificationsRouteImport } from './routes/_auth.justifications';
@@ -84,6 +85,11 @@ const AuthPapeleraRoute = AuthPapeleraRouteImport.update({
 const AuthMyChildrenRoute = AuthMyChildrenRouteImport.update({
   id: '/my-children',
   path: '/my-children',
+  getParentRoute: () => AuthRoute,
+} as any);
+const AuthMovimientosRoute = AuthMovimientosRouteImport.update({
+  id: '/movimientos',
+  path: '/movimientos',
   getParentRoute: () => AuthRoute,
 } as any);
 const AuthMisPupilosRoute = AuthMisPupilosRouteImport.update({
@@ -187,6 +193,7 @@ export interface FileRoutesByFullPath {
   '/justifications': typeof AuthJustificationsRoute;
   '/mail': typeof AuthMailRoute;
   '/mis-pupilos': typeof AuthMisPupilosRoute;
+  '/movimientos': typeof AuthMovimientosRoute;
   '/my-children': typeof AuthMyChildrenRoute;
   '/papelera': typeof AuthPapeleraRoute;
   '/perfil': typeof AuthPerfilRoute;
@@ -213,6 +220,7 @@ export interface FileRoutesByTo {
   '/justifications': typeof AuthJustificationsRoute;
   '/mail': typeof AuthMailRoute;
   '/mis-pupilos': typeof AuthMisPupilosRoute;
+  '/movimientos': typeof AuthMovimientosRoute;
   '/my-children': typeof AuthMyChildrenRoute;
   '/papelera': typeof AuthPapeleraRoute;
   '/perfil': typeof AuthPerfilRoute;
@@ -243,6 +251,7 @@ export interface FileRoutesById {
   '/_auth/justifications': typeof AuthJustificationsRoute;
   '/_auth/mail': typeof AuthMailRoute;
   '/_auth/mis-pupilos': typeof AuthMisPupilosRoute;
+  '/_auth/movimientos': typeof AuthMovimientosRoute;
   '/_auth/my-children': typeof AuthMyChildrenRoute;
   '/_auth/papelera': typeof AuthPapeleraRoute;
   '/_auth/perfil': typeof AuthPerfilRoute;
@@ -274,6 +283,7 @@ export interface FileRouteTypes {
     | '/justifications'
     | '/mail'
     | '/mis-pupilos'
+    | '/movimientos'
     | '/my-children'
     | '/papelera'
     | '/perfil'
@@ -300,6 +310,7 @@ export interface FileRouteTypes {
     | '/justifications'
     | '/mail'
     | '/mis-pupilos'
+    | '/movimientos'
     | '/my-children'
     | '/papelera'
     | '/perfil'
@@ -329,6 +340,7 @@ export interface FileRouteTypes {
     | '/_auth/justifications'
     | '/_auth/mail'
     | '/_auth/mis-pupilos'
+    | '/_auth/movimientos'
     | '/_auth/my-children'
     | '/_auth/papelera'
     | '/_auth/perfil'
@@ -419,6 +431,13 @@ declare module '@tanstack/react-router' {
       path: '/my-children';
       fullPath: '/my-children';
       preLoaderRoute: typeof AuthMyChildrenRouteImport;
+      parentRoute: typeof AuthRoute;
+    };
+    '/_auth/movimientos': {
+      id: '/_auth/movimientos';
+      path: '/movimientos';
+      fullPath: '/movimientos';
+      preLoaderRoute: typeof AuthMovimientosRouteImport;
       parentRoute: typeof AuthRoute;
     };
     '/_auth/mis-pupilos': {
@@ -578,6 +597,7 @@ interface AuthRouteChildren {
   AuthJustificationsRoute: typeof AuthJustificationsRoute;
   AuthMailRoute: typeof AuthMailRoute;
   AuthMisPupilosRoute: typeof AuthMisPupilosRoute;
+  AuthMovimientosRoute: typeof AuthMovimientosRoute;
   AuthMyChildrenRoute: typeof AuthMyChildrenRoute;
   AuthPapeleraRoute: typeof AuthPapeleraRoute;
   AuthPerfilRoute: typeof AuthPerfilRoute;
@@ -603,6 +623,7 @@ const AuthRouteChildren: AuthRouteChildren = {
   AuthJustificationsRoute: AuthJustificationsRoute,
   AuthMailRoute: AuthMailRoute,
   AuthMisPupilosRoute: AuthMisPupilosRoute,
+  AuthMovimientosRoute: AuthMovimientosRoute,
   AuthMyChildrenRoute: AuthMyChildrenRoute,
   AuthPapeleraRoute: AuthPapeleraRoute,
   AuthPerfilRoute: AuthPerfilRoute,

@@ -51,5 +51,19 @@ export class CreateStudentDto {
   @ApiProperty({ minimum: 1 })
   @IsInt()
   @Min(1)
-  enrollmentNumber!: number;
+  @IsOptional()
+  enrollmentNumber?: number;
+
+  @ApiPropertyOptional({
+    description: 'Si viene de otro colegio, nombre del establecimiento origen',
+  })
+  @IsOptional()
+  @IsString()
+  @MaxLength(200)
+  transferOriginSchool?: string;
+
+  @ApiPropertyOptional({ description: 'Fecha efectiva de matrícula YYYY-MM-DD' })
+  @IsOptional()
+  @IsDateString()
+  effectiveDate?: string;
 }

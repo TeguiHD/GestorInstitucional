@@ -1,4 +1,14 @@
-import { Body, Controller, Delete, Get, Param, Post, Query, UseGuards } from '@nestjs/common';
+import {
+  BadRequestException,
+  Body,
+  Controller,
+  Delete,
+  Get,
+  Param,
+  Post,
+  Query,
+  UseGuards,
+} from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
 import {
@@ -51,6 +61,20 @@ class EnrollmentMovementDto {
   @IsString()
   @MaxLength(200)
   reason?: string;
+
+  @ApiProperty({ required: false, enum: ['WITHDRAWN', 'TRANSFERRED_OUT'] })
+  @IsOptional()
+  @IsString()
+  transferType?: 'WITHDRAWN' | 'TRANSFERRED_OUT';
+
+  @ApiProperty({
+    required: false,
+    description: 'Establecimiento destino (requerido si transferType=TRANSFERRED_OUT)',
+  })
+  @IsOptional()
+  @IsString()
+  @MaxLength(200)
+  transferredToSchool?: string;
 }
 
 class ReEnrollStudentDto extends EnrollmentMovementDto {
@@ -96,10 +120,34 @@ export class StudentsController {
   }
 
   @Get('trash')
-  @Roles(SystemRole.SUPER_ADMIN)
-  @ApiOperation({ summary: 'Alumnos retirados — papelera (SUPER_ADMIN)' })
+  @Roles(SystemRole.SUPER_ADMIN, SystemRole.DIRECTOR, SystemRole.INSPECTORIA)
+  @ApiOperation({ summary: 'Alumnos retirados del colegio' })
   findWithdrawn(@Query('schoolId') schoolId: string, @CurrentUser() actor: JwtPayload) {
     return this.students.findWithdrawn(schoolId, actor);
+  }
+
+  @Get('school-active')
+  @Roles(SystemRole.SUPER_ADMIN, SystemRole.DIRECTOR, SystemRole.INSPECTORIA)
+  @ApiOperation({ summary: 'Todos los alumnos activos del colegio' })
+  getAllBySchool(@Query('schoolId') schoolId: string, @CurrentUser() actor: JwtPayload) {
+    return this.students.getAllBySchool(schoolId, actor);
+  }
+
+  @Get('movements')
+  @Roles(SystemRole.SUPER_ADMIN, SystemRole.DIRECTOR, SystemRole.INSPECTORIA)
+  @ApiOperation({ summary: 'Movimientos de matrícula del período' })
+  getMovements(
+    @Query('schoolId') schoolId: string,
+    @Query('from') from: string,
+    @Query('to') to: string,
+    @CurrentUser() actor: JwtPayload,
+  ) {
+    const fromDate = new Date(`${from}T00:00:00.000Z`);
+    const toDate = new Date(`${to}T23:59:59.999Z`);
+    if (Number.isNaN(fromDate.getTime()) || Number.isNaN(toDate.getTime())) {
+      throw new BadRequestException('Fechas inválidas');
+    }
+    return this.students.getMovements(schoolId, fromDate, toDate, actor);
   }
 
   @Get(':id')
@@ -175,7 +223,7 @@ export class StudentsController {
   }
 
   @Post(':id/restore')
-  @Roles(SystemRole.SUPER_ADMIN)
+  @Roles(SystemRole.SUPER_ADMIN, SystemRole.DIRECTOR, SystemRole.INSPECTORIA)
   @ApiOperation({ summary: 'Reactivar alumno retirado' })
   restore(@Param('id') id: string, @CurrentUser() actor: JwtPayload) {
     return this.students.restore(id, actor);

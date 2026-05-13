@@ -3,6 +3,7 @@ import { useQuery } from '@tanstack/react-query';
 import { api } from '@/lib/api';
 import { Link, useMatchRoute, useRouter } from '@tanstack/react-router';
 import {
+  ArrowLeftRight,
   BarChart2,
   Bell,
   BookOpen,
@@ -35,6 +36,7 @@ type NavItem = {
   superAdminOnly?: boolean;
   guardianOnly?: boolean;
   staffOnly?: boolean;
+  enrollmentOnly?: boolean;
 };
 
 type NavGroup = { heading: string; items: NavItem[] };
@@ -46,6 +48,7 @@ const NAV_GROUPS: NavGroup[] = [
       { to: '/', label: 'Panel', icon: LayoutDashboard, exact: true, staffOnly: true },
       { to: '/mis-pupilos', label: 'Mis pupilos', icon: Heart, guardianOnly: true },
       { to: '/cursos', label: 'Cursos', icon: BookOpen, staffOnly: true },
+      { to: '/movimientos', label: 'Movimientos', icon: ArrowLeftRight, enrollmentOnly: true },
       { to: '/justificaciones', label: 'Justificaciones', icon: FileCheck, staffOnly: true },
       { to: '/calendario', label: 'Calendario', icon: Calendar, staffOnly: true },
     ],
@@ -179,6 +182,11 @@ export function AppLayout({ children }: Props) {
   const visible = (item: NavItem): boolean => {
     if (item.superAdminOnly && !roles.includes('SUPER_ADMIN')) return false;
     if (item.adminOnly && !isAdmin) return false;
+    if (
+      item.enrollmentOnly &&
+      !roles.some((r) => ['SUPER_ADMIN', 'DIRECTOR', 'INSPECTORIA'].includes(r))
+    )
+      return false;
     if (item.guardianOnly && !isGuardian) return false;
     if (item.staffOnly && !isStaff) return false;
     return true;
