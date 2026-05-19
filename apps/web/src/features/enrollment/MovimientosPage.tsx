@@ -1,7 +1,10 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   ArrowLeftRight,
+  Ban,
+  CalendarCog,
   Loader2,
+  Pencil,
   Plus,
   RefreshCw,
   Search,
@@ -9,12 +12,14 @@ import {
   UserMinus,
   UserPlus,
 } from 'lucide-react';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { toast } from 'sonner';
+import { WITHDRAWAL_REASONS, type WithdrawalReason } from '@asistencia/shared';
 
 import { api } from '@/lib/api';
 import { cn } from '@/lib/cn';
 import { useEffectiveSchoolId } from '@/stores/school.store';
+import { useUser } from '@/stores/auth.store';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { ErrorState } from '@/components/ui/ErrorState';
 
@@ -46,10 +51,32 @@ type MovementEvent = {
   status: string;
   effectiveDate: string;
   reason: string | null;
+  withdrawalReason: WithdrawalReason | null;
   transferredToSchool: string | null;
+  voidedAt: string | null;
+  voidReason: string | null;
   student: { id: string; firstName: string; lastName: string; rut: string };
   recordedBy: { id: string; firstName: string; lastName: string };
+  voidedBy: { id: string; firstName: string; lastName: string } | null;
 };
+
+type EnrollmentEventDetail = {
+  id: string;
+  status: string;
+  effectiveDate: string;
+  reason: string | null;
+  withdrawalReason: WithdrawalReason | null;
+  transferredToSchool: string | null;
+  voidedAt: string | null;
+};
+
+const EXIT_STATUSES = new Set(['WITHDRAWN', 'TRANSFERRED_OUT']);
+
+function useCanEdit(): boolean {
+  const user = useUser();
+  if (!user) return false;
+  return user.roles.some((r) => ['SUPER_ADMIN', 'DIRECTOR', 'INSPECTORIA'].includes(r));
+}
 
 type Course = {
   id: string;
@@ -76,6 +103,8 @@ const STATUS_META: Record<string, { label: string; color: string }> = {
   RE_ENROLLED: { label: 'Reingreso', color: 'text-purple-600 bg-purple-50 dark:bg-purple-950/40' },
   GRADUATED: { label: 'Egresado', color: 'text-slate-600 bg-slate-100 dark:bg-slate-800' },
 };
+
+const WITHDRAWAL_REASON_KEYS = Object.keys(WITHDRAWAL_REASONS) as WithdrawalReason[];
 
 const fmtDate = (d: string) =>
   new Date(d).toLocaleDateString('es-CL', { day: '2-digit', month: '2-digit', year: 'numeric' });
@@ -328,19 +357,26 @@ function MatricularDialog({
 
 // ── Dialog: Dar de Baja ────────────────────────────────────────────────────────
 
+const CONFIRM_WORD = 'RETIRAR';
+
 function DarDeBajaDialog({ student, onClose }: { student: ActiveStudent; onClose: () => void }) {
   const qc = useQueryClient();
   const schoolId = useEffectiveSchoolId();
   const [effectiveDate, setEffectiveDate] = useState(new Date().toISOString().split('T')[0]!);
   const [isTransfer, setIsTransfer] = useState(false);
   const [destinationSchool, setDestinationSchool] = useState('');
+  const [withdrawalReason, setWithdrawalReason] = useState<WithdrawalReason>('RETIRO_VOLUNTARIO');
   const [reason, setReason] = useState('');
+  const [confirmWord, setConfirmWord] = useState('');
+  const confirmed = confirmWord === CONFIRM_WORD;
+  const otroRequired = withdrawalReason === 'OTRO' && !reason.trim();
 
   const mutation = useMutation({
     mutationFn: () =>
       api.post(`/students/${student.id}/withdraw`, {
         effectiveDate,
         reason: reason.trim() || undefined,
+        withdrawalReason,
         transferType: isTransfer ? 'TRANSFERRED_OUT' : 'WITHDRAWN',
         transferredToSchool: isTransfer ? destinationSchool.trim() : undefined,
       }),
@@ -411,14 +447,44 @@ function DarDeBajaDialog({ student, onClose }: { student: ActiveStudent; onClose
             />
           </Field>
         )}
-        <Field label="Motivo (opcional)">
+        <Field label="Causal MINEDUC *">
+          <select
+            required
+            value={withdrawalReason}
+            onChange={(e) => setWithdrawalReason(e.target.value as WithdrawalReason)}
+            className={selectCls}
+          >
+            {WITHDRAWAL_REASON_KEYS.map((k) => (
+              <option key={k} value={k}>
+                {WITHDRAWAL_REASONS[k]}
+              </option>
+            ))}
+          </select>
+        </Field>
+        <Field
+          label={withdrawalReason === 'OTRO' ? 'Describe el motivo *' : 'Observación (opcional)'}
+        >
           <input
+            required={withdrawalReason === 'OTRO'}
             value={reason}
             onChange={(e) => setReason(e.target.value)}
-            placeholder="Ej: Cambio de domicilio"
+            placeholder={withdrawalReason === 'OTRO' ? 'Indica el motivo' : 'Ej: Detalles'}
             className={inputCls}
           />
         </Field>
+        <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 dark:border-red-800 dark:bg-red-950/30">
+          <p className="mb-2 text-xs text-red-700 dark:text-red-400">
+            Para confirmar, escribe{' '}
+            <span className="font-mono font-bold tracking-wider">{CONFIRM_WORD}</span> en el campo:
+          </p>
+          <input
+            value={confirmWord}
+            onChange={(e) => setConfirmWord(e.target.value.toUpperCase())}
+            placeholder={CONFIRM_WORD}
+            autoComplete="off"
+            className="w-full rounded-lg border border-red-300 bg-background px-3 py-2 font-mono text-sm uppercase tracking-wider focus:outline-none focus:ring-2 focus:ring-red-400/40 dark:border-red-700"
+          />
+        </div>
         <div className="flex justify-end gap-2 pt-2">
           <button
             type="button"
@@ -429,8 +495,8 @@ function DarDeBajaDialog({ student, onClose }: { student: ActiveStudent; onClose
           </button>
           <button
             type="submit"
-            disabled={mutation.isPending}
-            className="flex items-center gap-2 rounded-lg bg-red-600 px-4 py-2 text-sm text-white transition-colors hover:bg-red-700 disabled:opacity-40"
+            disabled={mutation.isPending || !confirmed || otroRequired}
+            className="flex items-center gap-2 rounded-lg bg-red-600 px-4 py-2 text-sm text-white transition-colors hover:bg-red-700 disabled:cursor-not-allowed disabled:opacity-40"
           >
             {mutation.isPending ? (
               <Loader2 className="size-4 animate-spin" />
@@ -551,6 +617,323 @@ function ReingresarDialog({
   );
 }
 
+// ── Dialog: Editar fecha de ingreso (alumno activo) ────────────────────────────
+
+const EDIT_CONFIRM_WORD = 'MODIFICAR';
+
+function EditarFechaIngresoDialog({
+  student,
+  onClose,
+}: {
+  student: ActiveStudent;
+  onClose: () => void;
+}) {
+  const qc = useQueryClient();
+  const schoolId = useEffectiveSchoolId();
+  const [enrolledAt, setEnrolledAt] = useState(student.enrolledAt.split('T')[0]!);
+  const [confirmWord, setConfirmWord] = useState('');
+  const confirmed = confirmWord === EDIT_CONFIRM_WORD;
+  const sameDate = enrolledAt === student.enrolledAt.split('T')[0];
+
+  const mutation = useMutation({
+    mutationFn: () => api.patch(`/students/${student.id}/enrolled-at`, { enrolledAt }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['school-active', schoolId] });
+      qc.invalidateQueries({ queryKey: ['movements', schoolId] });
+      toast.success('Fecha de ingreso actualizada');
+      onClose();
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
+
+  return (
+    <Modal title={`Editar fecha de ingreso — ${fmtName(student)}`} onClose={onClose}>
+      <form
+        onSubmit={(e) => {
+          e.preventDefault();
+          mutation.mutate();
+        }}
+        className="space-y-4"
+      >
+        <div className="rounded-lg border border-blue-200 bg-blue-50 px-4 py-3 text-xs text-blue-800 dark:border-blue-800 dark:bg-blue-950/40 dark:text-blue-300">
+          Solo se permite editar a fechas del año lectivo en curso. Si existe asistencia registrada
+          antes de la nueva fecha, deberás eliminar primero esos registros.
+        </div>
+        <Field label="Fecha actual">
+          <div className="rounded-lg border border-border bg-muted/30 px-3 py-2 text-sm tabular-nums text-muted-foreground">
+            {fmtDate(student.enrolledAt)}
+          </div>
+        </Field>
+        <Field label="Nueva fecha de ingreso *">
+          <input
+            required
+            type="date"
+            value={enrolledAt}
+            onChange={(e) => setEnrolledAt(e.target.value)}
+            className={inputCls}
+          />
+        </Field>
+        <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 dark:border-amber-800 dark:bg-amber-950/30">
+          <p className="mb-2 text-xs text-amber-800 dark:text-amber-300">
+            Para confirmar, escribe{' '}
+            <span className="font-mono font-bold tracking-wider">{EDIT_CONFIRM_WORD}</span>:
+          </p>
+          <input
+            value={confirmWord}
+            onChange={(e) => setConfirmWord(e.target.value.toUpperCase())}
+            placeholder={EDIT_CONFIRM_WORD}
+            autoComplete="off"
+            className="w-full rounded-lg border border-amber-300 bg-background px-3 py-2 font-mono text-sm uppercase tracking-wider focus:outline-none focus:ring-2 focus:ring-amber-400/40 dark:border-amber-700"
+          />
+        </div>
+        <div className="flex justify-end gap-2 pt-2">
+          <button
+            type="button"
+            onClick={onClose}
+            className="rounded-lg border border-border px-4 py-2 text-sm transition-colors hover:bg-muted"
+          >
+            Cancelar
+          </button>
+          <button
+            type="submit"
+            disabled={mutation.isPending || !confirmed || sameDate}
+            className="flex items-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm text-primary-foreground transition-colors hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-40"
+          >
+            {mutation.isPending ? (
+              <Loader2 className="size-4 animate-spin" />
+            ) : (
+              <CalendarCog className="size-4" />
+            )}
+            Guardar
+          </button>
+        </div>
+      </form>
+    </Modal>
+  );
+}
+
+// ── Dialog: Editar movimiento (retiro registrado) ──────────────────────────────
+
+function EditarMovimientoDialog({
+  student,
+  onClose,
+}: {
+  student: WithdrawnStudent;
+  onClose: () => void;
+}) {
+  const qc = useQueryClient();
+  const schoolId = useEffectiveSchoolId();
+
+  const eventsQ = useQuery<EnrollmentEventDetail[]>({
+    queryKey: ['enrollment-events', student.id],
+    queryFn: () => api.get(`/students/${student.id}/enrollment-events`),
+  });
+
+  const lastExit = (eventsQ.data ?? []).find((e) => EXIT_STATUSES.has(e.status) && !e.voidedAt);
+
+  const [effectiveDate, setEffectiveDate] = useState('');
+  const [withdrawalReason, setWithdrawalReason] = useState<WithdrawalReason>('RETIRO_VOLUNTARIO');
+  const [reason, setReason] = useState('');
+  const [transferredToSchool, setTransferredToSchool] = useState('');
+
+  useEffect(() => {
+    if (!lastExit) return;
+    setEffectiveDate(lastExit.effectiveDate.split('T')[0]!);
+    setWithdrawalReason(lastExit.withdrawalReason ?? 'RETIRO_VOLUNTARIO');
+    setReason(lastExit.reason ?? '');
+    setTransferredToSchool(lastExit.transferredToSchool ?? '');
+  }, [lastExit?.id]);
+
+  const isTransferOut = lastExit?.status === 'TRANSFERRED_OUT';
+  const otroRequired = withdrawalReason === 'OTRO' && !reason.trim();
+
+  const mutation = useMutation({
+    mutationFn: () =>
+      api.patch(`/students/movements/${lastExit!.id}`, {
+        effectiveDate,
+        reason: reason.trim() || undefined,
+        withdrawalReason,
+        ...(isTransferOut ? { transferredToSchool: transferredToSchool.trim() } : {}),
+      }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['withdrawn', schoolId] });
+      qc.invalidateQueries({ queryKey: ['school-active', schoolId] });
+      qc.invalidateQueries({ queryKey: ['movements', schoolId] });
+      qc.invalidateQueries({ queryKey: ['enrollment-events', student.id] });
+      toast.success('Movimiento actualizado');
+      onClose();
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
+
+  return (
+    <Modal title={`Editar retiro — ${fmtName(student)}`} onClose={onClose}>
+      {eventsQ.isLoading ? (
+        <div className="flex items-center justify-center py-8">
+          <Loader2 className="size-5 animate-spin text-muted-foreground" />
+        </div>
+      ) : !lastExit ? (
+        <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-300">
+          No se encontró un movimiento de retiro activo para este alumno.
+        </div>
+      ) : (
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            mutation.mutate();
+          }}
+          className="space-y-4"
+        >
+          <div className="rounded-lg border border-blue-200 bg-blue-50 px-4 py-3 text-xs text-blue-800 dark:border-blue-800 dark:bg-blue-950/40 dark:text-blue-300">
+            Solo se permite editar movimientos del año lectivo en curso.
+          </div>
+          <Field label="Fecha efectiva *">
+            <input
+              required
+              type="date"
+              value={effectiveDate}
+              onChange={(e) => setEffectiveDate(e.target.value)}
+              className={inputCls}
+            />
+          </Field>
+          <Field label="Causal MINEDUC *">
+            <select
+              required
+              value={withdrawalReason}
+              onChange={(e) => setWithdrawalReason(e.target.value as WithdrawalReason)}
+              className={selectCls}
+            >
+              {WITHDRAWAL_REASON_KEYS.map((k) => (
+                <option key={k} value={k}>
+                  {WITHDRAWAL_REASONS[k]}
+                </option>
+              ))}
+            </select>
+          </Field>
+          <Field
+            label={withdrawalReason === 'OTRO' ? 'Describe el motivo *' : 'Observación (opcional)'}
+          >
+            <input
+              required={withdrawalReason === 'OTRO'}
+              value={reason}
+              onChange={(e) => setReason(e.target.value)}
+              className={inputCls}
+            />
+          </Field>
+          {isTransferOut && (
+            <Field label="Establecimiento destino">
+              <input
+                value={transferredToSchool}
+                onChange={(e) => setTransferredToSchool(e.target.value)}
+                className={inputCls}
+              />
+            </Field>
+          )}
+          <div className="flex justify-end gap-2 pt-2">
+            <button
+              type="button"
+              onClick={onClose}
+              className="rounded-lg border border-border px-4 py-2 text-sm transition-colors hover:bg-muted"
+            >
+              Cancelar
+            </button>
+            <button
+              type="submit"
+              disabled={mutation.isPending || otroRequired}
+              className="flex items-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm text-primary-foreground transition-colors hover:bg-primary/90 disabled:opacity-40"
+            >
+              {mutation.isPending ? (
+                <Loader2 className="size-4 animate-spin" />
+              ) : (
+                <Pencil className="size-4" />
+              )}
+              Guardar
+            </button>
+          </div>
+        </form>
+      )}
+    </Modal>
+  );
+}
+
+// ── Dialog: Anular movimiento ──────────────────────────────────────────────────
+
+function AnularMovimientoDialog({ event, onClose }: { event: MovementEvent; onClose: () => void }) {
+  const qc = useQueryClient();
+  const schoolId = useEffectiveSchoolId();
+  const [voidReason, setVoidReason] = useState('');
+
+  const mutation = useMutation({
+    mutationFn: () =>
+      api.delWithBody(`/students/movements/${event.id}`, { voidReason: voidReason.trim() }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['movements', schoolId] });
+      qc.invalidateQueries({ queryKey: ['school-active', schoolId] });
+      qc.invalidateQueries({ queryKey: ['withdrawn', schoolId] });
+      toast.success('Movimiento anulado');
+      onClose();
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
+
+  const status = STATUS_META[event.status]?.label ?? event.status;
+
+  return (
+    <Modal title="Anular movimiento" onClose={onClose}>
+      <form
+        onSubmit={(e) => {
+          e.preventDefault();
+          mutation.mutate();
+        }}
+        className="space-y-4"
+      >
+        <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-300">
+          <strong>{fmtName(event.student)}</strong> — {event.student.rut}
+          <br />
+          <span className="text-xs">
+            {status} · {fmtDate(event.effectiveDate)}
+          </span>
+        </div>
+        <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-xs text-red-800 dark:border-red-800 dark:bg-red-950/30 dark:text-red-300">
+          Solo se puede anular el último movimiento no anulado del alumno. El evento queda marcado
+          como anulado en historial (auditoría Ley 21.719) y el alumno vuelve a su estado previo.
+        </div>
+        <Field label="Motivo de anulación *">
+          <input
+            required
+            minLength={3}
+            value={voidReason}
+            onChange={(e) => setVoidReason(e.target.value)}
+            placeholder="Ej: Retiro registrado por error"
+            className={inputCls}
+          />
+        </Field>
+        <div className="flex justify-end gap-2 pt-2">
+          <button
+            type="button"
+            onClick={onClose}
+            className="rounded-lg border border-border px-4 py-2 text-sm transition-colors hover:bg-muted"
+          >
+            Cancelar
+          </button>
+          <button
+            type="submit"
+            disabled={mutation.isPending || voidReason.trim().length < 3}
+            className="flex items-center gap-2 rounded-lg bg-red-600 px-4 py-2 text-sm text-white transition-colors hover:bg-red-700 disabled:opacity-40"
+          >
+            {mutation.isPending ? (
+              <Loader2 className="size-4 animate-spin" />
+            ) : (
+              <Ban className="size-4" />
+            )}
+            Anular
+          </button>
+        </div>
+      </form>
+    </Modal>
+  );
+}
+
 // ── Loading skeleton ───────────────────────────────────────────────────────────
 
 function Skeleton() {
@@ -570,9 +953,12 @@ function Skeleton() {
 
 // ── Tab: Activos ───────────────────────────────────────────────────────────────
 
-function ActivesTab({ schoolId }: { schoolId: string }) {
+function ActivesTab({ schoolId, courses }: { schoolId: string; courses: Course[] }) {
   const [search, setSearch] = useState('');
+  const [courseFilter, setCourseFilter] = useState('');
   const [bajaTarget, setBajaTarget] = useState<ActiveStudent | null>(null);
+  const [editFechaTarget, setEditFechaTarget] = useState<ActiveStudent | null>(null);
+  const canEdit = useCanEdit();
 
   const q = useQuery<ActiveStudent[]>({
     queryKey: ['school-active', schoolId],
@@ -583,28 +969,40 @@ function ActivesTab({ schoolId }: { schoolId: string }) {
   if (q.isError) return <ErrorState message="Error al cargar alumnos activos" />;
 
   const filtered = (q.data ?? []).filter((s) => {
+    if (courseFilter && s.course.id !== courseFilter) return false;
     const t = search.toLowerCase();
     return (
       !t ||
       s.firstName.toLowerCase().includes(t) ||
       s.lastName.toLowerCase().includes(t) ||
-      s.rut.includes(t) ||
-      s.course.code.toLowerCase().includes(t)
+      s.rut.includes(t)
     );
   });
 
   return (
     <>
-      <div className="mb-3 flex items-center gap-2">
+      <div className="mb-3 flex flex-col gap-2 sm:flex-row sm:items-center">
         <div className="relative flex-1">
           <Search className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
           <input
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            placeholder="Buscar por nombre, RUT o curso…"
+            placeholder="Buscar por nombre o RUT…"
             className="w-full rounded-lg border border-border bg-background py-2 pl-9 pr-4 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
           />
         </div>
+        <select
+          value={courseFilter}
+          onChange={(e) => setCourseFilter(e.target.value)}
+          className="rounded-lg border border-border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30 sm:w-44"
+        >
+          <option value="">Todos los cursos</option>
+          {courses.map((c) => (
+            <option key={c.id} value={c.id}>
+              {c.code} — {c.name}
+            </option>
+          ))}
+        </select>
         {q.isFetching && <RefreshCw className="size-4 animate-spin text-muted-foreground" />}
       </div>
       {q.isLoading ? (
@@ -645,7 +1043,21 @@ function ActivesTab({ schoolId }: { schoolId: string }) {
                         {s.course.code}
                       </span>
                     </td>
-                    <td className="px-4 py-2.5 text-muted-foreground">{fmtDate(s.enrolledAt)}</td>
+                    <td className="px-4 py-2.5 text-muted-foreground">
+                      {canEdit ? (
+                        <button
+                          type="button"
+                          onClick={() => setEditFechaTarget(s)}
+                          title="Click para editar la fecha de ingreso"
+                          className="group/edit inline-flex items-center gap-1.5 rounded-md px-1.5 py-0.5 -mx-1.5 -my-0.5 transition-colors hover:bg-muted hover:text-foreground"
+                        >
+                          <span>{fmtDate(s.enrolledAt)}</span>
+                          <Pencil className="size-3 opacity-0 transition-opacity group-hover/edit:opacity-100" />
+                        </button>
+                      ) : (
+                        fmtDate(s.enrolledAt)
+                      )}
+                    </td>
                     <td className="px-4 py-2.5 text-right">
                       <button
                         onClick={() => setBajaTarget(s)}
@@ -666,6 +1078,12 @@ function ActivesTab({ schoolId }: { schoolId: string }) {
         </div>
       )}
       {bajaTarget && <DarDeBajaDialog student={bajaTarget} onClose={() => setBajaTarget(null)} />}
+      {editFechaTarget && (
+        <EditarFechaIngresoDialog
+          student={editFechaTarget}
+          onClose={() => setEditFechaTarget(null)}
+        />
+      )}
     </>
   );
 }
@@ -674,7 +1092,10 @@ function ActivesTab({ schoolId }: { schoolId: string }) {
 
 function WithdrawnTab({ schoolId, courses }: { schoolId: string; courses: Course[] }) {
   const [search, setSearch] = useState('');
+  const [courseFilter, setCourseFilter] = useState('');
   const [reingresarTarget, setReingresarTarget] = useState<WithdrawnStudent | null>(null);
+  const [editRetiroTarget, setEditRetiroTarget] = useState<WithdrawnStudent | null>(null);
+  const canEdit = useCanEdit();
 
   const q = useQuery<WithdrawnStudent[]>({
     queryKey: ['withdrawn', schoolId],
@@ -685,6 +1106,7 @@ function WithdrawnTab({ schoolId, courses }: { schoolId: string; courses: Course
   if (q.isError) return <ErrorState message="Error al cargar alumnos retirados" />;
 
   const filtered = (q.data ?? []).filter((s) => {
+    if (courseFilter && s.course.id !== courseFilter) return false;
     const t = search.toLowerCase();
     return (
       !t ||
@@ -696,7 +1118,7 @@ function WithdrawnTab({ schoolId, courses }: { schoolId: string; courses: Course
 
   return (
     <>
-      <div className="mb-3 flex items-center gap-2">
+      <div className="mb-3 flex flex-col gap-2 sm:flex-row sm:items-center">
         <div className="relative flex-1">
           <Search className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
           <input
@@ -706,6 +1128,18 @@ function WithdrawnTab({ schoolId, courses }: { schoolId: string; courses: Course
             className="w-full rounded-lg border border-border bg-background py-2 pl-9 pr-4 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
           />
         </div>
+        <select
+          value={courseFilter}
+          onChange={(e) => setCourseFilter(e.target.value)}
+          className="rounded-lg border border-border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30 sm:w-44"
+        >
+          <option value="">Todos los cursos</option>
+          {courses.map((c) => (
+            <option key={c.id} value={c.id}>
+              {c.code} — {c.name}
+            </option>
+          ))}
+        </select>
         {q.isFetching && <RefreshCw className="size-4 animate-spin text-muted-foreground" />}
       </div>
       {q.isLoading ? (
@@ -744,12 +1178,24 @@ function WithdrawnTab({ schoolId, courses }: { schoolId: string; courses: Course
                       {s.withdrawnAt ? fmtDate(s.withdrawnAt) : '—'}
                     </td>
                     <td className="px-4 py-2.5 text-right">
-                      <button
-                        onClick={() => setReingresarTarget(s)}
-                        className="rounded-md border border-purple-200 px-2.5 py-1 text-xs font-medium text-purple-600 transition-colors hover:bg-purple-50 dark:border-purple-800 dark:hover:bg-purple-950/40"
-                      >
-                        Reingresar
-                      </button>
+                      <div className="flex justify-end gap-1.5">
+                        {canEdit && (
+                          <button
+                            onClick={() => setEditRetiroTarget(s)}
+                            title="Editar movimiento de retiro"
+                            className="flex items-center gap-1 rounded-md border border-border px-2.5 py-1 text-xs font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                          >
+                            <Pencil className="size-3.5" />
+                            Editar
+                          </button>
+                        )}
+                        <button
+                          onClick={() => setReingresarTarget(s)}
+                          className="rounded-md border border-purple-200 px-2.5 py-1 text-xs font-medium text-purple-600 transition-colors hover:bg-purple-50 dark:border-purple-800 dark:hover:bg-purple-950/40"
+                        >
+                          Reingresar
+                        </button>
+                      </div>
                     </td>
                   </tr>
                 ))}
@@ -769,6 +1215,12 @@ function WithdrawnTab({ schoolId, courses }: { schoolId: string; courses: Course
           courses={courses}
         />
       )}
+      {editRetiroTarget && (
+        <EditarMovimientoDialog
+          student={editRetiroTarget}
+          onClose={() => setEditRetiroTarget(null)}
+        />
+      )}
     </>
   );
 }
@@ -779,21 +1231,34 @@ function HistorialTab({ schoolId }: { schoolId: string }) {
   const now = new Date();
   const [year, setYear] = useState(now.getFullYear());
   const [month, setMonth] = useState(now.getMonth() + 1);
+  const [includeVoided, setIncludeVoided] = useState(false);
+  const [anularTarget, setAnularTarget] = useState<MovementEvent | null>(null);
+  const canEdit = useCanEdit();
 
   const from = `${year}-${String(month).padStart(2, '0')}-01`;
   const lastDay = new Date(year, month, 0).getDate();
   const to = `${year}-${String(month).padStart(2, '0')}-${String(lastDay).padStart(2, '0')}`;
 
   const q = useQuery<MovementEvent[]>({
-    queryKey: ['movements', schoolId, year, month],
+    queryKey: ['movements', schoolId, year, month, includeVoided],
     queryFn: () =>
-      api.get(`/students/movements?schoolId=${encodeURIComponent(schoolId)}&from=${from}&to=${to}`),
+      api.get(
+        `/students/movements?schoolId=${encodeURIComponent(schoolId)}&from=${from}&to=${to}${includeVoided ? '&includeVoided=true' : ''}`,
+      ),
     enabled: !!schoolId,
   });
 
+  // Determinar último evento no anulado por alumno → solo ese se puede anular
+  const lastNonVoidedByStudent = new Map<string, string>();
+  for (const ev of q.data ?? []) {
+    if (ev.voidedAt) continue;
+    if (!lastNonVoidedByStudent.has(ev.student.id))
+      lastNonVoidedByStudent.set(ev.student.id, ev.id);
+  }
+
   return (
     <div className="space-y-4">
-      <div className="flex items-center gap-3">
+      <div className="flex flex-wrap items-center gap-3">
         <select
           value={month}
           onChange={(e) => setMonth(Number(e.target.value))}
@@ -816,6 +1281,15 @@ function HistorialTab({ schoolId }: { schoolId: string }) {
             </option>
           ))}
         </select>
+        <label className="flex cursor-pointer items-center gap-2 text-xs text-muted-foreground">
+          <input
+            type="checkbox"
+            checked={includeVoided}
+            onChange={(e) => setIncludeVoided(e.target.checked)}
+            className="h-4 w-4 rounded border-border accent-primary"
+          />
+          Mostrar anulados
+        </label>
         {q.isFetching && <RefreshCw className="size-4 animate-spin text-muted-foreground" />}
       </div>
       {q.isLoading ? (
@@ -831,10 +1305,19 @@ function HistorialTab({ schoolId }: { schoolId: string }) {
               label: ev.status,
               color: 'text-muted-foreground bg-muted',
             };
+            const isVoided = !!ev.voidedAt;
+            const canAnular =
+              canEdit && !isVoided && lastNonVoidedByStudent.get(ev.student.id) === ev.id;
+            const causalLabel = ev.withdrawalReason
+              ? WITHDRAWAL_REASONS[ev.withdrawalReason]
+              : null;
             return (
               <div
                 key={ev.id}
-                className="flex flex-col gap-1 rounded-lg border border-border bg-background p-4 sm:flex-row sm:items-center sm:justify-between"
+                className={cn(
+                  'flex flex-col gap-1 rounded-lg border border-border bg-background p-4 sm:flex-row sm:items-center sm:justify-between',
+                  isVoided && 'opacity-60',
+                )}
               >
                 <div className="flex flex-col gap-0.5">
                   <div className="flex flex-wrap items-center gap-2">
@@ -843,11 +1326,26 @@ function HistorialTab({ schoolId }: { schoolId: string }) {
                     >
                       {meta.label}
                     </span>
+                    {isVoided && (
+                      <span
+                        title={
+                          ev.voidReason
+                            ? `Anulado: ${ev.voidReason}${ev.voidedBy ? ` · por ${ev.voidedBy.firstName} ${ev.voidedBy.lastName}` : ''}`
+                            : 'Anulado'
+                        }
+                        className="rounded-full bg-slate-200 px-2 py-0.5 text-xs font-medium text-slate-700 line-through decoration-2 dark:bg-slate-700 dark:text-slate-200"
+                      >
+                        ANULADO
+                      </span>
+                    )}
                     <span className="text-sm font-medium">
                       {ev.student.firstName} {ev.student.lastName}
                     </span>
                     <span className="text-xs text-muted-foreground">{ev.student.rut}</span>
                   </div>
+                  {causalLabel && (
+                    <span className="text-xs text-muted-foreground">Causal: {causalLabel}</span>
+                  )}
                   {ev.reason && <span className="text-xs text-muted-foreground">{ev.reason}</span>}
                   {ev.transferredToSchool && (
                     <span className="text-xs text-muted-foreground">
@@ -855,11 +1353,23 @@ function HistorialTab({ schoolId }: { schoolId: string }) {
                     </span>
                   )}
                 </div>
-                <div className="flex shrink-0 flex-col items-start gap-0.5 text-xs text-muted-foreground sm:items-end">
-                  <span>{fmtDate(ev.effectiveDate)}</span>
-                  <span>
-                    por {ev.recordedBy.firstName} {ev.recordedBy.lastName}
-                  </span>
+                <div className="flex shrink-0 flex-col items-start gap-1 sm:items-end">
+                  <div className="flex flex-col items-start gap-0.5 text-xs text-muted-foreground sm:items-end">
+                    <span>{fmtDate(ev.effectiveDate)}</span>
+                    <span>
+                      por {ev.recordedBy.firstName} {ev.recordedBy.lastName}
+                    </span>
+                  </div>
+                  {canAnular && (
+                    <button
+                      onClick={() => setAnularTarget(ev)}
+                      title="Anular movimiento"
+                      className="flex items-center gap-1 rounded-md border border-red-200 px-2 py-0.5 text-xs font-medium text-red-600 transition-colors hover:bg-red-50 dark:border-red-800 dark:hover:bg-red-950/40"
+                    >
+                      <Ban className="size-3" />
+                      Anular
+                    </button>
+                  )}
                 </div>
               </div>
             );
@@ -868,6 +1378,9 @@ function HistorialTab({ schoolId }: { schoolId: string }) {
             {q.data!.length} movimiento{q.data!.length !== 1 ? 's' : ''} en el período
           </div>
         </div>
+      )}
+      {anularTarget && (
+        <AnularMovimientoDialog event={anularTarget} onClose={() => setAnularTarget(null)} />
       )}
     </div>
   );
@@ -936,7 +1449,7 @@ export function MovimientosPage() {
       </div>
 
       {/* Content */}
-      {tab === 'activos' && <ActivesTab schoolId={schoolId} />}
+      {tab === 'activos' && <ActivesTab schoolId={schoolId} courses={courses} />}
       {tab === 'retirados' && <WithdrawnTab schoolId={schoolId} courses={courses} />}
       {tab === 'historial' && <HistorialTab schoolId={schoolId} />}
 

@@ -5,16 +5,20 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { EnrollmentStatus, SystemRole } from '@prisma/client';
+import { AuditAction, EnrollmentStatus, SystemRole, WithdrawalReason } from '@prisma/client';
 
 import { PrismaService } from '../prisma/prisma.service.js';
+import { AuditService } from '../audit/audit.service.js';
 import type { CreateStudentDto } from './dto/create-student.dto.js';
 import type { JwtPayload } from '../common/decorators/current-user.decorator.js';
 import { isValidRut, normalizeRut } from './rut.js';
 
 @Injectable()
 export class StudentsService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly audit: AuditService,
+  ) {}
 
   async findByCourse(courseId: string, date?: string) {
     const attendanceDate = date ? this.parseDateOnly(date) : undefined;
@@ -89,8 +93,8 @@ export class StudentsService {
       ? `Traslado desde: ${dto.transferOriginSchool!.trim()}`
       : 'Matrícula inicial';
 
-    return this.prisma.$transaction(async (tx) => {
-      const student = await tx.student.create({
+    const student = await this.prisma.$transaction(async (tx) => {
+      const created = await tx.student.create({
         data: {
           schoolId: dto.schoolId,
           courseId: dto.courseId,
@@ -105,17 +109,25 @@ export class StudentsService {
       });
       await tx.enrollmentEvent.create({
         data: {
-          studentId: student.id,
-          schoolId: student.schoolId,
-          courseId: student.courseId,
+          studentId: created.id,
+          schoolId: created.schoolId,
+          courseId: created.courseId,
           status: eventStatus,
           effectiveDate,
           reason: eventReason,
           recordedById: actor.sub,
         },
       });
-      return student;
+      return created;
     });
+    await this.audit.log({
+      userId: actor.sub,
+      action: AuditAction.CREATE,
+      entity: 'Student',
+      entityId: student.id,
+      meta: { rut, courseId: dto.courseId, isTransfer, eventStatus },
+    });
+    return student;
   }
 
   async getAllBySchool(schoolId: string, actor: JwtPayload) {
@@ -148,6 +160,7 @@ export class StudentsService {
         lastName: string;
         secondLastName?: string;
         birthDate?: string;
+        enrolledAt?: string;
         enrollmentNumber: number;
       }>;
     },
@@ -180,6 +193,7 @@ export class StudentsService {
         schoolId: string;
         courseId: string;
         parsedBirthDate: Date | null;
+        parsedEnrolledAt: Date;
       }
     > = [];
     const toReactivate: Array<
@@ -187,6 +201,7 @@ export class StudentsService {
         id: string;
         rut: string;
         parsedBirthDate: Date | null;
+        parsedEnrolledAt: Date;
       }
     > = [];
     const seenRuts = new Set<string>();
@@ -238,10 +253,21 @@ export class StudentsService {
         }
         parsedBirthDate = bd;
       }
+      let parsedEnrolledAt: Date;
+      if (row.enrolledAt) {
+        const e = new Date(`${row.enrolledAt}T00:00:00.000Z`);
+        if (isNaN(e.getTime())) {
+          errors.push({ row: i + 1, rut, reason: 'Fecha de ingreso inválida' });
+          return;
+        }
+        parsedEnrolledAt = this.startOfDay(e);
+      } else {
+        parsedEnrolledAt = this.startOfDay(new Date());
+      }
       seenRuts.add(rut);
       seenNums.add(row.enrollmentNumber);
       if (inactive) {
-        toReactivate.push({ ...row, id: inactive.id, rut, parsedBirthDate });
+        toReactivate.push({ ...row, id: inactive.id, rut, parsedBirthDate, parsedEnrolledAt });
         return;
       }
       toCreate.push({
@@ -250,6 +276,7 @@ export class StudentsService {
         schoolId: dto.schoolId,
         courseId: dto.courseId,
         parsedBirthDate,
+        parsedEnrolledAt,
       });
     });
 
@@ -279,7 +306,7 @@ export class StudentsService {
                       secondLastName: r.secondLastName?.trim() ?? null,
                       birthDate: r.parsedBirthDate,
                       enrollmentNumber: r.enrollmentNumber,
-                      enrolledAt: this.startOfDay(new Date()),
+                      enrolledAt: r.parsedEnrolledAt,
                     },
                   }),
                 ),
@@ -297,7 +324,7 @@ export class StudentsService {
                 enrollmentNumber: r.enrollmentNumber,
                 active: true,
                 withdrawnAt: null,
-                enrolledAt: this.startOfDay(new Date()),
+                enrolledAt: r.parsedEnrolledAt,
               },
             }),
           ),
@@ -308,7 +335,7 @@ export class StudentsService {
             schoolId: student.schoolId,
             courseId: student.courseId,
             status: EnrollmentStatus.ACTIVE,
-            effectiveDate: this.startOfDay(new Date()),
+            effectiveDate: student.enrolledAt,
             reason: 'Importación masiva',
             recordedById: actor.sub,
           })),
@@ -317,7 +344,7 @@ export class StudentsService {
             schoolId: student.schoolId,
             courseId: student.courseId,
             status: EnrollmentStatus.RE_ENROLLED,
-            effectiveDate: this.startOfDay(new Date()),
+            effectiveDate: student.enrolledAt,
             reason: 'Reingreso por importación masiva',
             recordedById: actor.sub,
           })),
@@ -340,6 +367,7 @@ export class StudentsService {
       reason?: string;
       transferType?: 'WITHDRAWN' | 'TRANSFERRED_OUT';
       transferredToSchool?: string;
+      withdrawalReason?: WithdrawalReason;
     } = {},
   ) {
     await this.assertCanAccessStudent(id, actor);
@@ -352,15 +380,21 @@ export class StudentsService {
     if (isTransfer && !dto.transferredToSchool?.trim()) {
       throw new BadRequestException('Debe indicar el establecimiento destino para un traslado');
     }
+    if (!dto.withdrawalReason) {
+      throw new BadRequestException('Debe indicar la causal de retiro (normativa SIGE)');
+    }
+    if (dto.withdrawalReason === WithdrawalReason.OTRO && !dto.reason?.trim()) {
+      throw new BadRequestException('Si la causal es "Otro", debe describir el motivo');
+    }
 
     const eventStatus = isTransfer ? EnrollmentStatus.TRANSFERRED_OUT : EnrollmentStatus.WITHDRAWN;
 
-    return this.prisma.$transaction(async (tx) => {
+    const result = await this.prisma.$transaction(async (tx) => {
       const updated = await tx.student.update({
         where: { id },
         data: { active: false, withdrawnAt: effectiveDate },
       });
-      await tx.enrollmentEvent.create({
+      const event = await tx.enrollmentEvent.create({
         data: {
           studentId: id,
           schoolId: student.schoolId,
@@ -368,12 +402,350 @@ export class StudentsService {
           status: eventStatus,
           effectiveDate,
           reason: dto.reason?.trim() || null,
+          withdrawalReason: dto.withdrawalReason!,
           transferredToSchool: isTransfer ? dto.transferredToSchool!.trim() : null,
           recordedById: actor.sub,
         },
       });
-      return updated;
+      return { updated, eventId: event.id };
     });
+    await this.audit.log({
+      userId: actor.sub,
+      action: AuditAction.UPDATE,
+      entity: 'Student',
+      entityId: id,
+      meta: {
+        op: 'withdraw',
+        before: { active: true, withdrawnAt: student.withdrawnAt },
+        after: { active: false, withdrawnAt: effectiveDate },
+        eventId: result.eventId,
+        eventStatus,
+        withdrawalReason: dto.withdrawalReason,
+        transferredToSchool: dto.transferredToSchool ?? null,
+      },
+    });
+    return result.updated;
+  }
+
+  // ── Edit / Void: corrige fecha de movimientos ya registrados (normativa SIGE) ──
+
+  private static ENTRY_STATUSES: EnrollmentStatus[] = [
+    EnrollmentStatus.ACTIVE,
+    EnrollmentStatus.TRANSFERRED_IN,
+    EnrollmentStatus.RE_ENROLLED,
+  ];
+
+  private static EXIT_STATUSES: EnrollmentStatus[] = [
+    EnrollmentStatus.WITHDRAWN,
+    EnrollmentStatus.TRANSFERRED_OUT,
+    EnrollmentStatus.GRADUATED,
+  ];
+
+  private assertCurrentSchoolYear(date: Date): void {
+    if (date.getUTCFullYear() !== new Date().getUTCFullYear()) {
+      throw new BadRequestException(
+        'Solo se pueden editar movimientos del año lectivo en curso (rectificación de años cerrados vía DEPROV)',
+      );
+    }
+  }
+
+  private async assertAttendanceFits(
+    studentId: string,
+    enrolledAt: Date,
+    withdrawnAt: Date | null,
+  ): Promise<void> {
+    const out = await this.prisma.attendanceRecord.findFirst({
+      where: {
+        studentId,
+        OR: [{ date: { lt: enrolledAt } }, ...(withdrawnAt ? [{ date: { gt: withdrawnAt } }] : [])],
+      },
+      select: { date: true },
+      orderBy: { date: 'asc' },
+    });
+    if (out) {
+      const iso = out.date.toISOString().slice(0, 10);
+      throw new BadRequestException(
+        `Existe asistencia registrada el ${iso} fuera del nuevo rango de matrícula. Elimina o ajusta esos registros primero.`,
+      );
+    }
+  }
+
+  async editEnrolledAt(id: string, enrolledAt: string, actor: JwtPayload) {
+    await this.assertCanAccessStudent(id, actor);
+    if (
+      !actor.roles.includes(SystemRole.SUPER_ADMIN) &&
+      !actor.roles.includes(SystemRole.DIRECTOR) &&
+      !actor.roles.includes(SystemRole.INSPECTORIA)
+    ) {
+      throw new ForbiddenException('Solo DIRECTOR o INSPECTORIA pueden editar fecha de ingreso');
+    }
+    const newDate = this.parseDateOnly(enrolledAt);
+    this.assertCurrentSchoolYear(newDate);
+
+    const student = await this.prisma.student.findUnique({ where: { id } });
+    if (!student) throw new NotFoundException('Alumno no encontrado');
+    if (!student.active) {
+      throw new BadRequestException('Solo se puede editar la fecha de ingreso de alumnos activos');
+    }
+    if (student.withdrawnAt && newDate > student.withdrawnAt) {
+      throw new BadRequestException('La fecha de ingreso no puede ser posterior al retiro');
+    }
+
+    await this.assertAttendanceFits(id, newDate, student.withdrawnAt);
+
+    // Sync con el último evento de entrada no anulado
+    const latestEntry = await this.prisma.enrollmentEvent.findFirst({
+      where: {
+        studentId: id,
+        voidedAt: null,
+        status: { in: StudentsService.ENTRY_STATUSES },
+      },
+      orderBy: [{ effectiveDate: 'desc' }, { createdAt: 'desc' }],
+    });
+
+    const prevEnrolledAt = student.enrolledAt;
+    const updated = await this.prisma.$transaction(async (tx) => {
+      const u = await tx.student.update({
+        where: { id },
+        data: { enrolledAt: newDate },
+      });
+      if (latestEntry) {
+        await tx.enrollmentEvent.update({
+          where: { id: latestEntry.id },
+          data: { effectiveDate: newDate },
+        });
+      }
+      return u;
+    });
+    await this.audit.log({
+      userId: actor.sub,
+      action: AuditAction.UPDATE,
+      entity: 'Student',
+      entityId: id,
+      meta: {
+        op: 'edit-enrolled-at',
+        before: { enrolledAt: prevEnrolledAt },
+        after: { enrolledAt: newDate },
+        syncedEventId: latestEntry?.id ?? null,
+      },
+    });
+    return updated;
+  }
+
+  async editMovement(
+    eventId: string,
+    dto: {
+      effectiveDate?: string;
+      reason?: string;
+      withdrawalReason?: WithdrawalReason;
+      transferredToSchool?: string;
+    },
+    actor: JwtPayload,
+  ) {
+    if (
+      !actor.roles.includes(SystemRole.SUPER_ADMIN) &&
+      !actor.roles.includes(SystemRole.DIRECTOR) &&
+      !actor.roles.includes(SystemRole.INSPECTORIA)
+    ) {
+      throw new ForbiddenException('Solo DIRECTOR o INSPECTORIA pueden editar movimientos');
+    }
+
+    const event = await this.prisma.enrollmentEvent.findUnique({ where: { id: eventId } });
+    if (!event) throw new NotFoundException('Movimiento no encontrado');
+    if (event.voidedAt) throw new BadRequestException('El movimiento está anulado');
+    await this.assertCanAccessStudent(event.studentId, actor);
+
+    this.assertCurrentSchoolYear(event.effectiveDate);
+
+    const newDate = dto.effectiveDate ? this.parseDateOnly(dto.effectiveDate) : event.effectiveDate;
+    if (dto.effectiveDate) this.assertCurrentSchoolYear(newDate);
+
+    const isExit = StudentsService.EXIT_STATUSES.includes(event.status);
+    const isEntry = StudentsService.ENTRY_STATUSES.includes(event.status);
+
+    if (isExit && dto.withdrawalReason === WithdrawalReason.OTRO && !dto.reason?.trim()) {
+      throw new BadRequestException('Si la causal es "Otro", debe describir el motivo');
+    }
+
+    const student = await this.prisma.student.findUnique({ where: { id: event.studentId } });
+    if (!student) throw new NotFoundException('Alumno no encontrado');
+
+    // Determinar si este es el último evento del alumno → si lo es, sincroniza Student
+    const latestEvent = await this.prisma.enrollmentEvent.findFirst({
+      where: { studentId: event.studentId, voidedAt: null },
+      orderBy: [{ effectiveDate: 'desc' }, { createdAt: 'desc' }],
+    });
+    const isLatest = latestEvent?.id === event.id;
+
+    if (isLatest && dto.effectiveDate) {
+      const newEnrolledAt = isEntry ? newDate : student.enrolledAt;
+      const newWithdrawnAt = isExit ? newDate : student.withdrawnAt;
+      if (newEnrolledAt && newWithdrawnAt && newEnrolledAt > newWithdrawnAt) {
+        throw new BadRequestException('La fecha de ingreso no puede ser posterior al retiro');
+      }
+      await this.assertAttendanceFits(event.studentId, newEnrolledAt, newWithdrawnAt);
+    }
+
+    const before = {
+      effectiveDate: event.effectiveDate,
+      reason: event.reason,
+      withdrawalReason: event.withdrawalReason,
+      transferredToSchool: event.transferredToSchool,
+    };
+    const updated = await this.prisma.$transaction(async (tx) => {
+      const u = await tx.enrollmentEvent.update({
+        where: { id: eventId },
+        data: {
+          effectiveDate: newDate,
+          reason: dto.reason !== undefined ? dto.reason.trim() || null : event.reason,
+          withdrawalReason: isExit
+            ? (dto.withdrawalReason ?? event.withdrawalReason)
+            : event.withdrawalReason,
+          transferredToSchool:
+            event.status === EnrollmentStatus.TRANSFERRED_OUT &&
+            dto.transferredToSchool !== undefined
+              ? dto.transferredToSchool.trim() || null
+              : event.transferredToSchool,
+        },
+      });
+
+      if (isLatest && dto.effectiveDate) {
+        if (isEntry) {
+          await tx.student.update({
+            where: { id: event.studentId },
+            data: { enrolledAt: newDate },
+          });
+        } else if (isExit) {
+          await tx.student.update({
+            where: { id: event.studentId },
+            data: { withdrawnAt: newDate },
+          });
+        }
+      }
+      return u;
+    });
+    await this.audit.log({
+      userId: actor.sub,
+      action: AuditAction.UPDATE,
+      entity: 'EnrollmentEvent',
+      entityId: eventId,
+      meta: {
+        op: 'edit-movement',
+        studentId: event.studentId,
+        before,
+        after: {
+          effectiveDate: updated.effectiveDate,
+          reason: updated.reason,
+          withdrawalReason: updated.withdrawalReason,
+          transferredToSchool: updated.transferredToSchool,
+        },
+        syncedStudentState:
+          isLatest && dto.effectiveDate ? (isEntry ? 'enrolledAt' : 'withdrawnAt') : null,
+      },
+    });
+    return updated;
+  }
+
+  async voidMovement(eventId: string, dto: { voidReason: string }, actor: JwtPayload) {
+    if (
+      !actor.roles.includes(SystemRole.SUPER_ADMIN) &&
+      !actor.roles.includes(SystemRole.DIRECTOR) &&
+      !actor.roles.includes(SystemRole.INSPECTORIA)
+    ) {
+      throw new ForbiddenException('Solo DIRECTOR o INSPECTORIA pueden anular movimientos');
+    }
+
+    const event = await this.prisma.enrollmentEvent.findUnique({ where: { id: eventId } });
+    if (!event) throw new NotFoundException('Movimiento no encontrado');
+    if (event.voidedAt) throw new BadRequestException('El movimiento ya está anulado');
+    await this.assertCanAccessStudent(event.studentId, actor);
+
+    this.assertCurrentSchoolYear(event.effectiveDate);
+
+    const laterEvent = await this.prisma.enrollmentEvent.findFirst({
+      where: {
+        studentId: event.studentId,
+        voidedAt: null,
+        id: { not: eventId },
+        OR: [
+          { effectiveDate: { gt: event.effectiveDate } },
+          { effectiveDate: event.effectiveDate, createdAt: { gt: event.createdAt } },
+        ],
+      },
+      select: { id: true },
+    });
+    if (laterEvent) {
+      throw new BadRequestException('Anula primero los movimientos posteriores de este alumno');
+    }
+
+    // Evento previo (que pasará a ser el "último" tras la anulación)
+    const previousEvent = await this.prisma.enrollmentEvent.findFirst({
+      where: { studentId: event.studentId, voidedAt: null, id: { not: eventId } },
+      orderBy: [{ effectiveDate: 'desc' }, { createdAt: 'desc' }],
+    });
+
+    let newState: { active: boolean; enrolledAt: Date; withdrawnAt: Date | null };
+    if (!previousEvent) {
+      // Anular el único evento del alumno = anular su matrícula entera. Bloqueado.
+      throw new BadRequestException(
+        'No se puede anular el único movimiento del alumno (deja al alumno sin matrícula). Usa la papelera si corresponde.',
+      );
+    } else if (StudentsService.ENTRY_STATUSES.includes(previousEvent.status)) {
+      newState = { active: true, enrolledAt: previousEvent.effectiveDate, withdrawnAt: null };
+    } else {
+      // EXIT: alumno queda retirado a fecha del exit previo
+      const lastEntry = await this.prisma.enrollmentEvent.findFirst({
+        where: {
+          studentId: event.studentId,
+          voidedAt: null,
+          id: { not: eventId },
+          status: { in: StudentsService.ENTRY_STATUSES },
+        },
+        orderBy: [{ effectiveDate: 'desc' }, { createdAt: 'desc' }],
+      });
+      newState = {
+        active: false,
+        enrolledAt: lastEntry?.effectiveDate ?? event.effectiveDate,
+        withdrawnAt: previousEvent.effectiveDate,
+      };
+    }
+
+    // Validar que la asistencia existente cabe en el nuevo rango
+    await this.assertAttendanceFits(event.studentId, newState.enrolledAt, newState.withdrawnAt);
+
+    await this.prisma.$transaction(async (tx) => {
+      await tx.enrollmentEvent.update({
+        where: { id: eventId },
+        data: {
+          voidedAt: new Date(),
+          voidedById: actor.sub,
+          voidReason: dto.voidReason.trim(),
+        },
+      });
+      await tx.student.update({
+        where: { id: event.studentId },
+        data: {
+          active: newState.active,
+          enrolledAt: newState.enrolledAt,
+          withdrawnAt: newState.withdrawnAt,
+        },
+      });
+    });
+    await this.audit.log({
+      userId: actor.sub,
+      action: AuditAction.DELETE,
+      entity: 'EnrollmentEvent',
+      entityId: eventId,
+      meta: {
+        op: 'void-movement',
+        studentId: event.studentId,
+        eventStatus: event.status,
+        eventEffectiveDate: event.effectiveDate,
+        voidReason: dto.voidReason.trim(),
+        restoredStudentState: newState,
+      },
+    });
+    return { ok: true };
   }
 
   async reEnroll(
@@ -412,7 +784,7 @@ export class StudentsService {
       throw new ConflictException(`N° lista ${enrollmentNumber} ocupado`);
     }
 
-    return this.prisma.$transaction(async (tx) => {
+    const result = await this.prisma.$transaction(async (tx) => {
       const updated = await tx.student.update({
         where: { id },
         data: {
@@ -425,7 +797,7 @@ export class StudentsService {
           enrolledAt: effectiveDate,
         },
       });
-      await tx.enrollmentEvent.create({
+      const event = await tx.enrollmentEvent.create({
         data: {
           studentId: id,
           schoolId: student.schoolId,
@@ -436,8 +808,25 @@ export class StudentsService {
           recordedById: actor.sub,
         },
       });
-      return updated;
+      return { updated, eventId: event.id };
     });
+    await this.audit.log({
+      userId: actor.sub,
+      action: AuditAction.UPDATE,
+      entity: 'Student',
+      entityId: id,
+      meta: {
+        op: 're-enroll',
+        before: {
+          active: false,
+          courseId: student.courseId,
+          enrollmentNumber: student.enrollmentNumber,
+        },
+        after: { active: true, courseId, enrollmentNumber, enrolledAt: effectiveDate },
+        eventId: result.eventId,
+      },
+    });
+    return result.updated;
   }
 
   async enrollmentEvents(id: string, actor: JwtPayload) {
@@ -550,7 +939,13 @@ export class StudentsService {
     });
   }
 
-  async getMovements(schoolId: string, from: Date, to: Date, actor: JwtPayload) {
+  async getMovements(
+    schoolId: string,
+    from: Date,
+    to: Date,
+    actor: JwtPayload,
+    includeVoided = false,
+  ) {
     if (!actor.roles.includes(SystemRole.SUPER_ADMIN) && !this.isSchoolAdmin(actor, schoolId)) {
       throw new ForbiddenException('Sin acceso');
     }
@@ -558,12 +953,16 @@ export class StudentsService {
       where: {
         schoolId,
         effectiveDate: { gte: from, lte: to },
+        ...(includeVoided ? {} : { voidedAt: null }),
       },
       include: {
         student: {
           select: { id: true, firstName: true, lastName: true, rut: true },
         },
         recordedBy: {
+          select: { id: true, firstName: true, lastName: true },
+        },
+        voidedBy: {
           select: { id: true, firstName: true, lastName: true },
         },
       },

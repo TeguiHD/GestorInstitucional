@@ -41,6 +41,13 @@ export class ImportStudentRow {
   @IsDateString()
   birthDate?: string;
 
+  @ApiPropertyOptional({
+    description: 'Fecha real de ingreso al curso (YYYY-MM-DD). Si se omite usa hoy.',
+  })
+  @IsOptional()
+  @IsDateString()
+  enrolledAt?: string;
+
   @ApiProperty({ minimum: 1 })
   @IsInt()
   @Min(1)

@@ -5,6 +5,7 @@ import {
   Delete,
   Get,
   Param,
+  Patch,
   Post,
   Query,
   UseGuards,
@@ -14,14 +15,16 @@ import { Type } from 'class-transformer';
 import {
   IsBoolean,
   IsDateString,
+  IsEnum,
   IsInt,
   IsOptional,
   IsString,
   MaxLength,
   Min,
+  MinLength,
 } from 'class-validator';
 import { ApiProperty } from '@nestjs/swagger';
-import { SystemRole } from '@prisma/client';
+import { SystemRole, WithdrawalReason } from '@prisma/client';
 
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard.js';
 import { RolesGuard } from '../common/guards/roles.guard.js';
@@ -75,6 +78,49 @@ class EnrollmentMovementDto {
   @IsString()
   @MaxLength(200)
   transferredToSchool?: string;
+
+  @ApiProperty({ required: false, enum: WithdrawalReason })
+  @IsOptional()
+  @IsEnum(WithdrawalReason)
+  withdrawalReason?: WithdrawalReason;
+}
+
+class EditEnrolledAtDto {
+  @ApiProperty({ description: 'Nueva fecha de ingreso YYYY-MM-DD' })
+  @IsDateString()
+  enrolledAt!: string;
+}
+
+class EditMovementDto {
+  @ApiProperty({ required: false, description: 'Fecha efectiva YYYY-MM-DD' })
+  @IsOptional()
+  @IsDateString()
+  effectiveDate?: string;
+
+  @ApiProperty({ required: false })
+  @IsOptional()
+  @IsString()
+  @MaxLength(200)
+  reason?: string;
+
+  @ApiProperty({ required: false, enum: WithdrawalReason })
+  @IsOptional()
+  @IsEnum(WithdrawalReason)
+  withdrawalReason?: WithdrawalReason;
+
+  @ApiProperty({ required: false })
+  @IsOptional()
+  @IsString()
+  @MaxLength(200)
+  transferredToSchool?: string;
+}
+
+class VoidMovementDto {
+  @ApiProperty({ description: 'Motivo de anulación (obligatorio)' })
+  @IsString()
+  @MinLength(3)
+  @MaxLength(300)
+  voidReason!: string;
 }
 
 class ReEnrollStudentDto extends EnrollmentMovementDto {
@@ -141,13 +187,36 @@ export class StudentsController {
     @Query('from') from: string,
     @Query('to') to: string,
     @CurrentUser() actor: JwtPayload,
+    @Query('includeVoided') includeVoided?: string,
   ) {
     const fromDate = new Date(`${from}T00:00:00.000Z`);
     const toDate = new Date(`${to}T23:59:59.999Z`);
     if (Number.isNaN(fromDate.getTime()) || Number.isNaN(toDate.getTime())) {
       throw new BadRequestException('Fechas inválidas');
     }
-    return this.students.getMovements(schoolId, fromDate, toDate, actor);
+    return this.students.getMovements(schoolId, fromDate, toDate, actor, includeVoided === 'true');
+  }
+
+  @Patch('movements/:eventId')
+  @Roles(SystemRole.SUPER_ADMIN, SystemRole.DIRECTOR, SystemRole.INSPECTORIA)
+  @ApiOperation({ summary: 'Editar movimiento de matrícula ya registrado' })
+  editMovement(
+    @Param('eventId') eventId: string,
+    @Body() dto: EditMovementDto,
+    @CurrentUser() actor: JwtPayload,
+  ) {
+    return this.students.editMovement(eventId, dto, actor);
+  }
+
+  @Delete('movements/:eventId')
+  @Roles(SystemRole.SUPER_ADMIN, SystemRole.DIRECTOR, SystemRole.INSPECTORIA)
+  @ApiOperation({ summary: 'Anular (soft delete) movimiento de matrícula' })
+  voidMovement(
+    @Param('eventId') eventId: string,
+    @Body() dto: VoidMovementDto,
+    @CurrentUser() actor: JwtPayload,
+  ) {
+    return this.students.voidMovement(eventId, dto, actor);
   }
 
   @Get(':id')
@@ -256,6 +325,17 @@ export class StudentsController {
     @Body() dto: EnrollmentMovementDto,
   ) {
     return this.students.withdraw(id, user, dto);
+  }
+
+  @Patch(':id/enrolled-at')
+  @Roles(SystemRole.SUPER_ADMIN, SystemRole.DIRECTOR, SystemRole.INSPECTORIA)
+  @ApiOperation({ summary: 'Editar fecha de ingreso del alumno activo' })
+  editEnrolledAt(
+    @Param('id') id: string,
+    @Body() dto: EditEnrolledAtDto,
+    @CurrentUser() actor: JwtPayload,
+  ) {
+    return this.students.editEnrolledAt(id, dto.enrolledAt, actor);
   }
 
   @Post(':id/re-enroll')

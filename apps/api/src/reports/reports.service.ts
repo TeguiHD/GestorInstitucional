@@ -5,8 +5,23 @@ import ExcelJS from 'exceljs';
 import PDFDocument from 'pdfkit';
 import { Injectable } from '@nestjs/common';
 
+import { WITHDRAWAL_REASONS, type WithdrawalReason } from '@asistencia/shared';
+
 import { PrismaService } from '../prisma/prisma.service.js';
 import { AuditService } from '../audit/audit.service.js';
+
+function formatWithdrawalReason(
+  withdrawalReason: WithdrawalReason | string | null | undefined,
+  reason: string | null | undefined,
+): string {
+  if (withdrawalReason) {
+    const label = WITHDRAWAL_REASONS[withdrawalReason as WithdrawalReason];
+    if (label) {
+      return withdrawalReason === 'OTRO' && reason?.trim() ? `${label}: ${reason.trim()}` : label;
+    }
+  }
+  return reason?.trim() || '—';
+}
 
 const MONTH_NAMES_ES = [
   'Enero',
@@ -63,6 +78,7 @@ export class ReportsService {
         courseId,
         effectiveDate: { gte: from, lte: to },
         status: { in: ['ACTIVE', 'WITHDRAWN', 'RE_ENROLLED', 'TRANSFERRED_IN', 'TRANSFERRED_OUT'] },
+        voidedAt: null,
       },
       include: {
         student: { select: { firstName: true, lastName: true, rut: true, enrollmentNumber: true } },
@@ -797,6 +813,7 @@ export class ReportsService {
         courseId,
         effectiveDate: { gte: semFrom, lte: semTo },
         status: { in: ['ACTIVE', 'WITHDRAWN', 'RE_ENROLLED', 'TRANSFERRED_IN', 'TRANSFERRED_OUT'] },
+        voidedAt: null,
       },
       include: {
         student: { select: { firstName: true, lastName: true, rut: true, enrollmentNumber: true } },
@@ -1804,6 +1821,7 @@ export class ReportsService {
         status: string;
         effectiveDate: Date;
         reason: string | null;
+        withdrawalReason?: WithdrawalReason | string | null;
         student: { firstName: string; lastName: string; rut: string; enrollmentNumber: number };
       }>;
     },
@@ -1941,7 +1959,7 @@ export class ReportsService {
         ws.getCell(r, 2).value = `${e.student.lastName}, ${e.student.firstName}`;
         ws.getCell(r, 3).value = e.student.rut;
         ws.getCell(r, 4).value = e.effectiveDate.toLocaleDateString('es-CL');
-        ws.getCell(r, 5).value = e.reason ?? '—';
+        ws.getCell(r, 5).value = formatWithdrawalReason(e.withdrawalReason, e.reason);
         for (let c = 1; c <= 5; c++) {
           ws.getCell(r, c).border = borderAll;
           ws.getCell(r, c).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: RED } };

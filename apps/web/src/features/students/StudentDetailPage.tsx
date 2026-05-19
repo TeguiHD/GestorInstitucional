@@ -7,6 +7,7 @@ import { toast } from 'sonner';
 
 import { api } from '@/lib/api';
 import { cn } from '@/lib/cn';
+import { parseDayLocal } from '@/lib/date';
 import { useUser } from '@/stores/auth.store';
 import { useEffectiveSchoolId } from '@/stores/school.store';
 import { ATTENDANCE_THRESHOLDS } from '@asistencia/shared';
@@ -220,10 +221,11 @@ export function StudentDetailPage() {
     acc[key] ??= {
       present: 0,
       absent: 0,
-      month: new Date(r.date + 'T12:00').toLocaleString('es-CL', {
-        month: 'short',
-        year: '2-digit',
-      }),
+      month:
+        parseDayLocal(r.date)?.toLocaleString('es-CL', {
+          month: 'short',
+          year: '2-digit',
+        }) ?? '—',
     };
     if (r.status === 'PRESENT' || r.status === 'LATE') acc[key]!.present++;
     else if (r.status === 'ABSENT') acc[key]!.absent++;
@@ -237,7 +239,7 @@ export function StudentDetailPage() {
         .map((dow) => ({
           name: DAY_NAMES[dow]!,
           count: records.filter(
-            (r) => new Date(r.date + 'T12:00').getDay() === dow && r.status === 'ABSENT',
+            (r) => parseDayLocal(r.date)?.getDay() === dow && r.status === 'ABSENT',
           ).length,
         }))
         .filter((d) => d.count >= 3)
@@ -529,13 +531,15 @@ export function StudentDetailPage() {
             </thead>
             <tbody>
               {records?.map((r) => {
-                const d = new Date(r.date + 'T12:00');
+                const d = parseDayLocal(r.date);
                 const cfg = STATUS_LABELS[r.status];
                 return (
                   <tr key={r.id} className="border-t border-border hover:bg-muted/20 transition">
-                    <td className="px-5 py-2.5 tabular-nums">{r.date}</td>
+                    <td className="px-5 py-2.5 tabular-nums">
+                      {d ? d.toLocaleDateString('es-CL') : r.date}
+                    </td>
                     <td className="px-5 py-2.5 text-muted-foreground capitalize">
-                      {d.toLocaleDateString('es-CL', { weekday: 'long' })}
+                      {d ? d.toLocaleDateString('es-CL', { weekday: 'long' }) : '—'}
                     </td>
                     <td className="px-5 py-2.5">
                       <span

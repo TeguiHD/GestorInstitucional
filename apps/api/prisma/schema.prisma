@@ -116,6 +116,18 @@ enum EnrollmentStatus {
   GRADUATED
 }
 
+enum WithdrawalReason {
+  CAMBIO_ESTABLECIMIENTO
+  CAMBIO_DOMICILIO
+  MIGRACION_INTERNACIONAL
+  PROBLEMAS_ECONOMICOS
+  PROBLEMAS_SALUD
+  RETIRO_VOLUNTARIO
+  FALLECIMIENTO
+  EXPULSION
+  OTRO
+}
+
 // =============================================================================
 // SCHOOL (multi-tenant root)
 // =============================================================================
@@ -183,6 +195,7 @@ model User {
   subjectsTeaching       Subject[]                 @relation("SubjectTeacher")
   scheduleSlots          ScheduleSlot[]            @relation("SlotTeacher")
   enrollmentEvents       EnrollmentEvent[]         @relation("EnrollmentRecordedBy")
+  enrollmentEventsVoided EnrollmentEvent[]         @relation("EnrollmentEventVoidedBy")
 
   @@index([email])
   @@index([deletedAt])
@@ -661,26 +674,33 @@ model ScheduleSlot {
 // =============================================================================
 
 model EnrollmentEvent {
-  id                    String           @id @default(uuid()) @db.Char(36)
-  studentId             String           @db.Char(36)
-  courseId              String           @db.Char(36)
-  schoolId              String           @db.Char(36)
+  id                    String            @id @default(uuid()) @db.Char(36)
+  studentId             String            @db.Char(36)
+  courseId              String            @db.Char(36)
+  schoolId              String            @db.Char(36)
   status                EnrollmentStatus
-  effectiveDate         DateTime         @db.Date
-  reason                String?          @db.VarChar(200)
-  transferredToCourseId String?          @db.Char(36)
-  transferredToSchool   String?          @db.VarChar(200)
+  effectiveDate         DateTime          @db.Date
+  reason                String?           @db.VarChar(200)
+  withdrawalReason      WithdrawalReason?
+  transferredToCourseId String?           @db.Char(36)
+  transferredToSchool   String?           @db.VarChar(200)
   externalGrades        Json?
-  recordedById          String           @db.Char(36)
-  createdAt             DateTime         @default(now())
+  recordedById          String            @db.Char(36)
+  voidedAt              DateTime?
+  voidedById            String?           @db.Char(36)
+  voidReason            String?           @db.VarChar(300)
+  createdAt             DateTime          @default(now())
+  updatedAt             DateTime          @updatedAt
 
   student    Student @relation(fields: [studentId], references: [id], onDelete: Cascade)
   recordedBy User    @relation("EnrollmentRecordedBy", fields: [recordedById], references: [id])
+  voidedBy   User?   @relation("EnrollmentEventVoidedBy", fields: [voidedById], references: [id])
 
   @@index([studentId])
   @@index([courseId])
   @@index([schoolId])
   @@index([effectiveDate])
+  @@index([voidedAt])
   @@map("enrollment_events")
 }
 

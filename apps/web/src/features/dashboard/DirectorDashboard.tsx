@@ -17,6 +17,7 @@ import {
 } from 'recharts';
 
 import { api } from '@/lib/api';
+import { parseDayLocal } from '@/lib/date';
 import { useEffectiveSchoolId } from '@/stores/school.store';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { ATTENDANCE_THRESHOLDS } from '@asistencia/shared';
@@ -170,10 +171,10 @@ function CourseDrillDown({
               dataKey="date"
               tick={{ fontSize: 10 }}
               tickFormatter={(d: string) =>
-                new Date(d + 'T12:00').toLocaleDateString('es-CL', {
+                parseDayLocal(d)?.toLocaleDateString('es-CL', {
                   day: '2-digit',
                   month: 'short',
-                })
+                }) ?? d
               }
               interval="preserveStartEnd"
             />

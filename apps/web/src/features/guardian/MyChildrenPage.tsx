@@ -4,6 +4,7 @@ import { useRef, useState } from 'react';
 import { toast } from 'sonner';
 
 import { api, uploadFormData } from '@/lib/api';
+import { parseDayLocal } from '@/lib/date';
 
 type Child = {
   id: string;
@@ -176,11 +177,11 @@ function ChildDetail({ child }: { child: Child }) {
                 return (
                   <tr key={r.id} className="border-t border-border">
                     <td className="px-5 py-2.5 tabular-nums">
-                      {new Date(r.date + 'T12:00').toLocaleDateString('es-CL', {
+                      {parseDayLocal(r.date)?.toLocaleDateString('es-CL', {
                         weekday: 'short',
                         day: '2-digit',
                         month: 'short',
-                      })}
+                      }) ?? r.date}
                     </td>
                     <td className="px-5 py-2.5">
                       <span

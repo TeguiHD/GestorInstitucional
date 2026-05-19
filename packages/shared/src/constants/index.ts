@@ -28,3 +28,18 @@ export const ATTENDANCE_THRESHOLDS = {
 } as const;
 
 export const API_PREFIX = '/api/v1';
+
+/** Causales de retiro alineadas con dropdown SIGE (Manual MINEDUC). */
+export const WITHDRAWAL_REASONS = {
+  CAMBIO_ESTABLECIMIENTO: 'Cambio de establecimiento',
+  CAMBIO_DOMICILIO: 'Cambio de domicilio',
+  MIGRACION_INTERNACIONAL: 'Cambio de país',
+  PROBLEMAS_ECONOMICOS: 'Problemas económicos',
+  PROBLEMAS_SALUD: 'Problemas de salud',
+  RETIRO_VOLUNTARIO: 'Retiro voluntario',
+  FALLECIMIENTO: 'Fallecimiento',
+  EXPULSION: 'Cancelación de matrícula (reglamento interno)',
+  OTRO: 'Otro motivo',
+} as const;
+
+export type WithdrawalReason = keyof typeof WITHDRAWAL_REASONS;

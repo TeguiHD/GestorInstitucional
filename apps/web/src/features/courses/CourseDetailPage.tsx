@@ -102,6 +102,7 @@ type ImportRow = {
   lastName: string;
   secondLastName?: string | undefined;
   birthDate?: string | undefined;
+  enrolledAt?: string | undefined;
   enrollmentNumber: number;
 };
 
@@ -246,6 +247,13 @@ export function CourseDetailPage() {
       const lastNameIdx = indexOf('lastname', 'last_name', 'apellido paterno', 'apellido');
       const secondLastNameIdx = indexOf('secondlastname', 'second_last_name', 'apellido materno');
       const birthDateIdx = indexOf('birthdate', 'fecha de nacimiento', 'fecha nacimiento');
+      const enrolledAtIdx = indexOf(
+        'enrolledat',
+        'fecha de ingreso',
+        'fecha ingreso',
+        'f. ingreso',
+        'f ingreso',
+      );
       const enrollmentIdx = indexOf('enrollmentnumber', 'n°', 'nº', 'numero', 'n lista');
 
       if (rutIdx === -1 || firstNameIdx === -1 || lastNameIdx === -1) {
@@ -267,6 +275,8 @@ export function CourseDetailPage() {
             secondLastName:
               secondLastNameIdx >= 0 ? (r[secondLastNameIdx] ?? '').trim() || undefined : undefined,
             birthDate: birthDateIdx >= 0 ? (r[birthDateIdx] ?? '').trim() || undefined : undefined,
+            enrolledAt:
+              enrolledAtIdx >= 0 ? (r[enrolledAtIdx] ?? '').trim() || undefined : undefined,
             enrollmentNumber,
           };
         })
@@ -545,6 +555,7 @@ export function CourseDetailPage() {
                         <th className="text-left px-2 py-1.5">N°</th>
                         <th className="text-left px-2 py-1.5">RUT</th>
                         <th className="text-left px-2 py-1.5">Alumno</th>
+                        <th className="text-left px-2 py-1.5">F. Ingreso</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -554,6 +565,9 @@ export function CourseDetailPage() {
                           <td className="px-2 py-1 font-mono">{r.rut}</td>
                           <td className="px-2 py-1">
                             {r.lastName} {r.secondLastName ?? ''}, {r.firstName}
+                          </td>
+                          <td className="px-2 py-1 text-muted-foreground">
+                            {r.enrolledAt ?? 'Hoy'}
                           </td>
                         </tr>
                       ))}
