@@ -1,6 +1,13 @@
 import { useQuery } from '@tanstack/react-query';
 import { Link } from '@tanstack/react-router';
-import { AlertTriangle, BookOpen, CheckCircle2, ClipboardList, Users } from 'lucide-react';
+import {
+  AlertTriangle,
+  BookOpen,
+  CheckCircle2,
+  ClipboardList,
+  Users,
+  CalendarX,
+} from 'lucide-react';
 
 import { api } from '@/lib/api';
 import { useUser } from '@/stores/auth.store';
@@ -29,6 +36,13 @@ type AtRiskStudent = {
   rut: string;
   attendanceRate: number;
   course: { id: string; name: string; code: string };
+};
+
+type MissingAttendance = {
+  courseId: string;
+  courseCode: string;
+  courseName: string;
+  missingDates: string[];
 };
 
 function rateColor(rate: number): string {
@@ -61,8 +75,25 @@ export function ProfesorDashboard() {
     enabled: !!schoolId,
   });
 
+  const { data: allMissingAttendance } = useQuery<MissingAttendance[]>({
+    queryKey: ['missing-attendance-prof', schoolId],
+    queryFn: () => {
+      const today = new Date();
+      const from = new Date(today);
+      from.setDate(from.getDate() - 30);
+      return api.get(
+        `/attendance/school/${schoolId}/missing?from=${from.toISOString().split('T')[0]}&to=${today.toISOString().split('T')[0]}`,
+      );
+    },
+    enabled: !!schoolId,
+  });
+
   const myAtRisk =
     atRisk?.students.filter((s) => myCourses.some((c) => c.id === s.course.id)) ?? [];
+
+  const myMissingAttendance =
+    allMissingAttendance?.filter((m) => myCourses.some((c) => c.id === m.courseId)) ?? [];
+  const myTotalMissingDays = myMissingAttendance.reduce((sum, m) => sum + m.missingDates.length, 0);
 
   const totalStudents = myCourses.reduce((s, c) => s + c._count.students, 0);
 
@@ -118,6 +149,60 @@ export function ProfesorDashboard() {
           )}
         </div>
       </div>
+
+      {myTotalMissingDays > 0 && (
+        <div className="rounded-xl border border-amber-300 dark:border-amber-700/50 bg-amber-50 dark:bg-amber-950/30 overflow-hidden">
+          <div className="px-5 py-4 border-b border-amber-200 dark:border-amber-800/50 flex items-center gap-3">
+            <div className="size-9 rounded-lg bg-amber-200 dark:bg-amber-800/50 flex items-center justify-center flex-shrink-0">
+              <CalendarX className="size-4.5 text-amber-700 dark:text-amber-400" />
+            </div>
+            <div>
+              <h2 className="text-sm font-semibold text-amber-900 dark:text-amber-200">
+                Asistencia pendiente
+              </h2>
+              <p className="text-xs text-amber-700 dark:text-amber-400">
+                {myMissingAttendance.length} curso{myMissingAttendance.length !== 1 ? 's' : ''} ·{' '}
+                {myTotalMissingDays} día{myTotalMissingDays !== 1 ? 's' : ''} sin registro
+              </p>
+            </div>
+          </div>
+          <div className="divide-y divide-amber-200 dark:divide-amber-800/50">
+            {myMissingAttendance.map((item) => (
+              <div
+                key={item.courseId}
+                className="px-5 py-3 flex items-center justify-between gap-3 hover:bg-amber-100/30 dark:hover:bg-amber-900/10 transition"
+              >
+                <div className="min-w-0">
+                  <p className="text-sm font-medium text-amber-900 dark:text-amber-200">
+                    {item.courseName}
+                  </p>
+                  <p className="text-xs text-amber-700 dark:text-amber-400 mt-0.5">
+                    {item.missingDates.length} día{item.missingDates.length !== 1 ? 's' : ''}:{' '}
+                    {item.missingDates
+                      .slice(-3)
+                      .reverse()
+                      .map((d) =>
+                        new Date(d + 'T12:00:00').toLocaleDateString('es-CL', {
+                          day: 'numeric',
+                          month: 'short',
+                        }),
+                      )
+                      .join(', ')}
+                  </p>
+                </div>
+                <Link
+                  to="/cursos/$courseId"
+                  params={{ courseId: item.courseId }}
+                  className="flex-shrink-0 flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg bg-amber-200 dark:bg-amber-800/50 text-amber-900 dark:text-amber-200 hover:bg-amber-300 dark:hover:bg-amber-700/50 transition"
+                >
+                  <ClipboardList className="size-3" />
+                  Pasar lista
+                </Link>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Course cards */}
       <div>

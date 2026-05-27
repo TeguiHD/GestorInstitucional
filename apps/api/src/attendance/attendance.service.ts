@@ -406,6 +406,73 @@ export class AttendanceService {
     return { students: studentStats, dates, matrix };
   }
 
+  async getMissingAttendance(schoolId: string, from: string, to: string) {
+    const fromDate = new Date(from);
+    const toDate = new Date(to);
+
+    const [courses, nonSchoolDays] = await Promise.all([
+      this.prisma.course.findMany({
+        where: { schoolId, active: true },
+        select: { id: true, code: true, name: true },
+      }),
+      this.calendar.getNonSchoolDays(schoolId, fromDate, toDate),
+    ]);
+
+    if (courses.length === 0) return [];
+
+    const courseIds = courses.map((c) => c.id);
+    const records = await this.prisma.attendanceRecord.findMany({
+      where: {
+        courseId: { in: courseIds },
+        date: { gte: fromDate, lte: toDate },
+      },
+      select: { courseId: true, date: true },
+    });
+
+    const recordsByCourse = new Map<string, Set<string>>();
+    for (const r of records) {
+      const dateKey = r.date.toISOString().split('T')[0]!;
+      if (!recordsByCourse.has(r.courseId)) {
+        recordsByCourse.set(r.courseId, new Set());
+      }
+      recordsByCourse.get(r.courseId)!.add(dateKey);
+    }
+
+    const schoolDays: string[] = [];
+    const current = new Date(fromDate);
+    while (current <= toDate) {
+      const dayOfWeek = current.getDay();
+      if (dayOfWeek !== 0 && dayOfWeek !== 6) {
+        const dateKey = current.toISOString().split('T')[0]!;
+        if (!nonSchoolDays.has(dateKey)) {
+          schoolDays.push(dateKey);
+        }
+      }
+      current.setDate(current.getDate() + 1);
+    }
+
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const todayKey = today.toISOString().split('T')[0]!;
+    const pastSchoolDays = schoolDays.filter((d) => d < todayKey);
+
+    if (pastSchoolDays.length === 0) return [];
+
+    return courses
+      .map((course) => {
+        const courseRecords = recordsByCourse.get(course.id) ?? new Set<string>();
+        const missingDates = pastSchoolDays.filter((d) => !courseRecords.has(d));
+        return {
+          courseId: course.id,
+          courseCode: course.code,
+          courseName: course.name,
+          missingDates,
+        };
+      })
+      .filter((c) => c.missingDates.length > 0)
+      .sort((a, b) => b.missingDates.length - a.missingDates.length);
+  }
+
   async assertCanAccessStudent(studentId: string, user: JwtPayload): Promise<void> {
     const student = await this.prisma.student.findUnique({
       where: { id: studentId },

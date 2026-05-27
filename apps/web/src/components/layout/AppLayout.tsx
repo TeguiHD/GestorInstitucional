@@ -8,6 +8,7 @@ import {
   Bell,
   BookOpen,
   Calendar,
+  ClipboardList,
   FileCheck,
   Heart,
   LayoutDashboard,
@@ -26,6 +27,13 @@ import { SchoolSelector } from '@/components/ui/SchoolSelector';
 import { ThemeToggle } from '@/components/ui/ThemeToggle';
 import { useAuthStore, useUser } from '@/stores/auth.store';
 import { useOnlineStatus } from '@/hooks/useOnlineStatus';
+
+type MissingAttendance = {
+  courseId: string;
+  courseCode: string;
+  courseName: string;
+  missingDates: string[];
+};
 
 type NavItem = {
   to: string;
@@ -98,7 +106,23 @@ function NotificationBell({ schoolId }: { schoolId?: string }) {
     refetchInterval: 5 * 60 * 1000,
   });
 
+  const { data: missingAttendance = [] } = useQuery<MissingAttendance[]>({
+    queryKey: ['missing-attendance-bell', schoolId],
+    queryFn: () => {
+      const today = new Date();
+      const from = new Date(today);
+      from.setDate(from.getDate() - 14);
+      return api.get(
+        `/attendance/school/${schoolId}/missing?from=${from.toISOString().split('T')[0]}&to=${today.toISOString().split('T')[0]}`,
+      );
+    },
+    enabled: !!schoolId,
+    refetchInterval: 10 * 60 * 1000,
+  });
+
   const last24h = fired.filter((f) => Date.now() - new Date(f.firedAt).getTime() < 86_400_000);
+  const totalMissingDays = missingAttendance.reduce((sum, m) => sum + m.missingDates.length, 0);
+  const hasAlerts = last24h.length > 0 || totalMissingDays > 0;
 
   return (
     <div className="relative">
@@ -109,8 +133,13 @@ function NotificationBell({ schoolId }: { schoolId?: string }) {
         aria-label="Alertas recientes"
       >
         <Bell className="size-4" />
-        {last24h.length > 0 && (
-          <span className="absolute top-1 right-1 size-2 rounded-full bg-red-500" />
+        {hasAlerts && (
+          <span
+            className={cn(
+              'absolute top-1 right-1 size-2 rounded-full',
+              last24h.length > 0 ? 'bg-red-500' : 'bg-amber-500',
+            )}
+          />
         )}
       </button>
       {open && (
@@ -125,7 +154,29 @@ function NotificationBell({ schoolId }: { schoolId?: string }) {
                 </span>
               )}
             </div>
-            {fired.length === 0 ? (
+
+            {totalMissingDays > 0 && (
+              <Link
+                to="/cursos"
+                onClick={() => setOpen(false)}
+                className="flex items-start gap-3 px-4 py-3 bg-amber-50 dark:bg-amber-950/20 border-b border-amber-200 dark:border-amber-800/50 hover:bg-amber-100 dark:hover:bg-amber-900/30 transition"
+              >
+                <div className="size-8 rounded-lg bg-amber-200 dark:bg-amber-800/50 flex items-center justify-center flex-shrink-0">
+                  <ClipboardList className="size-4 text-amber-700 dark:text-amber-400" />
+                </div>
+                <div className="min-w-0 flex-1">
+                  <p className="text-sm font-medium text-amber-900 dark:text-amber-200">
+                    Asistencia pendiente
+                  </p>
+                  <p className="text-xs text-amber-700 dark:text-amber-400 mt-0.5">
+                    {missingAttendance.length} curso{missingAttendance.length !== 1 ? 's' : ''} ·{' '}
+                    {totalMissingDays} día{totalMissingDays !== 1 ? 's' : ''} sin registro
+                  </p>
+                </div>
+              </Link>
+            )}
+
+            {fired.length === 0 && totalMissingDays === 0 ? (
               <p className="px-4 py-6 text-sm text-muted-foreground text-center">
                 Sin alertas recientes
               </p>

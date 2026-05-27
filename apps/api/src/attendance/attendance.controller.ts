@@ -89,6 +89,20 @@ export class AttendanceController {
     return this.attendance.getSchoolStats(schoolId, from, to);
   }
 
+  @Get('school/:schoolId/missing')
+  @ApiOperation({ summary: 'Cursos con días lectivos sin registro de asistencia' })
+  getMissingAttendance(
+    @Param('schoolId') schoolId: string,
+    @Query('from') from: string,
+    @Query('to') to: string,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    this.assertIsoDate(from, 'from');
+    this.assertIsoDate(to, 'to');
+    this.courses.assertSchoolAdminAccess(schoolId, user);
+    return this.attendance.getMissingAttendance(schoolId, from, to);
+  }
+
   @Get('course/:courseId/daily-trend')
   @ApiOperation({ summary: 'Tendencia diaria de asistencia de un curso (dashboard drill-down)' })
   async getCourseDailyTrend(
