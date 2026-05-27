@@ -210,6 +210,9 @@ function MatricularDialog({
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['school-active', schoolId] });
       qc.invalidateQueries({ queryKey: ['movements', schoolId] });
+      // Invalida el roster de asistencia por curso para que aparezca sin recargar
+      qc.invalidateQueries({ queryKey: ['course', courseId] });
+      qc.invalidateQueries({ queryKey: ['course-students', courseId] });
       toast.success('Alumno matriculado', {
         description: isTransfer ? `Traslado desde ${originSchool}` : undefined,
       });
@@ -640,6 +643,9 @@ function EditarFechaIngresoDialog({
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['school-active', schoolId] });
       qc.invalidateQueries({ queryKey: ['movements', schoolId] });
+      // Invalida el roster de asistencia por curso para reflejar el cambio de fecha
+      qc.invalidateQueries({ queryKey: ['course', student.course.id] });
+      qc.invalidateQueries({ queryKey: ['course-students', student.course.id] });
       toast.success('Fecha de ingreso actualizada');
       onClose();
     },
