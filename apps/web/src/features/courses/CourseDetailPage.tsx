@@ -19,7 +19,7 @@ import { useEffect, useRef, useState } from 'react';
 import { toast } from 'sonner';
 
 import { useUser } from '@/stores/auth.store';
-import { api, downloadBlob } from '@/lib/api';
+import { ApiError, api, downloadBlob } from '@/lib/api';
 import { attendanceQueue } from '@/lib/attendance-queue';
 import { useAttendanceSync } from '@/hooks/useAttendanceSync';
 import { cn } from '@/lib/cn';
@@ -33,6 +33,8 @@ type Student = {
   lastName: string;
   enrollmentNumber: number;
   rut: string;
+  enrolledAt?: string | undefined;
+  withdrawnAt?: string | null | undefined;
 };
 type AttendanceEntry = { studentId: string; status: StatusKey; note?: string };
 type AttendanceRecord = { student: Student; status: string; note?: string; id: string };
@@ -160,6 +162,23 @@ function normalizeRut(raw: string): string {
   return raw.replace(/\./g, '').replace(/\s/g, '').toUpperCase();
 }
 
+function addDays(dateValue: string, days: number): string {
+  const [year, month, day] = dateValue.split('-').map(Number);
+  const d = new Date(year ?? 1970, (month ?? 1) - 1, day ?? 1);
+  d.setDate(d.getDate() + days);
+  return [
+    d.getFullYear(),
+    String(d.getMonth() + 1).padStart(2, '0'),
+    String(d.getDate()).padStart(2, '0'),
+  ].join('-');
+}
+
+function isStudentActiveOn(student: Student, dateValue: string): boolean {
+  const enrolledAt = student.enrolledAt?.slice(0, 10);
+  const withdrawnAt = student.withdrawnAt?.slice(0, 10);
+  return (!enrolledAt || enrolledAt <= dateValue) && (!withdrawnAt || withdrawnAt > dateValue);
+}
+
 export function CourseDetailPage() {
   const { courseId } = useParams({ from: '/_auth/cursos/$courseId' });
   const qc = useQueryClient();
@@ -186,7 +205,12 @@ export function CourseDetailPage() {
     enabled: activeTab === 'asistencia',
   });
 
-  const { data: attendanceRoster } = useQuery<Student[]>({
+  const {
+    data: attendanceRoster,
+    isLoading: rosterLoading,
+    isError: rosterError,
+    refetch: refetchRoster,
+  } = useQuery<Student[]>({
     queryKey: ['course-students', courseId, selectedDate],
     queryFn: () => api.get(`/students?courseId=${courseId}&date=${selectedDate}`),
     enabled: activeTab === 'asistencia',
@@ -202,13 +226,23 @@ export function CourseDetailPage() {
   });
 
   useEffect(() => {
-    if (!records) return;
+    if (!attendanceRoster) return;
     const map: Record<string, StatusKey> = {};
-    records.forEach((r) => {
-      if (r.status in STATUS_CONFIG) map[r.student.id] = r.status as StatusKey;
+
+    // Start all students as PRESENT by default
+    attendanceRoster.forEach((student) => {
+      map[student.id] = 'PRESENT';
     });
+
+    // Override with actual recorded statuses
+    if (records) {
+      records.forEach((r) => {
+        if (r.status in STATUS_CONFIG) map[r.student.id] = r.status as StatusKey;
+      });
+    }
+
     setLocalStatus(map);
-  }, [records]);
+  }, [records, attendanceRoster]);
 
   const importMutation = useMutation({
     mutationFn: (rows: ImportRow[]) =>
@@ -302,10 +336,18 @@ export function CourseDetailPage() {
         description: `${count} alumno${count !== 1 ? 's' : ''} — ${dateObj.toLocaleDateString('es-CL', { weekday: 'long', day: '2-digit', month: 'long' })}`,
       });
     },
-    onError: (_err, entries) => {
-      attendanceQueue.enqueue({ courseId, date: selectedDate, entries });
-      refreshCount();
-      toast.warning('Sin conexión — guardado localmente.', { duration: 5000 });
+    onError: (err, entries) => {
+      if (!online || !(err instanceof ApiError)) {
+        attendanceQueue.enqueue({ courseId, date: selectedDate, entries });
+        refreshCount();
+        toast.warning('Sin conexión — guardado localmente.', { duration: 5000 });
+        return;
+      }
+
+      toast.error('No se pudo guardar la asistencia', {
+        description: err.message,
+        duration: 7000,
+      });
     },
   });
 
@@ -343,8 +385,19 @@ export function CourseDetailPage() {
     longPressFired.current = true;
   };
 
+  const fallbackStudents = [...(course?.students ?? [])]
+    .filter((student) => isStudentActiveOn(student, selectedDate))
+    .sort((a, b) => a.enrollmentNumber - b.enrollmentNumber);
+  const shouldUseCourseFallback =
+    activeTab === 'asistencia' &&
+    fallbackStudents.length > 0 &&
+    (rosterError || (Array.isArray(attendanceRoster) && attendanceRoster.length === 0));
   const courseStudents =
-    activeTab === 'asistencia' ? (attendanceRoster ?? []) : (course?.students ?? []);
+    activeTab === 'asistencia'
+      ? shouldUseCourseFallback
+        ? fallbackStudents
+        : (attendanceRoster ?? [])
+      : (course?.students ?? []);
   const courseStatusValues = courseStudents
     .map((student) => localStatus[student.id])
     .filter((status): status is StatusKey => Boolean(status));
@@ -362,23 +415,56 @@ export function CourseDetailPage() {
       return;
     }
     if (entries.length !== courseStudents.length) {
-      const pending = courseStudents.length - entries.length;
-      toast.warning(`Faltan ${pending} alumno${pending !== 1 ? 's' : ''} por marcar`);
+      const missingStudents = courseStudents.filter((student) => !localStatus[student.id]);
+      const visibleMissing = missingStudents
+        .slice(0, 8)
+        .map((student) => `${student.enrollmentNumber}. ${student.lastName}, ${student.firstName}`);
+      const remaining = missingStudents.length - visibleMissing.length;
+      toast.warning(
+        `Faltan ${missingStudents.length} alumno${missingStudents.length !== 1 ? 's' : ''} por marcar`,
+        {
+          description: visibleMissing.join(' · ') + (remaining > 0 ? ` · y ${remaining} más` : ''),
+          duration: 10000,
+        },
+      );
       return;
     }
     saveMutation.mutate(entries);
   };
 
+  const markPendingPresent = () => {
+    if (courseStudents.length === 0) {
+      toast.info('No hay alumnos activos para esta fecha');
+      return;
+    }
+
+    let changed = 0;
+    setLocalStatus((prev) => {
+      const next = { ...prev };
+      for (const student of courseStudents) {
+        if (!next[student.id]) {
+          next[student.id] = 'PRESENT';
+          changed++;
+        }
+      }
+      return next;
+    });
+
+    if (changed > 0) {
+      toast.success(
+        `${changed} alumno${changed !== 1 ? 's' : ''} marcado${changed !== 1 ? 's' : ''} presente${changed !== 1 ? 's' : ''}`,
+      );
+    } else {
+      toast.info('Todos ya tienen estado');
+    }
+  };
+
   const prevDay = () => {
-    const d = new Date(selectedDate);
-    d.setDate(d.getDate() - 1);
-    setSelectedDate(d.toISOString().split('T')[0]!);
+    setSelectedDate(addDays(selectedDate, -1));
     setLocalStatus({});
   };
   const nextDay = () => {
-    const d = new Date(selectedDate);
-    d.setDate(d.getDate() + 1);
-    setSelectedDate(d.toISOString().split('T')[0]!);
+    setSelectedDate(addDays(selectedDate, 1));
     setLocalStatus({});
   };
 
@@ -388,7 +474,7 @@ export function CourseDetailPage() {
   const pendingStudents = Math.max(total - markedCount, 0);
   const completionRate = total > 0 ? markedCount / total : 0;
   const attendanceRate = markedCount > 0 ? presentCount / markedCount : 0;
-  const canSaveAttendance = total > 0 && pendingStudents === 0 && !saveMutation.isPending;
+  const canInteractWithAttendance = total > 0 && !saveMutation.isPending;
 
   const headTeacher = course?.teachers.find((t) => t.isHead) ?? course?.teachers[0];
 
@@ -652,9 +738,24 @@ export function CourseDetailPage() {
             </span>
           </div>
 
+          {shouldUseCourseFallback && (
+            <div className="flex items-start justify-between gap-3 rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-sm text-blue-800 dark:border-blue-900/60 dark:bg-blue-950/30 dark:text-blue-300">
+              <span>
+                Se recuperó la nómina del curso porque la carga por fecha no respondió completa.
+              </span>
+              <button
+                type="button"
+                onClick={() => void refetchRoster()}
+                className="shrink-0 rounded-md border border-blue-300 px-2 py-1 text-xs font-medium hover:bg-blue-100 dark:border-blue-800 dark:hover:bg-blue-900/40"
+              >
+                Reintentar
+              </button>
+            </div>
+          )}
+
           {/* Student list */}
           <div className="rounded-xl border border-border bg-background overflow-hidden">
-            {recordsLoading ? (
+            {recordsLoading || rosterLoading ? (
               <div className="p-4 space-y-2">
                 {Array.from({ length: 6 }).map((_, i) => (
                   <div key={i} className="h-12 animate-pulse bg-muted rounded-lg" />
@@ -671,6 +772,16 @@ export function CourseDetailPage() {
                     </tr>
                   </thead>
                   <tbody>
+                    {courseStudents.length === 0 && (
+                      <tr>
+                        <td
+                          colSpan={3}
+                          className="border-t border-border px-4 py-8 text-center text-sm text-muted-foreground"
+                        >
+                          No hay alumnos activos para esta fecha.
+                        </td>
+                      </tr>
+                    )}
                     {courseStudents.map((student) => {
                       const status = localStatus[student.id];
                       const cfg = status ? STATUS_CONFIG[status] : UNMARKED_CONFIG;
@@ -759,7 +870,7 @@ export function CourseDetailPage() {
           )}
 
           {/* Save */}
-          <div className="flex items-center justify-end gap-3">
+          <div className="flex flex-wrap items-center justify-end gap-3">
             {pendingStudents > 0 && (
               <span className="text-xs text-muted-foreground">
                 Faltan {pendingStudents} por marcar
@@ -777,8 +888,16 @@ export function CourseDetailPage() {
               </span>
             )}
             <button
+              type="button"
+              onClick={markPendingPresent}
+              disabled={!canInteractWithAttendance || pendingStudents === 0}
+              className="rounded-lg border border-border bg-background px-4 py-2.5 text-sm font-medium transition hover:bg-muted disabled:opacity-50"
+            >
+              Marcar faltantes presentes
+            </button>
+            <button
               onClick={handleSave}
-              disabled={!canSaveAttendance}
+              disabled={!canInteractWithAttendance}
               className="rounded-lg bg-primary text-primary-foreground px-6 py-2.5 text-sm font-medium transition hover:opacity-90 disabled:opacity-50"
             >
               {saveMutation.isPending
