@@ -210,9 +210,9 @@ function MatricularDialog({
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['school-active', schoolId] });
       qc.invalidateQueries({ queryKey: ['movements', schoolId] });
-      // Invalida el roster de asistencia por curso para que aparezca sin recargar
-      qc.invalidateQueries({ queryKey: ['course', courseId] });
-      qc.invalidateQueries({ queryKey: ['course-students', courseId] });
+      qc.invalidateQueries({
+        predicate: (q) => q.queryKey[0] === 'course' || q.queryKey[0] === 'course-students',
+      });
       toast.success('Alumno matriculado', {
         description: isTransfer ? `Traslado desde ${originSchool}` : undefined,
       });
@@ -387,6 +387,9 @@ function DarDeBajaDialog({ student, onClose }: { student: ActiveStudent; onClose
       qc.invalidateQueries({ queryKey: ['school-active', schoolId] });
       qc.invalidateQueries({ queryKey: ['withdrawn', schoolId] });
       qc.invalidateQueries({ queryKey: ['movements', schoolId] });
+      qc.invalidateQueries({
+        predicate: (q) => q.queryKey[0] === 'course' || q.queryKey[0] === 'course-students',
+      });
       toast.success(
         isTransfer ? `${fmtName(student)} trasladado` : `${fmtName(student)} dado de baja`,
         { description: isTransfer ? `→ ${destinationSchool}` : undefined },
@@ -542,6 +545,9 @@ function ReingresarDialog({
       qc.invalidateQueries({ queryKey: ['school-active', schoolId] });
       qc.invalidateQueries({ queryKey: ['withdrawn', schoolId] });
       qc.invalidateQueries({ queryKey: ['movements', schoolId] });
+      qc.invalidateQueries({
+        predicate: (q) => q.queryKey[0] === 'course' || q.queryKey[0] === 'course-students',
+      });
       toast.success(`${fmtName(student)} reingresado`);
       onClose();
     },
@@ -643,9 +649,9 @@ function EditarFechaIngresoDialog({
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['school-active', schoolId] });
       qc.invalidateQueries({ queryKey: ['movements', schoolId] });
-      // Invalida el roster de asistencia por curso para reflejar el cambio de fecha
-      qc.invalidateQueries({ queryKey: ['course', student.course.id] });
-      qc.invalidateQueries({ queryKey: ['course-students', student.course.id] });
+      qc.invalidateQueries({
+        predicate: (q) => q.queryKey[0] === 'course' || q.queryKey[0] === 'course-students',
+      });
       toast.success('Fecha de ingreso actualizada');
       onClose();
     },
@@ -766,6 +772,9 @@ function EditarMovimientoDialog({
       qc.invalidateQueries({ queryKey: ['school-active', schoolId] });
       qc.invalidateQueries({ queryKey: ['movements', schoolId] });
       qc.invalidateQueries({ queryKey: ['enrollment-events', student.id] });
+      qc.invalidateQueries({
+        predicate: (q) => q.queryKey[0] === 'course' || q.queryKey[0] === 'course-students',
+      });
       toast.success('Movimiento actualizado');
       onClose();
     },
@@ -876,6 +885,9 @@ function AnularMovimientoDialog({ event, onClose }: { event: MovementEvent; onCl
       qc.invalidateQueries({ queryKey: ['movements', schoolId] });
       qc.invalidateQueries({ queryKey: ['school-active', schoolId] });
       qc.invalidateQueries({ queryKey: ['withdrawn', schoolId] });
+      qc.invalidateQueries({
+        predicate: (q) => q.queryKey[0] === 'course' || q.queryKey[0] === 'course-students',
+      });
       toast.success('Movimiento anulado');
       onClose();
     },
