@@ -11,6 +11,7 @@ import { PrismaService } from '../prisma/prisma.service.js';
 import { AuditService } from '../audit/audit.service.js';
 import type { CreateStudentDto } from './dto/create-student.dto.js';
 import type { JwtPayload } from '../common/decorators/current-user.decorator.js';
+import { parseDateOnlyUtc } from '../common/date-only.js';
 import { isValidRut, normalizeRut } from './rut.js';
 
 @Injectable()
@@ -83,9 +84,7 @@ export class StudentsService {
         throw new ConflictException(`N° lista ${enrollmentNumber} ya está ocupado`);
     }
 
-    const effectiveDate = dto.effectiveDate
-      ? this.startOfDay(new Date(`${dto.effectiveDate}T00:00:00.000Z`))
-      : this.startOfDay(new Date());
+    const effectiveDate = parseDateOnlyUtc(dto.effectiveDate);
 
     const isTransfer = !!dto.transferOriginSchool?.trim();
     const eventStatus = isTransfer ? EnrollmentStatus.TRANSFERRED_IN : EnrollmentStatus.ACTIVE;
@@ -255,14 +254,14 @@ export class StudentsService {
       }
       let parsedEnrolledAt: Date;
       if (row.enrolledAt) {
-        const e = new Date(`${row.enrolledAt}T00:00:00.000Z`);
-        if (isNaN(e.getTime())) {
+        try {
+          parsedEnrolledAt = parseDateOnlyUtc(row.enrolledAt);
+        } catch {
           errors.push({ row: i + 1, rut, reason: 'Fecha de ingreso inválida' });
           return;
         }
-        parsedEnrolledAt = this.startOfDay(e);
       } else {
-        parsedEnrolledAt = this.startOfDay(new Date());
+        parsedEnrolledAt = parseDateOnlyUtc();
       }
       seenRuts.add(rut);
       seenNums.add(row.enrollmentNumber);
@@ -1078,9 +1077,7 @@ export class StudentsService {
   }
 
   private parseDateOnly(value?: string): Date {
-    const raw = value ? new Date(`${value}T00:00:00.000Z`) : new Date();
-    if (Number.isNaN(raw.getTime())) throw new BadRequestException('Fecha inválida');
-    return this.startOfDay(raw);
+    return parseDateOnlyUtc(value);
   }
 
   private startOfDay(date: Date): Date {

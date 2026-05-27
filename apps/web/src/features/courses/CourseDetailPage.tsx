@@ -225,24 +225,43 @@ export function CourseDetailPage() {
     queryFn: () => api.get(`/insights/course/${courseId}?year=${year}&month=${month}`),
   });
 
+  // Calculate fallback and course students early for use in useEffect
+  const fallbackStudents = [...(course?.students ?? [])]
+    .filter((student) => isStudentActiveOn(student, selectedDate))
+    .sort((a, b) => a.enrollmentNumber - b.enrollmentNumber);
+
+  const shouldUseCourseFallback =
+    activeTab === 'asistencia' &&
+    fallbackStudents.length > 0 &&
+    (rosterError || (Array.isArray(attendanceRoster) && attendanceRoster.length === 0));
+
+  const courseStudents =
+    activeTab === 'asistencia'
+      ? shouldUseCourseFallback
+        ? fallbackStudents
+        : (attendanceRoster ?? [])
+      : (course?.students ?? []);
+
   useEffect(() => {
-    if (!attendanceRoster) return;
+    // Initialize attendance status for all visible students
     const map: Record<string, StatusKey> = {};
 
+    if (courseStudents.length === 0) return;
+
     // Start all students as PRESENT by default
-    attendanceRoster.forEach((student) => {
+    courseStudents.forEach((student) => {
       map[student.id] = 'PRESENT';
     });
 
-    // Override with actual recorded statuses
-    if (records) {
+    // Override with actual recorded statuses if they exist
+    if (Array.isArray(records) && records.length > 0) {
       records.forEach((r) => {
         if (r.status in STATUS_CONFIG) map[r.student.id] = r.status as StatusKey;
       });
     }
 
     setLocalStatus(map);
-  }, [records, attendanceRoster]);
+  }, [records, courseStudents]);
 
   const importMutation = useMutation({
     mutationFn: (rows: ImportRow[]) =>

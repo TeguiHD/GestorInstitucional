@@ -22,6 +22,7 @@ import { useEffectiveSchoolId } from '@/stores/school.store';
 import { useUser } from '@/stores/auth.store';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { ErrorState } from '@/components/ui/ErrorState';
+import { dateInputValue, fmtDateCl } from '@/lib/date';
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -106,8 +107,7 @@ const STATUS_META: Record<string, { label: string; color: string }> = {
 
 const WITHDRAWAL_REASON_KEYS = Object.keys(WITHDRAWAL_REASONS) as WithdrawalReason[];
 
-const fmtDate = (d: string) =>
-  new Date(d).toLocaleDateString('es-CL', { day: '2-digit', month: '2-digit', year: 'numeric' });
+const fmtDate = fmtDateCl;
 
 const fmtName = (s: { firstName: string; lastName: string }) => `${s.firstName} ${s.lastName}`;
 
@@ -630,10 +630,10 @@ function EditarFechaIngresoDialog({
 }) {
   const qc = useQueryClient();
   const schoolId = useEffectiveSchoolId();
-  const [enrolledAt, setEnrolledAt] = useState(student.enrolledAt.split('T')[0]!);
+  const [enrolledAt, setEnrolledAt] = useState(dateInputValue(student.enrolledAt));
   const [confirmWord, setConfirmWord] = useState('');
   const confirmed = confirmWord === EDIT_CONFIRM_WORD;
-  const sameDate = enrolledAt === student.enrolledAt.split('T')[0];
+  const sameDate = enrolledAt === dateInputValue(student.enrolledAt);
 
   const mutation = useMutation({
     mutationFn: () => api.patch(`/students/${student.id}/enrolled-at`, { enrolledAt }),

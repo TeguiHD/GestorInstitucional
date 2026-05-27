@@ -1866,11 +1866,16 @@ export class ReportsService {
     );
     const withdrawn = events.filter((e) => ['WITHDRAWN', 'TRANSFERRED_OUT'].includes(e.status));
 
-    const matriculaInicio =
-      course.students.filter((s) => this.startOfDay(s.enrolledAt) <= from).length +
-      withdrawn.filter((e) => this.startOfDay(e.effectiveDate) >= from).length -
-      incorporated.filter((e) => this.startOfDay(e.effectiveDate) >= from).length;
-    const matriculaFin = course.students.length;
+    const matriculaInicio = course.students.filter(
+      (s) =>
+        this.startOfDay(s.enrolledAt) <= from &&
+        (!s.withdrawnAt || this.startOfDay(s.withdrawnAt) >= from),
+    ).length;
+    const matriculaFin = course.students.filter(
+      (s) =>
+        this.startOfDay(s.enrolledAt) <= to &&
+        (!s.withdrawnAt || this.startOfDay(s.withdrawnAt) > to),
+    ).length;
 
     const sectionHeader = (label: string) => {
       ws.mergeCells(r, 1, r, 5);
