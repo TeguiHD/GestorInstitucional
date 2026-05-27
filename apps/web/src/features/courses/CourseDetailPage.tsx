@@ -404,19 +404,6 @@ export function CourseDetailPage() {
     longPressFired.current = true;
   };
 
-  const fallbackStudents = [...(course?.students ?? [])]
-    .filter((student) => isStudentActiveOn(student, selectedDate))
-    .sort((a, b) => a.enrollmentNumber - b.enrollmentNumber);
-  const shouldUseCourseFallback =
-    activeTab === 'asistencia' &&
-    fallbackStudents.length > 0 &&
-    (rosterError || (Array.isArray(attendanceRoster) && attendanceRoster.length === 0));
-  const courseStudents =
-    activeTab === 'asistencia'
-      ? shouldUseCourseFallback
-        ? fallbackStudents
-        : (attendanceRoster ?? [])
-      : (course?.students ?? []);
   const courseStatusValues = courseStudents
     .map((student) => localStatus[student.id])
     .filter((status): status is StatusKey => Boolean(status));
