@@ -144,8 +144,8 @@ function NotificationBell({ schoolId }: { schoolId?: string }) {
       </button>
       {open && (
         <>
-          <div className="fixed inset-0 z-10" onClick={() => setOpen(false)} />
-          <div className="absolute right-0 top-11 z-20 w-[calc(100vw-2rem)] max-w-80 rounded-xl border border-border bg-background shadow-lg overflow-hidden">
+          <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} />
+          <div className="absolute right-0 top-11 z-50 w-[calc(100vw-2rem)] max-w-80 rounded-xl border border-border bg-background shadow-lg overflow-hidden">
             <div className="px-4 py-3 border-b border-border flex items-center justify-between">
               <p className="text-sm font-semibold">Alertas recientes</p>
               {last24h.length > 0 && (
