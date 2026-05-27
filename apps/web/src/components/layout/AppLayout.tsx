@@ -98,6 +98,10 @@ function NotificationBell({ schoolId }: { schoolId?: string }) {
   const [open, setOpen] = useState(false);
   const [position, setPosition] = useState({ top: 0, right: 0 });
   const buttonRef = useRef<HTMLButtonElement>(null);
+  const [lastSeenMissing, setLastSeenMissing] = useState<number>(() => {
+    const stored = localStorage.getItem('lastSeenMissingAttendance');
+    return stored ? parseInt(stored, 10) : 0;
+  });
 
   useEffect(() => {
     if (open && buttonRef.current) {
@@ -135,7 +139,16 @@ function NotificationBell({ schoolId }: { schoolId?: string }) {
 
   const last24h = fired.filter((f) => Date.now() - new Date(f.firedAt).getTime() < 86_400_000);
   const totalMissingDays = missingAttendance.reduce((sum, m) => sum + m.missingDates.length, 0);
-  const hasAlerts = last24h.length > 0 || totalMissingDays > 0;
+
+  const hasNewMissing = totalMissingDays > lastSeenMissing;
+  const hasAlerts = last24h.length > 0 || hasNewMissing;
+
+  const handleMissingClick = () => {
+    const now = Date.now();
+    setLastSeenMissing(totalMissingDays);
+    localStorage.setItem('lastSeenMissingAttendance', now.toString());
+    setOpen(false);
+  };
 
   return (
     <>
@@ -176,7 +189,7 @@ function NotificationBell({ schoolId }: { schoolId?: string }) {
               {totalMissingDays > 0 && (
                 <Link
                   to="/cursos"
-                  onClick={() => setOpen(false)}
+                  onClick={handleMissingClick}
                   className="flex items-start gap-3 px-4 py-3 bg-amber-50 dark:bg-amber-950/20 border-b border-amber-200 dark:border-amber-800/50 hover:bg-amber-100 dark:hover:bg-amber-900/30 transition"
                 >
                   <div className="size-8 rounded-lg bg-amber-200 dark:bg-amber-800/50 flex items-center justify-center flex-shrink-0">
