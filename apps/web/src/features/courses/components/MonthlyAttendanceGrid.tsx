@@ -251,7 +251,7 @@ export function MonthlyAttendanceGrid({ courseId }: { courseId: string }) {
       // Past day protection: ask once per day
       if (isPast && !unlockedDays.has(date)) {
         const currentStatus = getEffectiveStatus(studentId, date);
-        const nextStatus = completion.isEmpty ? 'ABSENT' : getNextAttendanceStatus(currentStatus);
+        const nextStatus = completion.isEmpty ? 'PRESENT' : getNextAttendanceStatus(currentStatus);
         setPendingConfirm({
           date,
           studentId,
@@ -772,7 +772,7 @@ export function MonthlyAttendanceGrid({ courseId }: { courseId: string }) {
               </strong>
               .{' '}
               {pendingConfirm.fillPresentFirst
-                ? 'Se marcará el curso como presente y esta celda quedará como ausente.'
+                ? 'Se marcarán todos los alumnos activos como presentes. Luego verifica bien y marca manualmente a los ausentes, atrasados o justificados.'
                 : 'Una vez confirmado, podrás editar libremente ese día.'}
             </p>
             <div className="flex gap-2">
