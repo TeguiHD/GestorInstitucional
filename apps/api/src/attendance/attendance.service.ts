@@ -12,6 +12,7 @@ import { MailService } from '../mail/mail.service.js';
 import { WhatsAppService } from '../mail/whatsapp.service.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { AuditService } from '../audit/audit.service.js';
+import { parseDateOnlyUtc } from '../common/date-only.js';
 import type { RecordAttendanceDto } from './dto/record-attendance.dto.js';
 import type { JwtPayload } from '../common/decorators/current-user.decorator.js';
 
@@ -29,8 +30,9 @@ export class AttendanceService {
 
   /** Bulk upsert daily attendance for a course. Idempotent — safe to call multiple times. */
   async recordBulk(dto: RecordAttendanceDto, recordedById: string): Promise<{ upserted: number }> {
-    const date = new Date(dto.date);
-    await this.assertEntriesBelongToCourse(dto);
+    const date = parseDateOnlyUtc(dto.date);
+    const activeStudentIds = await this.assertEntriesBelongToCourse(dto, date);
+    await this.assertDailyAttendanceComplete(dto, date, activeStudentIds);
 
     const upserts = dto.entries.map((entry) =>
       this.prisma.attendanceRecord.upsert({
@@ -71,7 +73,10 @@ export class AttendanceService {
     return { upserted: dto.entries.length };
   }
 
-  private async assertEntriesBelongToCourse(dto: RecordAttendanceDto) {
+  private async assertEntriesBelongToCourse(
+    dto: RecordAttendanceDto,
+    date: Date,
+  ): Promise<Set<string>> {
     const seen = new Set<string>();
     for (const entry of dto.entries) {
       if (seen.has(entry.studentId)) {
@@ -80,7 +85,6 @@ export class AttendanceService {
       seen.add(entry.studentId);
     }
 
-    const date = this.startOfDay(new Date(dto.date));
     const students = await this.prisma.student.findMany({
       where: {
         courseId: dto.courseId,
@@ -96,6 +100,39 @@ export class AttendanceService {
     if (invalidEntry) {
       throw new BadRequestException(
         'La asistencia contiene alumnos fuera del curso o fuera de su período activo',
+      );
+    }
+
+    return allowedStudentIds;
+  }
+
+  private async assertDailyAttendanceComplete(
+    dto: RecordAttendanceDto,
+    date: Date,
+    activeStudentIds: Set<string>,
+  ) {
+    const existingRecords = await this.prisma.attendanceRecord.findMany({
+      where: {
+        courseId: dto.courseId,
+        date,
+        studentId: { in: Array.from(activeStudentIds) },
+      },
+      select: { studentId: true },
+    });
+
+    const coveredStudentIds = new Set(existingRecords.map((record) => record.studentId));
+    for (const entry of dto.entries) {
+      coveredStudentIds.add(entry.studentId);
+    }
+
+    const missingCount = Array.from(activeStudentIds).filter(
+      (studentId) => !coveredStudentIds.has(studentId),
+    ).length;
+    if (missingCount > 0) {
+      throw new BadRequestException(
+        `La asistencia del día debe incluir a todos los alumnos activos. Faltan ${missingCount} alumno${
+          missingCount !== 1 ? 's' : ''
+        }.`,
       );
     }
   }
@@ -363,7 +400,7 @@ export class AttendanceService {
               enrolledAt: true,
               withdrawnAt: true,
             },
-            orderBy: [{ lastName: 'asc' }, { firstName: 'asc' }],
+            orderBy: [{ enrollmentNumber: 'asc' }],
           },
         },
       }),
@@ -376,9 +413,45 @@ export class AttendanceService {
 
     if (!course) throw new NotFoundException('Curso no encontrado');
 
-    const dateSet = new Set<string>();
-    records.forEach((r) => dateSet.add(r.date.toISOString().split('T')[0]!));
-    const dates = Array.from(dateSet).sort();
+    // Build ALL weekday dates for the month (Mon-Fri)
+    const allDates: string[] = [];
+    const lastDay = new Date(year, month, 0).getDate();
+    for (let d = 1; d <= lastDay; d++) {
+      const dt = new Date(year, month - 1, d);
+      const dow = dt.getDay();
+      if (dow !== 0 && dow !== 6) {
+        allDates.push(`${year}-${String(month).padStart(2, '0')}-${String(d).padStart(2, '0')}`);
+      }
+    }
+
+    // Fetch non-school days (holidays, suspended) for the month
+    const nonSchoolDaysSet = await this.calendar.getNonSchoolDays(
+      course.schoolId,
+      from,
+      new Date(year, month, 0),
+    );
+
+    // Also fetch full calendar day records for descriptions
+    const calendarDays = await this.prisma.schoolCalendarDay.findMany({
+      where: {
+        schoolId: course.schoolId,
+        date: { gte: from, lte: new Date(year, month, 0) },
+        type: { in: ['HOLIDAY', 'SUSPENDED'] },
+      },
+      select: { date: true, type: true, description: true },
+    });
+
+    const nonSchoolDays: Record<string, { type: string; description: string }> = {};
+    for (const cd of calendarDays) {
+      const key = cd.date.toISOString().split('T')[0]!;
+      nonSchoolDays[key] = { type: cd.type, description: cd.description };
+    }
+
+    // School days = weekdays minus non-school days
+    const schoolDays = allDates.filter((d) => !nonSchoolDaysSet.has(d));
+
+    // Use allDates (all weekdays) as column reference, but keep backward compat via `dates`
+    const dates = allDates;
 
     const matrix: Record<string, Record<string, string>> = {};
     records.forEach((r) => {
@@ -403,7 +476,9 @@ export class AttendanceService {
       return { ...s, total, present, absent, justified, rate: total > 0 ? present / total : null };
     });
 
-    return { students: studentStats, dates, matrix };
+    const todayKey = new Date().toISOString().split('T')[0]!;
+
+    return { students: studentStats, dates, matrix, nonSchoolDays, schoolDays, today: todayKey };
   }
 
   async getMissingAttendance(schoolId: string, from: string, to: string) {
