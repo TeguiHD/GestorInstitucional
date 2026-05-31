@@ -5,9 +5,10 @@ import { toast } from 'sonner';
 
 import { api, downloadBlob } from '@/lib/api';
 import { cn } from '@/lib/cn';
+import { formatStudentFullName } from '@/lib/student-name';
 import { useUser } from '@/stores/auth.store';
 
-type Student = { id: string; firstName: string; lastName: string };
+type Student = { id: string; firstName: string; lastName: string; secondLastName?: string | null };
 
 type AttendanceRecord = {
   id: string;
@@ -132,6 +133,7 @@ export function JustificationsTab({
   const JustificationCard = ({ j }: { j: Justification }) => {
     const cfg = STATUS_CONFIG[j.status];
     const Icon = cfg.icon;
+    const studentName = formatStudentFullName(j.record.student);
 
     return (
       <div className="rounded-xl border border-border bg-background p-4 space-y-3">
@@ -143,8 +145,9 @@ export function JustificationsTab({
                 params={{ studentId: j.record.student.id }}
                 search={{ courseId }}
                 className="font-semibold text-sm hover:text-primary transition-colors"
+                title={studentName}
               >
-                {j.record.student.lastName}, {j.record.student.firstName}
+                {studentName}
               </Link>
               <span className="text-xs text-muted-foreground">{formatDate(j.record.date)}</span>
               <span className="text-xs text-muted-foreground">·</span>

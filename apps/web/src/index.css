@@ -299,14 +299,15 @@ input:-webkit-autofill:focus {
 
 /* Sticky left — name column */
 .att-grid-sticky-left {
+  --att-grid-name-col-width: clamp(220px, 24vw, 320px);
   position: sticky;
   left: 0;
   z-index: 3;
   background: var(--color-background);
   border-right: 1px solid var(--color-border);
-  width: 260px;
-  min-width: 260px;
-  max-width: 260px;
+  width: var(--att-grid-name-col-width);
+  min-width: var(--att-grid-name-col-width);
+  max-width: var(--att-grid-name-col-width);
 }
 thead .att-grid-sticky-left {
   z-index: 4;
@@ -315,17 +316,16 @@ thead .att-grid-sticky-left {
 
 .att-grid-name-col {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: 6px;
   padding: 0 8px;
   width: 100%;
+  min-width: 0;
 }
 
 @media (max-width: 640px) {
   .att-grid-sticky-left {
-    width: 100px;
-    min-width: 100px;
-    max-width: 100px;
+    --att-grid-name-col-width: 168px;
   }
   .att-grid-day-col {
     width: 28px;
@@ -345,18 +345,25 @@ thead .att-grid-sticky-left {
   min-width: 16px;
   text-align: right;
   font-variant-numeric: tabular-nums;
+  flex-shrink: 0;
+  padding-top: 1px;
 }
 
 .att-grid-name {
   font-size: 11px;
   font-weight: 500;
+  line-height: 1.2;
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
-  white-space: nowrap;
+  white-space: normal;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
 }
 
 .att-grid-name-cell {
-  padding: 4px 0;
+  padding: 5px 0;
 }
 
 /* Sticky right — rate column */

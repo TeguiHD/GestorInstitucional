@@ -5,12 +5,13 @@ import { useState } from 'react';
 
 import { api } from '@/lib/api';
 import { cn } from '@/lib/cn';
+import { formatStudentFullName, formatStudentSortName } from '@/lib/student-name';
 
 type StudentStat = {
   id: string;
   firstName: string;
   lastName: string;
-  secondLastName?: string;
+  secondLastName?: string | null;
   rut: string;
   enrollmentNumber: number;
   total: number;
@@ -127,7 +128,7 @@ export function StudentsTab({ courseId }: { courseId: string }) {
       let cmp = 0;
       if (sortKey === 'enrollmentNumber') cmp = a.enrollmentNumber - b.enrollmentNumber;
       else if (sortKey === 'lastName')
-        cmp = `${a.lastName}${a.firstName}`.localeCompare(`${b.lastName}${b.firstName}`);
+        cmp = formatStudentSortName(a).localeCompare(formatStudentSortName(b), 'es-CL');
       else if (sortKey === 'rate') cmp = (a.rate ?? -1) - (b.rate ?? -1);
       return sortDir === 'asc' ? cmp : -cmp;
     })
@@ -246,6 +247,7 @@ export function StudentsTab({ courseId }: { courseId: string }) {
               {students.map((student) => {
                 const guardians = guardianMap?.[student.id] ?? [];
                 const primaryGuardian = guardians.find((g) => g.isPrimary) ?? guardians[0];
+                const studentName = formatStudentFullName(student);
                 return (
                   <tr
                     key={student.id}
@@ -260,11 +262,10 @@ export function StudentsTab({ courseId }: { courseId: string }) {
                           to="/alumnos/$studentId"
                           params={{ studentId: student.id }}
                           search={{ courseId }}
-                          className="font-medium hover:text-primary transition-colors truncate block"
+                          className="font-medium leading-snug hover:text-primary transition-colors break-words"
+                          title={studentName}
                         >
-                          {student.lastName}
-                          {student.secondLastName ? ` ${student.secondLastName}` : ''},{' '}
-                          {student.firstName}
+                          {studentName}
                         </Link>
                         <div className="md:hidden mt-0.5">
                           {primaryGuardian ? (
@@ -320,7 +321,7 @@ export function StudentsTab({ courseId }: { courseId: string }) {
                           search={{ courseId }}
                           className="size-8 flex items-center justify-center rounded-lg text-muted-foreground hover:text-primary hover:bg-muted transition"
                           title="Ver perfil"
-                          aria-label={`Ver perfil de ${student.firstName} ${student.lastName}`}
+                          aria-label={`Ver perfil de ${studentName}`}
                         >
                           <ExternalLink className="size-3.5" />
                         </Link>

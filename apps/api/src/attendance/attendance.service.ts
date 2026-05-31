@@ -247,7 +247,14 @@ export class AttendanceService {
       where: { courseId, date: new Date(date) },
       include: {
         student: {
-          select: { id: true, firstName: true, lastName: true, enrollmentNumber: true, rut: true },
+          select: {
+            id: true,
+            firstName: true,
+            lastName: true,
+            secondLastName: true,
+            enrollmentNumber: true,
+            rut: true,
+          },
         },
       },
       orderBy: { student: { enrollmentNumber: 'asc' } },
@@ -396,6 +403,7 @@ export class AttendanceService {
               id: true,
               firstName: true,
               lastName: true,
+              secondLastName: true,
               enrollmentNumber: true,
               enrolledAt: true,
               withdrawnAt: true,

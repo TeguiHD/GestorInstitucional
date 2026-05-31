@@ -8,6 +8,7 @@ import { toast } from 'sonner';
 import { api } from '@/lib/api';
 import { cn } from '@/lib/cn';
 import { parseDayLocal } from '@/lib/date';
+import { formatStudentFullName } from '@/lib/student-name';
 import { useUser } from '@/stores/auth.store';
 import { useEffectiveSchoolId } from '@/stores/school.store';
 import { ATTENDANCE_THRESHOLDS } from '@asistencia/shared';
@@ -32,6 +33,7 @@ type Student = {
   id: string;
   firstName: string;
   lastName: string;
+  secondLastName?: string | null;
   rut: string;
   enrollmentNumber: number;
   courseId: string;
@@ -265,9 +267,7 @@ export function StudentDetailPage() {
           {student?.lastName[0]}
         </div>
         <div>
-          <h1 className="text-2xl font-bold">
-            {student?.lastName}, {student?.firstName}
-          </h1>
+          <h1 className="text-2xl font-bold">{student ? formatStudentFullName(student) : '—'}</h1>
           <p className="text-sm text-muted-foreground">
             RUT {student?.rut} · N° {student?.enrollmentNumber}
           </p>

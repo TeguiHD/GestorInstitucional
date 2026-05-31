@@ -14,6 +14,7 @@ import { api, ApiError } from '@/lib/api';
 import { attendanceQueue } from '@/lib/attendance-queue';
 import { useAttendanceSync } from '@/hooks/useAttendanceSync';
 import { cn } from '@/lib/cn';
+import { formatStudentFullName } from '@/lib/student-name';
 import {
   attendanceDraftStorageKey,
   buildPresentStatusMap,
@@ -36,6 +37,7 @@ type StudentStat = {
   id: string;
   firstName: string;
   lastName: string;
+  secondLastName?: string | null;
   enrollmentNumber: number;
   enrolledAt?: string;
   withdrawnAt?: string | null;
@@ -700,6 +702,7 @@ export function MonthlyAttendanceGrid({ courseId }: { courseId: string }) {
               </thead>
               <tbody>
                 {students.map((s, idx) => {
+                  const studentName = formatStudentFullName(s);
                   // Compute effective rate including dirty
                   let effPresent = 0,
                     effTotal = 0;
@@ -722,8 +725,8 @@ export function MonthlyAttendanceGrid({ courseId }: { courseId: string }) {
                       <td className="att-grid-sticky-left att-grid-name-cell">
                         <div className="att-grid-name-col">
                           <span className="att-grid-num">{s.enrollmentNumber}</span>
-                          <span className="att-grid-name" title={`${s.lastName}, ${s.firstName}`}>
-                            {s.lastName}, {s.firstName}
+                          <span className="att-grid-name" title={studentName}>
+                            {studentName}
                           </span>
                         </div>
                       </td>

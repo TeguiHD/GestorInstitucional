@@ -15,6 +15,7 @@ import { useState } from 'react';
 
 import { api } from '@/lib/api';
 import { cn } from '@/lib/cn';
+import { formatStudentFullName } from '@/lib/student-name';
 
 type MonthSummary = {
   date: string;
@@ -34,6 +35,7 @@ type AttendanceRecord = {
     id: string;
     firstName: string;
     lastName: string;
+    secondLastName?: string | null;
     enrollmentNumber: number;
     rut: string;
   };
@@ -421,6 +423,7 @@ export function AttendanceOverviewModal({ open, onOpenChange, courseId, courseNa
                           const statusKey = record.status as keyof typeof STATUS_CONFIG;
                           const config = STATUS_CONFIG[statusKey] ?? STATUS_CONFIG.PRESENT;
                           const Icon = config.icon;
+                          const studentName = formatStudentFullName(record.student);
                           return (
                             <div
                               key={record.id}
@@ -435,8 +438,8 @@ export function AttendanceOverviewModal({ open, onOpenChange, courseId, courseNa
                                 <Icon className={cn('size-4', config.text)} />
                               </div>
                               <div className="flex-1 min-w-0">
-                                <p className="text-sm font-medium truncate">
-                                  {record.student.lastName}, {record.student.firstName}
+                                <p className="text-sm font-medium truncate" title={studentName}>
+                                  {studentName}
                                 </p>
                                 <p className="text-xs text-muted-foreground">
                                   N° {record.student.enrollmentNumber} · {record.student.rut}

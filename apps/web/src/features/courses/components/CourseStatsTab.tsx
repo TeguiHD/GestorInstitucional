@@ -14,11 +14,13 @@ import { AlertTriangle, Info, Users, XCircle } from 'lucide-react';
 
 import { api } from '@/lib/api';
 import { cn } from '@/lib/cn';
+import { formatStudentFullName } from '@/lib/student-name';
 
 type StudentStat = {
   id: string;
   firstName: string;
   lastName: string;
+  secondLastName?: string | null;
   enrollmentNumber: number;
   total: number;
   present: number;
@@ -179,7 +181,7 @@ export function CourseStatsTab({ courseId }: { courseId: string }) {
           label="Mejor asistencia"
           value={best?.rate != null ? `${(best.rate * 100).toFixed(0)}%` : '—'}
           color="#22c55e"
-          sub={best ? `${best.lastName}, ${best.firstName}` : '—'}
+          sub={best ? formatStudentFullName(best) : '—'}
           loading={matrixLoading}
         />
         <KpiCard
@@ -189,9 +191,7 @@ export function CourseStatsTab({ courseId }: { courseId: string }) {
           }
           color={rateColor(worst?.rate ?? null)}
           sub={
-            worst?.rate != null && worst.rate < 0.9
-              ? `${worst.lastName}, ${worst.firstName}`
-              : 'Todos al día'
+            worst?.rate != null && worst.rate < 0.9 ? formatStudentFullName(worst) : 'Todos al día'
           }
           loading={matrixLoading}
         />
@@ -245,7 +245,7 @@ export function CourseStatsTab({ courseId }: { courseId: string }) {
             <div className="min-w-max">
               {/* Header */}
               <div className="flex items-center gap-px px-4 py-2 border-b border-border bg-muted/30">
-                <div className="w-44 text-xs text-muted-foreground font-medium shrink-0">
+                <div className="w-56 text-xs text-muted-foreground font-medium shrink-0">
                   Alumno
                 </div>
                 {matrix.dates.map((d) => {
@@ -271,15 +271,18 @@ export function CourseStatsTab({ courseId }: { courseId: string }) {
                     i % 2 === 0 ? 'bg-background' : 'bg-muted/20',
                   )}
                 >
-                  <div className="w-44 text-xs truncate shrink-0 font-medium">
-                    {s.lastName}, {s.firstName}
+                  <div
+                    className="w-56 text-xs truncate shrink-0 font-medium"
+                    title={formatStudentFullName(s)}
+                  >
+                    {formatStudentFullName(s)}
                   </div>
                   {matrix.dates.map((d) => {
                     const status = matrix.matrix[s.id]?.[d];
                     return (
                       <div
                         key={d}
-                        title={`${s.firstName} · ${d} · ${status ?? 'Sin registro'}`}
+                        title={`${formatStudentFullName(s)} · ${d} · ${status ?? 'Sin registro'}`}
                         className={cn(
                           'w-7 h-5 rounded-sm flex-shrink-0',
                           status ? (STATUS_BG[status] ?? 'bg-muted') : 'bg-muted/40',
@@ -345,9 +348,7 @@ export function CourseStatsTab({ courseId }: { courseId: string }) {
                 {sorted.map((s, i) => (
                   <tr key={s.id} className="border-t border-border hover:bg-muted/20 transition">
                     <td className="px-5 py-2.5 text-muted-foreground text-xs">{i + 1}</td>
-                    <td className="px-5 py-2.5 font-medium">
-                      {s.lastName}, {s.firstName}
-                    </td>
+                    <td className="px-5 py-2.5 font-medium">{formatStudentFullName(s)}</td>
                     <td className="px-3 py-2.5 text-center tabular-nums text-green-600 dark:text-green-400">
                       {s.present}
                     </td>

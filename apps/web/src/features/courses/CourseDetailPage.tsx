@@ -18,6 +18,7 @@ import { toast } from 'sonner';
 import { useUser } from '@/stores/auth.store';
 import { api, downloadBlob } from '@/lib/api';
 import { cn } from '@/lib/cn';
+import { formatStudentFullName } from '@/lib/student-name';
 import { CourseStatsTab } from './components/CourseStatsTab';
 import { StudentsTab } from './components/StudentsTab';
 import { JustificationsTab } from './components/JustificationsTab';
@@ -27,6 +28,7 @@ type Student = {
   id: string;
   firstName: string;
   lastName: string;
+  secondLastName?: string | null;
   enrollmentNumber: number;
   rut: string;
   enrolledAt?: string | undefined;
@@ -394,9 +396,7 @@ export function CourseDetailPage() {
                         <tr key={i} className="border-t border-border">
                           <td className="px-2 py-1">{r.enrollmentNumber}</td>
                           <td className="px-2 py-1 font-mono">{r.rut}</td>
-                          <td className="px-2 py-1">
-                            {r.lastName} {r.secondLastName ?? ''}, {r.firstName}
-                          </td>
+                          <td className="px-2 py-1">{formatStudentFullName(r)}</td>
                           <td className="px-2 py-1 text-muted-foreground">
                             {r.enrolledAt ?? 'Hoy'}
                           </td>
