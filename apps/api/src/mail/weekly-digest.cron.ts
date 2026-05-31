@@ -69,8 +69,8 @@ export class WeeklyDigestCron {
           } else if (r.status === AttendanceStatus.LATE) stats.late++;
           else if (r.status === AttendanceStatus.JUSTIFIED) stats.justified++;
         }
-        const effective = stats.total - stats.justified;
-        const rate = effective > 0 ? (stats.present + stats.late) / effective : 1;
+        const rate =
+          stats.total > 0 ? (stats.present + stats.late + stats.justified) / stats.total : 1;
 
         const { subject, html, text } = this.mail.templates.weeklyDigest({
           guardianName: `${g.guardian.firstName} ${g.guardian.lastName}`,

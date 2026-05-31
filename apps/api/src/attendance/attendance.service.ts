@@ -307,7 +307,8 @@ export class AttendanceService {
     return Array.from(byDate.entries()).map(([date, counts]) => ({
       date,
       ...counts,
-      attendanceRate: counts.total > 0 ? (counts.present + counts.late) / counts.total : 0,
+      attendanceRate:
+        counts.total > 0 ? (counts.present + counts.late + counts.justified) / counts.total : 0,
     }));
   }
 
@@ -347,7 +348,8 @@ export class AttendanceService {
     for (const row of grouped) {
       const cur = byCourse.get(row.courseId) ?? { total: 0, present: 0 };
       cur.total += row._count._all;
-      if (row.status === 'PRESENT' || row.status === 'LATE') cur.present += row._count._all;
+      if (row.status === 'PRESENT' || row.status === 'LATE' || row.status === 'JUSTIFIED')
+        cur.present += row._count._all;
       byCourse.set(row.courseId, cur);
     }
 
@@ -373,7 +375,8 @@ export class AttendanceService {
       const d = r.date.toISOString().split('T')[0]!;
       const cur = byDate.get(d) ?? { total: 0, present: 0 };
       cur.total += 1;
-      if (r.status === 'PRESENT' || r.status === 'LATE') cur.present += 1;
+      if (r.status === 'PRESENT' || r.status === 'LATE' || r.status === 'JUSTIFIED')
+        cur.present += 1;
       byDate.set(d, cur);
     }
 
@@ -478,7 +481,9 @@ export class AttendanceService {
       }
       const studentRecords = Object.values(matrix[s.id] ?? {}).filter((st) => st !== 'WITHDRAWN');
       const total = studentRecords.length;
-      const present = studentRecords.filter((st) => st === 'PRESENT' || st === 'LATE').length;
+      const present = studentRecords.filter(
+        (st) => st === 'PRESENT' || st === 'LATE' || st === 'JUSTIFIED',
+      ).length;
       const absent = studentRecords.filter((st) => st === 'ABSENT').length;
       const justified = studentRecords.filter((st) => st === 'JUSTIFIED').length;
       return { ...s, total, present, absent, justified, rate: total > 0 ? present / total : null };

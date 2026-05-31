@@ -611,7 +611,7 @@ export function MonthlyAttendanceGrid({ courseId }: { courseId: string }) {
           )}
           <span className="text-muted-foreground">
             {todayStats.total > 0
-              ? `${(((todayStats.present + todayStats.late) / todayStats.total) * 100).toFixed(0)}%`
+              ? `${(((todayStats.present + todayStats.late + todayStats.justified) / todayStats.total) * 100).toFixed(0)}%`
               : '—'}
           </span>
         </div>

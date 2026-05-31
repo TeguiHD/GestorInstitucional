@@ -291,7 +291,10 @@ export function StudentsTab({ courseId }: { courseId: string }) {
                         <div className="space-y-1">
                           <RateBar rate={student.rate} />
                           <p className="text-xs text-muted-foreground">
-                            {(student.present ?? 0) + (student.late ?? 0)}/{student.total} días
+                            {(student.present ?? 0) +
+                              (student.late ?? 0) +
+                              (student.justified ?? 0)}
+                            /{student.total} días
                           </p>
                         </div>
                       ) : (

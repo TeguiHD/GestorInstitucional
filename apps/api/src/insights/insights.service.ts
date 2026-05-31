@@ -4,7 +4,7 @@ import type { AttendanceStatus } from '@prisma/client';
 import { CalendarService } from '../calendar/calendar.service.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 
-const PRESENT_STATUSES: AttendanceStatus[] = ['PRESENT', 'LATE'];
+const PRESENT_STATUSES: AttendanceStatus[] = ['PRESENT', 'LATE', 'JUSTIFIED'];
 const DOW_NAMES = ['Domingo', 'Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado'];
 const MONTH_NAMES = [
   'enero',

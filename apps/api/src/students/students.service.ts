@@ -914,7 +914,7 @@ export class StudentsService {
       this.prisma.attendanceRecord.count({ where: { ...where, status: 'JUSTIFIED' } }),
     ]);
 
-    const attendanceRate = total > 0 ? (present + late) / total : 0;
+    const attendanceRate = total > 0 ? (present + late + justified) / total : 0;
     return { total, present, absent, late, justified, attendanceRate };
   }
 

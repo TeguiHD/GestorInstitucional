@@ -234,7 +234,7 @@ export class ReportsService {
       }
       const c = perStudent.get(s.id)!;
       const tot = c.p + c.a + c.l + c.j;
-      const rate = tot > 0 ? (c.p + c.l) / tot : 0;
+      const rate = tot > 0 ? (c.p + c.l + c.j) / tot : 0;
       if (tot > 0) {
         totalRate += rate;
         totalStudents++;
@@ -508,7 +508,7 @@ export class ReportsService {
       }
 
       const tot = p + a + l + j;
-      const rate = tot > 0 ? (p + l) / tot : 0;
+      const rate = tot > 0 ? (p + l + j) / tot : 0;
       if (tot > 0) {
         totalRate += rate;
         totalStudents++;
@@ -725,7 +725,7 @@ export class ReportsService {
       });
 
       const total = present + absent + justified;
-      const pct = total > 0 ? present / total : 0;
+      const pct = total > 0 ? (present + justified) / total : 0;
       ws.getCell(r, 10).value = present;
       ws.getCell(r, 10).border = borderAll;
       ws.getCell(r, 10).alignment = centerMid;
@@ -885,7 +885,7 @@ export class ReportsService {
       const e = summary.get(student.id) ?? { p: 0, a: 0, j: 0 };
       // P2 FIX: denominator = active school days over the whole semester period
       const activeDays = this.countActiveSchoolDays(student, semFrom, semTo);
-      const pct = activeDays > 0 ? e.p / activeDays : 0;
+      const pct = activeDays > 0 ? (e.p + e.j) / activeDays : 0;
       // P2: use real enrollmentNumber
       ws.getCell(r, 1).value = student.enrollmentNumber;
       ws.getCell(r, 1).border = borderAll;
@@ -1030,7 +1030,7 @@ export class ReportsService {
       const r = idx + 3;
       const e = summary.get(student.id) ?? { p: 0, a: 0, j: 0 };
       const total = e.p + e.a + e.j;
-      const pct = total > 0 ? e.p / total : 0;
+      const pct = total > 0 ? (e.p + e.j) / total : 0;
       ws.getCell(r, 1).value = idx + 1;
       ws.getCell(r, 1).border = borderAll;
       ws.getCell(r, 1).alignment = centerMid;
@@ -1179,7 +1179,7 @@ export class ReportsService {
       }
       const c = perStudent.get(s.id)!;
       const tot = c.p + c.a + c.l + c.j;
-      const rate = tot > 0 ? (c.p + c.l) / tot : 0;
+      const rate = tot > 0 ? (c.p + c.l + c.j) / tot : 0;
       if (tot > 0) {
         totalRate += rate;
         totalStudents++;
@@ -1351,7 +1351,7 @@ export class ReportsService {
       }
       const c = perStudent.get(s.id)!;
       const tot = c.p + c.a + c.l + c.j;
-      const rate = tot > 0 ? (c.p + c.l) / tot : 0;
+      const rate = tot > 0 ? (c.p + c.l + c.j) / tot : 0;
       if (tot > 0) {
         totalRate += rate;
         totalStudents++;
@@ -1697,7 +1697,7 @@ export class ReportsService {
 
       // P2 FIX: denominator = active school days for this student, not total records
       const activeDays = this.countActiveSchoolDays(student, periodFrom, periodTo);
-      const pct = activeDays > 0 ? present / activeDays : 0;
+      const pct = activeDays > 0 ? (present + justified) / activeDays : 0;
 
       const a = ws.getCell(r, 36);
       a.value = present;

@@ -5,7 +5,7 @@ import type { AlertTrigger } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { MailService } from '../mail/mail.service.js';
 
-const PRESENT = new Set(['PRESENT', 'LATE']);
+const PRESENT = new Set(['PRESENT', 'LATE', 'JUSTIFIED']);
 
 @Injectable()
 export class AlertsService {
