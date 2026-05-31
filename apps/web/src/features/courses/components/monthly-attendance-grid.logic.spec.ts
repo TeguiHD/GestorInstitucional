@@ -1,10 +1,13 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  attendanceDraftStorageKey,
   buildPresentStatusMap,
+  deserializeAttendanceDirty,
   getDateCompletion,
   getNextAttendanceStatus,
   isStudentActiveOnDate,
+  serializeAttendanceDirty,
 } from './monthly-attendance-grid.logic';
 
 const students = [
@@ -63,5 +66,65 @@ describe('monthly attendance grid logic', () => {
     expect(getNextAttendanceStatus('ABSENT')).toBe('LATE');
     expect(getNextAttendanceStatus('LATE')).toBe('JUSTIFIED');
     expect(getNextAttendanceStatus('JUSTIFIED')).toBe('PRESENT');
+  });
+
+  it('serializa y restaura un borrador mensual', () => {
+    const dirty = new Map([
+      [
+        '2026-05-12',
+        new Map([
+          ['s1', 'PRESENT' as const],
+          ['s2', 'ABSENT' as const],
+        ]),
+      ],
+    ]);
+
+    const serialized = serializeAttendanceDirty(dirty);
+    const restored = deserializeAttendanceDirty(serialized);
+
+    expect(serialized).toEqual({ '2026-05-12': { s1: 'PRESENT', s2: 'ABSENT' } });
+    expect(Object.fromEntries(restored.get('2026-05-12') ?? [])).toEqual({
+      s1: 'PRESENT',
+      s2: 'ABSENT',
+    });
+  });
+
+  it('descarta celdas invalidas al restaurar borrador', () => {
+    const restored = deserializeAttendanceDirty(
+      {
+        '2026-05-09': {
+          s1: 'PRESENT',
+          s2: 'ABSENT',
+          s3: 'LATE',
+          unknown: 'PRESENT',
+        },
+        '2026-05-12': {
+          s1: 'NOPE',
+        },
+        '2026-05-20': {
+          s1: 'PRESENT',
+        },
+      },
+      {
+        students,
+        dates: ['2026-05-09', '2026-05-12', '2026-05-20'],
+        matrix: {},
+        nonSchoolDays: { '2026-05-20': { type: 'HOLIDAY' } },
+        today: '2026-05-15',
+      },
+    );
+
+    expect(Object.fromEntries(restored.get('2026-05-09') ?? [])).toEqual({
+      s1: 'PRESENT',
+      s3: 'LATE',
+    });
+    expect(restored.has('2026-05-12')).toBe(false);
+    expect(restored.has('2026-05-20')).toBe(false);
+  });
+
+  it('usa una clave estable de borrador por curso y mes', () => {
+    expect(attendanceDraftStorageKey('course-1', 2026, 5)).toBe(
+      'cssp:attendance-draft:course-1:2026-05',
+    );
   });
 });

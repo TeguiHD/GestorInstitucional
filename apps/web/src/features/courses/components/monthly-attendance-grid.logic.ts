@@ -8,6 +8,7 @@ export type AttendanceGridStudent = {
 
 export type AttendanceGridMatrix = Record<string, Record<string, string>>;
 export type AttendanceGridDirty = Map<string, Map<string, AttendanceGridStatus>>;
+export type SerializedAttendanceGridDirty = Record<string, Record<string, AttendanceGridStatus>>;
 
 export const ATTENDANCE_GRID_STATUS_CYCLE: AttendanceGridStatus[] = [
   'PRESENT',
@@ -89,4 +90,61 @@ export function getDateCompletion(
     isEmpty: recordedStudentIds.length === 0,
     isPartial: recordedStudentIds.length > 0 && missingStudentIds.length > 0,
   };
+}
+
+export function attendanceDraftStorageKey(courseId: string, year: number, month: number): string {
+  return `cssp:attendance-draft:${courseId}:${year}-${String(month).padStart(2, '0')}`;
+}
+
+export function serializeAttendanceDirty(
+  dirty: AttendanceGridDirty,
+): SerializedAttendanceGridDirty {
+  return Object.fromEntries(
+    Array.from(dirty.entries()).map(([date, studentMap]) => [
+      date,
+      Object.fromEntries(studentMap.entries()),
+    ]),
+  );
+}
+
+export function deserializeAttendanceDirty(
+  raw: unknown,
+  opts?: {
+    students: AttendanceGridStudent[];
+    dates: string[];
+    matrix: AttendanceGridMatrix;
+    nonSchoolDays?: Record<string, unknown>;
+    today?: string;
+  },
+): AttendanceGridDirty {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return new Map();
+
+  const validDates = opts ? new Set(opts.dates) : null;
+  const studentsById = opts ? new Map(opts.students.map((student) => [student.id, student])) : null;
+  const dirty: AttendanceGridDirty = new Map();
+
+  for (const [date, studentEntries] of Object.entries(raw)) {
+    if (validDates && !validDates.has(date)) continue;
+    if (opts?.today && date > opts.today) continue;
+    if (opts?.nonSchoolDays?.[date]) continue;
+    if (!studentEntries || typeof studentEntries !== 'object' || Array.isArray(studentEntries)) {
+      continue;
+    }
+
+    const dateMap = new Map<string, AttendanceGridStatus>();
+    for (const [studentId, status] of Object.entries(studentEntries)) {
+      if (typeof status !== 'string') continue;
+      if (!isAttendanceGridStatus(status)) continue;
+
+      const student = studentsById?.get(studentId);
+      if (opts && (!student || !isStudentActiveOnDate(student, date))) continue;
+      if (opts?.matrix[studentId]?.[date] === 'WITHDRAWN') continue;
+
+      dateMap.set(studentId, status);
+    }
+
+    if (dateMap.size > 0) dirty.set(date, dateMap);
+  }
+
+  return dirty;
 }

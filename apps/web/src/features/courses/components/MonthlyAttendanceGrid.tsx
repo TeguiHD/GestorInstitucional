@@ -15,11 +15,14 @@ import { attendanceQueue } from '@/lib/attendance-queue';
 import { useAttendanceSync } from '@/hooks/useAttendanceSync';
 import { cn } from '@/lib/cn';
 import {
+  attendanceDraftStorageKey,
   buildPresentStatusMap,
+  deserializeAttendanceDirty,
   getDateCompletion,
   getNextAttendanceStatus,
   isAttendanceGridStatus,
   isStudentActiveOnDate,
+  serializeAttendanceDirty,
   type AttendanceGridStatus,
 } from './monthly-attendance-grid.logic';
 
@@ -109,6 +112,31 @@ function formatGridDate(date: string): string {
   });
 }
 
+function readStoredDraft(key: string): unknown | null {
+  try {
+    const raw = globalThis.localStorage?.getItem(key);
+    return raw ? JSON.parse(raw) : null;
+  } catch {
+    return null;
+  }
+}
+
+function writeStoredDraft(key: string, dirty: Map<string, Map<string, StatusKey>>): void {
+  try {
+    globalThis.localStorage?.setItem(key, JSON.stringify(serializeAttendanceDirty(dirty)));
+  } catch {
+    // Best effort only: the in-memory draft remains available during this tab session.
+  }
+}
+
+function removeStoredDraft(key: string): void {
+  try {
+    globalThis.localStorage?.removeItem(key);
+  } catch {
+    // Nothing to recover here.
+  }
+}
+
 class IncompleteAttendanceError extends Error {}
 
 type PendingConfirm = {
@@ -136,6 +164,8 @@ export function MonthlyAttendanceGrid({ courseId }: { courseId: string }) {
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const todayColRef = useRef<HTMLTableHeaderCellElement>(null);
+  const restoredDraftKeyRef = useRef<string | null>(null);
+  const skipNextDraftPersistRef = useRef<string | null>(null);
   const qc = useQueryClient();
   const { online, pendingCount, refreshCount } = useAttendanceSync();
 
@@ -147,6 +177,42 @@ export function MonthlyAttendanceGrid({ courseId }: { courseId: string }) {
   const students = matrix?.students ?? [];
   const dates = matrix?.dates ?? [];
   const todayKey = matrix?.today ?? '';
+  const draftKey = useMemo(
+    () => attendanceDraftStorageKey(courseId, year, month),
+    [courseId, month, year],
+  );
+
+  // Reset dirty when month/course changes; restoration below will rehydrate any local draft.
+  useEffect(() => {
+    setDirty(new Map());
+    setUnlockedDays(new Set());
+    setPendingConfirm(null);
+    restoredDraftKeyRef.current = null;
+    skipNextDraftPersistRef.current = null;
+  }, [courseId, year, month]);
+
+  useEffect(() => {
+    if (!matrix || restoredDraftKeyRef.current === draftKey) return;
+    restoredDraftKeyRef.current = draftKey;
+
+    const restored = deserializeAttendanceDirty(readStoredDraft(draftKey), {
+      students: matrix.students,
+      dates: matrix.dates,
+      matrix: matrix.matrix,
+      nonSchoolDays: matrix.nonSchoolDays,
+      today: matrix.today,
+    });
+
+    if (restored.size === 0) {
+      removeStoredDraft(draftKey);
+      return;
+    }
+
+    skipNextDraftPersistRef.current = draftKey;
+    setDirty(restored);
+    setUnlockedDays(new Set(Array.from(restored.keys()).filter((date) => date < matrix.today)));
+    toast.info('Borrador de asistencia recuperado');
+  }, [draftKey, matrix]);
 
   // Pre-mark today as all present if no records exist for today
   useEffect(() => {
@@ -158,6 +224,8 @@ export function MonthlyAttendanceGrid({ courseId }: { courseId: string }) {
     if (!matrix.schoolDays.includes(todayKey)) return;
     // Only if user hasn't already dirtied today
     if (dirty.has(todayKey)) return;
+    // Do not overwrite a recovered local draft.
+    if (readStoredDraft(draftKey)) return;
 
     const completion = getDateCompletion(matrix.students, todayKey, matrix.matrix);
     if (!completion.isEmpty) return;
@@ -170,7 +238,7 @@ export function MonthlyAttendanceGrid({ courseId }: { courseId: string }) {
         return next;
       });
     }
-  }, [dirty, matrix]);
+  }, [dirty, draftKey, matrix]);
 
   // Scroll to today column on load
   useEffect(() => {
@@ -183,18 +251,22 @@ export function MonthlyAttendanceGrid({ courseId }: { courseId: string }) {
     }
   }, [matrix]);
 
-  // Reset dirty when month changes
-  useEffect(() => {
-    setDirty(new Map());
-    setUnlockedDays(new Set());
-    setPendingConfirm(null);
-  }, [year, month]);
-
   const dirtyCount = useMemo(() => {
     let count = 0;
     dirty.forEach((m) => (count += m.size));
     return count;
   }, [dirty]);
+
+  useEffect(() => {
+    if (!matrix || restoredDraftKeyRef.current !== draftKey) return;
+    if (skipNextDraftPersistRef.current === draftKey) {
+      skipNextDraftPersistRef.current = null;
+      return;
+    }
+
+    if (dirtyCount === 0) removeStoredDraft(draftKey);
+    else writeStoredDraft(draftKey, dirty);
+  }, [dirty, dirtyCount, draftKey, matrix]);
 
   const dayCompletion = useMemo(() => {
     const byDate = new Map<string, ReturnType<typeof getDateCompletion>>();
@@ -347,6 +419,7 @@ export function MonthlyAttendanceGrid({ courseId }: { courseId: string }) {
       await Promise.all(promises);
     },
     onSuccess: () => {
+      removeStoredDraft(draftKey);
       setDirty(new Map());
       void qc.invalidateQueries({ queryKey: ['course-matrix', courseId, year, month] });
       toast.success('Asistencia guardada', {

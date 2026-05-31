@@ -94,10 +94,14 @@ const ROLE_LABELS: Record<string, string> = {
   APODERADO: 'Apoderado/a',
 };
 
-function NotificationBell({ schoolId }: { schoolId?: string }) {
+function NotificationBell({ schoolId, roles }: { schoolId?: string; roles: string[] }) {
   const [open, setOpen] = useState(false);
   const [position, setPosition] = useState({ top: 0, right: 0 });
   const buttonRef = useRef<HTMLButtonElement>(null);
+  const canReadFired = roles.some((role) => ['SUPER_ADMIN', 'DIRECTOR', 'UTP'].includes(role));
+  const canReadMissing = roles.some((role) =>
+    ['SUPER_ADMIN', 'DIRECTOR', 'UTP', 'INSPECTORIA'].includes(role),
+  );
   const [lastSeenMissing, setLastSeenMissing] = useState<number>(() => {
     const stored = localStorage.getItem('lastSeenMissingAttendance');
     return stored ? parseInt(stored, 10) : 0;
@@ -119,7 +123,7 @@ function NotificationBell({ schoolId }: { schoolId?: string }) {
       api.get<
         { id: string; firedAt: string; rule: { trigger: string; threshold: number | null } }[]
       >('/alerts/fired/recent'),
-    enabled: !!schoolId,
+    enabled: !!schoolId && canReadFired,
     refetchInterval: 5 * 60 * 1000,
   });
 
@@ -133,9 +137,11 @@ function NotificationBell({ schoolId }: { schoolId?: string }) {
         `/attendance/school/${schoolId}/missing?from=${from.toISOString().split('T')[0]}&to=${today.toISOString().split('T')[0]}`,
       );
     },
-    enabled: !!schoolId,
+    enabled: !!schoolId && canReadMissing,
     refetchInterval: 10 * 60 * 1000,
   });
+
+  if (!canReadFired && !canReadMissing) return null;
 
   const last24h = fired.filter((f) => Date.now() - new Date(f.firedAt).getTime() < 86_400_000);
   const totalMissingDays = missingAttendance.reduce((sum, m) => sum + m.missingDates.length, 0);
@@ -245,9 +251,16 @@ type Props = { children: React.ReactNode };
 export function AppLayout({ children }: Props) {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const logout = useAuthStore((s) => s.logout);
+  const isAuthenticated = useAuthStore((s) => !!s.accessToken && !!s.user);
   const user = useUser();
   const online = useOnlineStatus();
   const router = useRouter();
+
+  useEffect(() => {
+    if (!isAuthenticated) {
+      void router.navigate({ to: '/login', search: { reason: undefined }, replace: true });
+    }
+  }, [isAuthenticated, router]);
 
   const handleLogout = async () => {
     await logout();
@@ -376,7 +389,9 @@ export function AppLayout({ children }: Props) {
           <div className="min-w-0 flex-1" />
           <div className="ml-auto flex min-w-0 shrink items-center gap-1.5 sm:gap-2">
             {roles.includes('SUPER_ADMIN') && <SchoolSelector />}
-            {isStaff && user?.schoolId && <NotificationBell schoolId={user.schoolId} />}
+            {isStaff && user?.schoolId && (
+              <NotificationBell schoolId={user.schoolId} roles={roles} />
+            )}
             <ThemeToggle />
           </div>
         </header>

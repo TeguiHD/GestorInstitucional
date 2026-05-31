@@ -1,7 +1,7 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 
-import { api, setAccessToken } from '@/lib/api';
+import { api, configureAuthHandlers, setAccessToken } from '@/lib/api';
 
 export type AuthUser = {
   sub: string;
@@ -138,3 +138,8 @@ export const useAuthStore = create<AuthState>()(
 
 export const useUser = () => useAuthStore((s) => s.user);
 export const useIsAuthenticated = () => useAuthStore((s) => !!s.accessToken && !!s.user);
+
+configureAuthHandlers({
+  onTokenRefresh: (accessToken) => useAuthStore.getState().setTokens(accessToken),
+  onSessionExpired: () => useAuthStore.getState().clearAuth(),
+});
