@@ -229,7 +229,8 @@ export function StudentDetailPage() {
           year: '2-digit',
         }) ?? '—',
     };
-    if (r.status === 'PRESENT' || r.status === 'LATE') acc[key]!.present++;
+    if (r.status === 'PRESENT' || r.status === 'LATE' || r.status === 'JUSTIFIED')
+      acc[key]!.present++;
     else if (r.status === 'ABSENT') acc[key]!.absent++;
     return acc;
   }, {});

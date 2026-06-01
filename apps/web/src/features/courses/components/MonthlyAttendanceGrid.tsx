@@ -713,7 +713,7 @@ export function MonthlyAttendanceGrid({ courseId }: { courseId: string }) {
                     if (matrix?.nonSchoolDays[d]) continue;
                     if (!isAttendanceGridStatus(st)) continue;
                     effTotal++;
-                    if (st === 'PRESENT' || st === 'LATE') effPresent++;
+                    if (st === 'PRESENT' || st === 'LATE' || st === 'JUSTIFIED') effPresent++;
                   }
                   const effRate = effTotal > 0 ? effPresent / effTotal : null;
 
