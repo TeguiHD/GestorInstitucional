@@ -9,6 +9,7 @@ import { WITHDRAWAL_REASONS, type WithdrawalReason } from '@asistencia/shared';
 
 import { PrismaService } from '../prisma/prisma.service.js';
 import { AuditService } from '../audit/audit.service.js';
+import { SchoolConfigService, type DateRange } from '../school-config/school-config.service.js';
 
 function formatWithdrawalReason(
   withdrawalReason: WithdrawalReason | string | null | undefined,
@@ -44,6 +45,7 @@ export class ReportsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly audit: AuditService,
+    private readonly schoolConfig: SchoolConfigService,
   ) {}
 
   async generateCourseExcel(
@@ -767,9 +769,18 @@ export class ReportsService {
     semester: number,
     requestedById: string,
   ): Promise<Buffer> {
-    const months = semester === 1 ? [1, 2, 3, 4, 5, 6] : [7, 8, 9, 10, 11, 12];
-    const semFrom = new Date(year, months[0]! - 1, 1);
-    const semTo = new Date(year, months[months.length - 1]!, 0, 23, 59, 59);
+    const courseHead = await this.prisma.course.findUniqueOrThrow({
+      where: { id: courseId },
+      select: { schoolId: true },
+    });
+    const semesterNumber = this.toSemesterNumber(semester);
+    const period = await this.schoolConfig.getSemesterPeriod(
+      courseHead.schoolId,
+      year,
+      semesterNumber,
+    );
+    const ranges = period.ranges;
+    const monthRanges = this.schoolConfig.monthsForRanges(ranges);
 
     const course = await this.prisma.course.findUniqueOrThrow({
       where: { id: courseId },
@@ -777,7 +788,7 @@ export class ReportsService {
         school: true,
         teachers: { include: { user: true }, where: { isHead: true }, take: 1 },
         students: {
-          where: this.activeDuringPeriodWhere(semFrom, semTo),
+          where: this.schoolConfig.activeDuringRangesWhere(ranges),
           orderBy: { enrollmentNumber: 'asc' },
         },
       },
@@ -798,7 +809,7 @@ export class ReportsService {
 
     // Single query for all semester months — group in memory by month
     const allRecords = await this.prisma.attendanceRecord.findMany({
-      where: { courseId, date: { gte: semFrom, lte: semTo } },
+      where: { courseId, ...this.schoolConfig.attendanceWhereForRanges(ranges) },
       select: { studentId: true, date: true, status: true },
     });
     const byMonth = new Map<number, Array<{ studentId: string; date: Date; status: string }>>();
@@ -811,7 +822,7 @@ export class ReportsService {
     const allEvents = await this.prisma.enrollmentEvent.findMany({
       where: {
         courseId,
-        effectiveDate: { gte: semFrom, lte: semTo },
+        ...this.schoolConfig.enrollmentWhereForRanges(ranges),
         status: { in: ['ACTIVE', 'WITHDRAWN', 'RE_ENROLLED', 'TRANSFERRED_IN', 'TRANSFERRED_OUT'] },
         voidedAt: null,
       },
@@ -821,23 +832,23 @@ export class ReportsService {
       orderBy: { effectiveDate: 'asc' },
     });
 
-    for (const month of months) {
-      const records = byMonth.get(month) ?? [];
-      const to = new Date(year, month, 0);
-      const from = new Date(year, month - 1, 1);
+    for (const monthRange of monthRanges) {
+      const { month, from, to } = monthRange;
+      const records = (byMonth.get(month) ?? []).filter((record) =>
+        this.schoolConfig.isDateInRanges(record.date, [monthRange]),
+      );
       const recordMap = new Map<string, Map<string, string>>();
       for (const r of records) {
         const key = r.date.toISOString().split('T')[0]!;
         if (!recordMap.has(r.studentId)) recordMap.set(r.studentId, new Map());
         recordMap.get(r.studentId)!.set(key, SYMBOL[r.status] ?? '-');
       }
-      this.buildMonthSheet(wb, { course, year, month, to, records: recordMap });
+      this.buildMonthSheet(wb, { course, year, month, from, to, records: recordMap });
 
       // Add monthly control subvenciones sheet for each month
-      const monthEvents = allEvents.filter((e) => {
-        const d = this.startOfDay(e.effectiveDate);
-        return d >= from && d <= to;
-      });
+      const monthEvents = allEvents.filter((e) =>
+        this.schoolConfig.isDateInRanges(e.effectiveDate, [monthRange]),
+      );
       this.buildMovimientosSheet(wb, { course, year, month, from, to, events: monthEvents });
 
       for (const r of records) {
@@ -884,7 +895,7 @@ export class ReportsService {
       const r = rowIdx + 3;
       const e = summary.get(student.id) ?? { p: 0, a: 0, j: 0 };
       // P2 FIX: denominator = active school days over the whole semester period
-      const activeDays = this.countActiveSchoolDays(student, semFrom, semTo);
+      const activeDays = this.schoolConfig.countActiveSchoolDaysInRanges(student, ranges);
       const pct = activeDays > 0 ? (e.p + e.j) / activeDays : 0;
       // P2: use real enrollmentNumber
       ws.getCell(r, 1).value = student.enrollmentNumber;
@@ -934,9 +945,13 @@ export class ReportsService {
     year: number,
     requestedById: string,
   ): Promise<Buffer> {
-    const months = Array.from({ length: 12 }, (_, i) => i + 1);
-    const yearFrom = new Date(year, 0, 1);
-    const yearTo = new Date(year, 11, 31, 23, 59, 59);
+    const courseHead = await this.prisma.course.findUniqueOrThrow({
+      where: { id: courseId },
+      select: { schoolId: true },
+    });
+    const period = await this.schoolConfig.getAnnualPeriod(courseHead.schoolId, year);
+    const ranges = period.ranges;
+    const monthRanges = this.schoolConfig.monthsForRanges(ranges);
 
     const course = await this.prisma.course.findUniqueOrThrow({
       where: { id: courseId },
@@ -944,7 +959,7 @@ export class ReportsService {
         school: true,
         teachers: { include: { user: true }, where: { isHead: true }, take: 1 },
         students: {
-          where: this.activeDuringPeriodWhere(yearFrom, yearTo),
+          where: this.schoolConfig.activeDuringRangesWhere(ranges),
           orderBy: { enrollmentNumber: 'asc' },
         },
       },
@@ -965,10 +980,7 @@ export class ReportsService {
 
     // Single query for entire year — group in memory by month
     const allRecords = await this.prisma.attendanceRecord.findMany({
-      where: {
-        courseId,
-        date: { gte: new Date(year, 0, 1), lte: new Date(year, 11, 31, 23, 59, 59) },
-      },
+      where: { courseId, ...this.schoolConfig.attendanceWhereForRanges(ranges) },
       select: { studentId: true, date: true, status: true },
     });
     const byMonth = new Map<number, Array<{ studentId: string; date: Date; status: string }>>();
@@ -978,16 +990,18 @@ export class ReportsService {
       byMonth.get(m)!.push(r);
     }
 
-    for (const month of months) {
-      const records = byMonth.get(month) ?? [];
-      const to = new Date(year, month, 0);
+    for (const monthRange of monthRanges) {
+      const { month, from, to } = monthRange;
+      const records = (byMonth.get(month) ?? []).filter((record) =>
+        this.schoolConfig.isDateInRanges(record.date, [monthRange]),
+      );
       const recordMap = new Map<string, Map<string, string>>();
       for (const r of records) {
         const key = r.date.toISOString().split('T')[0]!;
         if (!recordMap.has(r.studentId)) recordMap.set(r.studentId, new Map());
         recordMap.get(r.studentId)!.set(key, SYMBOL[r.status] ?? '-');
       }
-      this.buildMonthSheet(wb, { course, year, month, to, records: recordMap });
+      this.buildMonthSheet(wb, { course, year, month, from, to, records: recordMap });
 
       for (const r of records) {
         const e = summary.get(r.studentId);
@@ -1029,8 +1043,8 @@ export class ReportsService {
     course.students.forEach((student, idx) => {
       const r = idx + 3;
       const e = summary.get(student.id) ?? { p: 0, a: 0, j: 0 };
-      const total = e.p + e.a + e.j;
-      const pct = total > 0 ? (e.p + e.j) / total : 0;
+      const activeDays = this.schoolConfig.countActiveSchoolDaysInRanges(student, ranges);
+      const pct = activeDays > 0 ? (e.p + e.j) / activeDays : 0;
       ws.getCell(r, 1).value = idx + 1;
       ws.getCell(r, 1).border = borderAll;
       ws.getCell(r, 1).alignment = centerMid;
@@ -1078,10 +1092,19 @@ export class ReportsService {
     semester: number,
     requestedById: string,
   ): Promise<Buffer> {
-    const months = semester === 1 ? [1, 2, 3, 4, 5, 6] : [7, 8, 9, 10, 11, 12];
+    const courseHead = await this.prisma.course.findUniqueOrThrow({
+      where: { id: courseId },
+      select: { schoolId: true },
+    });
+    const semesterNumber = this.toSemesterNumber(semester);
+    const period = await this.schoolConfig.getSemesterPeriod(
+      courseHead.schoolId,
+      year,
+      semesterNumber,
+    );
+    const ranges = period.ranges;
+    const monthRanges = this.schoolConfig.monthsForRanges(ranges);
     const semLabel = semester === 1 ? '1er Semestre' : '2do Semestre';
-    const semFrom = new Date(year, months[0]! - 1, 1);
-    const semTo = new Date(year, months[months.length - 1]!, 0, 23, 59, 59);
 
     const course = await this.prisma.course.findUniqueOrThrow({
       where: { id: courseId },
@@ -1089,7 +1112,7 @@ export class ReportsService {
         school: true,
         teachers: { include: { user: true }, where: { isHead: true }, take: 1 },
         students: {
-          where: this.activeDuringPeriodWhere(semFrom, semTo),
+          where: this.schoolConfig.activeDuringRangesWhere(ranges),
           orderBy: { enrollmentNumber: 'asc' },
         },
       },
@@ -1100,7 +1123,7 @@ export class ReportsService {
 
     // Single query for all semester months
     const allSemRecords = await this.prisma.attendanceRecord.findMany({
-      where: { courseId, date: { gte: semFrom, lte: semTo } },
+      where: { courseId, ...this.schoolConfig.attendanceWhereForRanges(ranges) },
       select: { studentId: true, status: true },
     });
     for (const r of allSemRecords) {
@@ -1153,9 +1176,14 @@ export class ReportsService {
       .fillColor('#555')
       .font('Helvetica')
       .text(`Profesor jefe: ${head ? `${head.firstName} ${head.lastName}` : '—'}`, 48, 148)
-      .text(`Meses: ${months.map((m) => MONTH_NAMES_ES[m - 1]).join(', ')}`, 48, 162);
+      .text(`Período: ${this.periodLabel(ranges)}`, 48, 162)
+      .text(
+        `Meses: ${monthRanges.map((range) => MONTH_NAMES_ES[range.month - 1]).join(', ')}`,
+        48,
+        176,
+      );
 
-    let y = 190;
+    let y = 204;
     const rowH = 18;
     doc.rect(48, y, 499, rowH).fill('#1F4E79');
     doc.fillColor('#fff').font('Helvetica-Bold').fontSize(9);
@@ -1178,9 +1206,9 @@ export class ReportsService {
         y = 60;
       }
       const c = perStudent.get(s.id)!;
-      const tot = c.p + c.a + c.l + c.j;
-      const rate = tot > 0 ? (c.p + c.l + c.j) / tot : 0;
-      if (tot > 0) {
+      const activeDays = this.schoolConfig.countActiveSchoolDaysInRanges(s, ranges);
+      const rate = activeDays > 0 ? (c.p + c.l + c.j) / activeDays : 0;
+      if (activeDays > 0) {
         totalRate += rate;
         totalStudents++;
       }
@@ -1201,7 +1229,7 @@ export class ReportsService {
       doc.text(String(c.j), 468, y + 5, { width: 22, align: 'center' });
       const rateColor = rate >= 0.9 ? '#15803d' : rate >= 0.7 ? '#b45309' : '#b91c1c';
       doc.fillColor(rateColor).font('Helvetica-Bold');
-      doc.text(tot > 0 ? `${(rate * 100).toFixed(1)}%` : '—', 494, y + 5, {
+      doc.text(activeDays > 0 ? `${(rate * 100).toFixed(1)}%` : '—', 494, y + 5, {
         width: 50,
         align: 'center',
       });
@@ -1249,8 +1277,12 @@ export class ReportsService {
   }
 
   async generateAnnualPdf(courseId: string, year: number, requestedById: string): Promise<Buffer> {
-    const yearFrom = new Date(year, 0, 1);
-    const yearTo = new Date(year, 11, 31, 23, 59, 59);
+    const courseHead = await this.prisma.course.findUniqueOrThrow({
+      where: { id: courseId },
+      select: { schoolId: true },
+    });
+    const period = await this.schoolConfig.getAnnualPeriod(courseHead.schoolId, year);
+    const ranges = period.ranges;
 
     const course = await this.prisma.course.findUniqueOrThrow({
       where: { id: courseId },
@@ -1258,7 +1290,7 @@ export class ReportsService {
         school: true,
         teachers: { include: { user: true }, where: { isHead: true }, take: 1 },
         students: {
-          where: this.activeDuringPeriodWhere(yearFrom, yearTo),
+          where: this.schoolConfig.activeDuringRangesWhere(ranges),
           orderBy: { enrollmentNumber: 'asc' },
         },
       },
@@ -1269,10 +1301,7 @@ export class ReportsService {
 
     // Single query for entire year
     const allAnnualRecords = await this.prisma.attendanceRecord.findMany({
-      where: {
-        courseId,
-        date: { gte: new Date(year, 0, 1), lte: new Date(year, 11, 31, 23, 59, 59) },
-      },
+      where: { courseId, ...this.schoolConfig.attendanceWhereForRanges(ranges) },
       select: { studentId: true, status: true },
     });
     for (const r of allAnnualRecords) {
@@ -1325,7 +1354,7 @@ export class ReportsService {
       .fillColor('#555')
       .font('Helvetica')
       .text(`Profesor jefe: ${head ? `${head.firstName} ${head.lastName}` : '—'}`, 48, 148)
-      .text(`Periodo: ${MONTH_NAMES_ES[0]} – ${MONTH_NAMES_ES[11]}`, 48, 162);
+      .text(`Periodo: ${this.periodLabel(ranges)}`, 48, 162);
 
     let y = 190;
     const rowH = 18;
@@ -1350,9 +1379,9 @@ export class ReportsService {
         y = 60;
       }
       const c = perStudent.get(s.id)!;
-      const tot = c.p + c.a + c.l + c.j;
-      const rate = tot > 0 ? (c.p + c.l + c.j) / tot : 0;
-      if (tot > 0) {
+      const activeDays = this.schoolConfig.countActiveSchoolDaysInRanges(s, ranges);
+      const rate = activeDays > 0 ? (c.p + c.l + c.j) / activeDays : 0;
+      if (activeDays > 0) {
         totalRate += rate;
         totalStudents++;
       }
@@ -1373,7 +1402,7 @@ export class ReportsService {
       doc.text(String(c.j), 468, y + 5, { width: 22, align: 'center' });
       const rateColor = rate >= 0.9 ? '#15803d' : rate >= 0.7 ? '#b45309' : '#b91c1c';
       doc.fillColor(rateColor).font('Helvetica-Bold');
-      doc.text(tot > 0 ? `${(rate * 100).toFixed(1)}%` : '—', 494, y + 5, {
+      doc.text(activeDays > 0 ? `${(rate * 100).toFixed(1)}%` : '—', 494, y + 5, {
         width: 50,
         align: 'center',
       });
@@ -1656,11 +1685,7 @@ export class ReportsService {
     semester: number,
     requestedById: string,
   ): Promise<Buffer> {
-    const months = semester === 1 ? [1, 2, 3, 4, 5, 6] : [7, 8, 9, 10, 11, 12];
     const semLabel = semester === 1 ? '1er Semestre' : '2do Semestre';
-    const semFrom = new Date(year, months[0]! - 1, 1);
-    const semTo = new Date(year, months[months.length - 1]!, 0, 23, 59, 59);
-
     const student = await this.prisma.student.findUniqueOrThrow({
       where: { id: studentId },
       include: {
@@ -1672,15 +1697,23 @@ export class ReportsService {
         },
       },
     });
+    const semesterNumber = this.toSemesterNumber(semester);
+    const period = await this.schoolConfig.getSemesterPeriod(
+      student.course.schoolId,
+      year,
+      semesterNumber,
+    );
+    const ranges = period.ranges;
+    const monthRanges = this.schoolConfig.monthsForRanges(ranges);
 
     const records = await this.prisma.attendanceRecord.findMany({
-      where: { studentId, date: { gte: semFrom, lte: semTo } },
+      where: { studentId, ...this.schoolConfig.attendanceWhereForRanges(ranges) },
       select: { date: true, status: true },
       orderBy: { date: 'asc' },
     });
 
     const byMonth = new Map<number, { p: number; a: number; l: number; j: number }>();
-    for (const m of months) byMonth.set(m, { p: 0, a: 0, l: 0, j: 0 });
+    for (const range of monthRanges) byMonth.set(range.month, { p: 0, a: 0, l: 0, j: 0 });
     for (const r of records) {
       const m = r.date.getMonth() + 1;
       const e = byMonth.get(m);
@@ -1701,7 +1734,7 @@ export class ReportsService {
       totalL += e.l;
       totalJ += e.j;
     }
-    const activeDays = this.countActiveSchoolDays(student, semFrom, semTo);
+    const activeDays = this.schoolConfig.countActiveSchoolDaysInRanges(student, ranges);
     const rate = activeDays > 0 ? (totalP + totalL + totalJ) / activeDays : 0;
 
     const doc = new PDFDocument({ size: 'A4', margin: 48 });
@@ -1771,13 +1804,12 @@ export class ReportsService {
     y += rowH;
 
     doc.font('Helvetica').fontSize(9).fillColor('#000');
-    for (const [i, m] of months.entries()) {
+    for (const [i, monthRange] of monthRanges.entries()) {
+      const m = monthRange.month;
       const e = byMonth.get(m)!;
-      const monthActiveDays = this.countActiveSchoolDays(
-        student,
-        new Date(year, m - 1, 1),
-        new Date(year, m, 0),
-      );
+      const monthActiveDays = this.schoolConfig.countActiveSchoolDaysInRanges(student, [
+        monthRange,
+      ]);
       const monthRate = monthActiveDays > 0 ? (e.p + e.l + e.j) / monthActiveDays : 0;
       const band = i % 2 === 0 ? '#F5F8FB' : '#FFFFFF';
       doc.rect(48, y, 499, rowH).fill(band);
@@ -1862,9 +1894,6 @@ export class ReportsService {
     year: number,
     requestedById: string,
   ): Promise<Buffer> {
-    const yearFrom = new Date(year, 0, 1);
-    const yearTo = new Date(year, 11, 31, 23, 59, 59);
-
     const student = await this.prisma.student.findUniqueOrThrow({
       where: { id: studentId },
       include: {
@@ -1876,15 +1905,18 @@ export class ReportsService {
         },
       },
     });
+    const period = await this.schoolConfig.getAnnualPeriod(student.course.schoolId, year);
+    const ranges = period.ranges;
+    const monthRanges = this.schoolConfig.monthsForRanges(ranges);
 
     const records = await this.prisma.attendanceRecord.findMany({
-      where: { studentId, date: { gte: yearFrom, lte: yearTo } },
+      where: { studentId, ...this.schoolConfig.attendanceWhereForRanges(ranges) },
       select: { date: true, status: true },
       orderBy: { date: 'asc' },
     });
 
     const byMonth = new Map<number, { p: number; a: number; l: number; j: number }>();
-    for (let m = 1; m <= 12; m++) byMonth.set(m, { p: 0, a: 0, l: 0, j: 0 });
+    for (const range of monthRanges) byMonth.set(range.month, { p: 0, a: 0, l: 0, j: 0 });
     for (const r of records) {
       const m = r.date.getMonth() + 1;
       const e = byMonth.get(m);
@@ -1905,7 +1937,7 @@ export class ReportsService {
       totalL += e.l;
       totalJ += e.j;
     }
-    const activeDays = this.countActiveSchoolDays(student, yearFrom, yearTo);
+    const activeDays = this.schoolConfig.countActiveSchoolDaysInRanges(student, ranges);
     const rate = activeDays > 0 ? (totalP + totalL + totalJ) / activeDays : 0;
 
     const doc = new PDFDocument({ size: 'A4', margin: 48 });
@@ -1975,19 +2007,18 @@ export class ReportsService {
     y += rowH;
 
     doc.font('Helvetica').fontSize(9).fillColor('#000');
-    for (let m = 1; m <= 12; m++) {
+    for (const [i, monthRange] of monthRanges.entries()) {
+      const m = monthRange.month;
       if (y > 740) {
         doc.addPage();
         y = 60;
       }
       const e = byMonth.get(m)!;
-      const monthActiveDays = this.countActiveSchoolDays(
-        student,
-        new Date(year, m - 1, 1),
-        new Date(year, m, 0),
-      );
+      const monthActiveDays = this.schoolConfig.countActiveSchoolDaysInRanges(student, [
+        monthRange,
+      ]);
       const monthRate = monthActiveDays > 0 ? (e.p + e.l + e.j) / monthActiveDays : 0;
-      const band = m % 2 === 0 ? '#F5F8FB' : '#FFFFFF';
+      const band = i % 2 === 0 ? '#F5F8FB' : '#FFFFFF';
       doc.rect(48, y, 499, rowH).fill(band);
       doc.fillColor('#000');
       doc.text(MONTH_NAMES_ES[m - 1] ?? '', 54, y + 5, { width: 100 });
@@ -2306,11 +2337,7 @@ export class ReportsService {
     semester: number,
     requestedById: string,
   ): Promise<Buffer> {
-    const months = semester === 1 ? [1, 2, 3, 4, 5, 6] : [7, 8, 9, 10, 11, 12];
     const semLabel = semester === 1 ? '1er Semestre' : '2do Semestre';
-    const semFrom = new Date(year, months[0]! - 1, 1);
-    const semTo = new Date(year, months[months.length - 1]!, 0, 23, 59, 59);
-
     const student = await this.prisma.student.findUniqueOrThrow({
       where: { id: studentId },
       include: {
@@ -2322,9 +2349,17 @@ export class ReportsService {
         },
       },
     });
+    const semesterNumber = this.toSemesterNumber(semester);
+    const period = await this.schoolConfig.getSemesterPeriod(
+      student.course.schoolId,
+      year,
+      semesterNumber,
+    );
+    const ranges = period.ranges;
+    const monthRanges = this.schoolConfig.monthsForRanges(ranges);
 
     const allRecords = await this.prisma.attendanceRecord.findMany({
-      where: { studentId, date: { gte: semFrom, lte: semTo } },
+      where: { studentId, ...this.schoolConfig.attendanceWhereForRanges(ranges) },
       select: { date: true, status: true },
       orderBy: { date: 'asc' },
     });
@@ -2357,12 +2392,13 @@ export class ReportsService {
       JUSTIFIED: { label: 'Justificado', color: YELLOW, sym: 'J' },
     };
 
-    for (const month of months) {
+    for (const monthRange of monthRanges) {
+      const { month, to: monthTo } = monthRange;
       const monthName = MONTH_NAMES_ES[month - 1] ?? '';
-      const monthFrom = new Date(year, month - 1, 1);
-      const monthTo = new Date(year, month, 0);
       const daysInMonth = monthTo.getDate();
-      const records = byMonth.get(month) ?? [];
+      const records = (byMonth.get(month) ?? []).filter((record) =>
+        this.schoolConfig.isDateInRanges(record.date, [monthRange]),
+      );
       const recordMap = new Map<number, string>();
       for (const r of records) {
         recordMap.set(r.date.getDate(), r.status);
@@ -2409,6 +2445,7 @@ export class ReportsService {
         const date = new Date(year, month - 1, d);
         const dow = date.getDay();
         const isWeekend = dow === 0 || dow === 6;
+        const outsidePeriod = !this.schoolConfig.isDateInRanges(date, [monthRange]);
         const status = recordMap.get(d);
 
         ws.getCell(r, 1).value = d;
@@ -2418,7 +2455,7 @@ export class ReportsService {
         ws.getCell(r, 2).alignment = centerMid;
         ws.getCell(r, 2).border = borderAll;
 
-        if (isWeekend) {
+        if (outsidePeriod || isWeekend) {
           for (let c = 1; c <= 4; c++) {
             ws.getCell(r, c).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: GRAY } };
           }
@@ -2458,7 +2495,7 @@ export class ReportsService {
       }
 
       r += 2;
-      const activeDays = this.countActiveSchoolDays(student, monthFrom, monthTo);
+      const activeDays = this.schoolConfig.countActiveSchoolDaysInRanges(student, [monthRange]);
       const rate = activeDays > 0 ? (p + l + j) / activeDays : 0;
       ws.getCell(r, 1).value = 'P:';
       ws.getCell(r, 1).font = { bold: true };
@@ -2511,8 +2548,11 @@ export class ReportsService {
       totalA = 0,
       totalL = 0,
       totalJ = 0;
-    for (const [i, month] of months.entries()) {
-      const monthRecords = byMonth.get(month) ?? [];
+    for (const [i, monthRange] of monthRanges.entries()) {
+      const month = monthRange.month;
+      const monthRecords = (byMonth.get(month) ?? []).filter((record) =>
+        this.schoolConfig.isDateInRanges(record.date, [monthRange]),
+      );
       let mp = 0,
         ma = 0,
         ml = 0,
@@ -2528,9 +2568,7 @@ export class ReportsService {
       totalL += ml;
       totalJ += mj;
 
-      const monthFrom = new Date(year, month - 1, 1);
-      const monthTo = new Date(year, month, 0);
-      const activeDays = this.countActiveSchoolDays(student, monthFrom, monthTo);
+      const activeDays = this.schoolConfig.countActiveSchoolDaysInRanges(student, [monthRange]);
       const rate = activeDays > 0 ? (mp + ml + mj) / activeDays : 0;
 
       const r = i + 3;
@@ -2577,9 +2615,6 @@ export class ReportsService {
     year: number,
     requestedById: string,
   ): Promise<Buffer> {
-    const yearFrom = new Date(year, 0, 1);
-    const yearTo = new Date(year, 11, 31, 23, 59, 59);
-
     const student = await this.prisma.student.findUniqueOrThrow({
       where: { id: studentId },
       include: {
@@ -2591,9 +2626,12 @@ export class ReportsService {
         },
       },
     });
+    const period = await this.schoolConfig.getAnnualPeriod(student.course.schoolId, year);
+    const ranges = period.ranges;
+    const monthRanges = this.schoolConfig.monthsForRanges(ranges);
 
     const allRecords = await this.prisma.attendanceRecord.findMany({
-      where: { studentId, date: { gte: yearFrom, lte: yearTo } },
+      where: { studentId, ...this.schoolConfig.attendanceWhereForRanges(ranges) },
       select: { date: true, status: true },
       orderBy: { date: 'asc' },
     });
@@ -2626,12 +2664,13 @@ export class ReportsService {
       JUSTIFIED: { label: 'Justificado', color: YELLOW, sym: 'J' },
     };
 
-    for (let month = 1; month <= 12; month++) {
+    for (const monthRange of monthRanges) {
+      const { month, to: monthTo } = monthRange;
       const monthName = MONTH_NAMES_ES[month - 1] ?? '';
-      const monthFrom = new Date(year, month - 1, 1);
-      const monthTo = new Date(year, month, 0);
       const daysInMonth = monthTo.getDate();
-      const records = byMonth.get(month) ?? [];
+      const records = (byMonth.get(month) ?? []).filter((record) =>
+        this.schoolConfig.isDateInRanges(record.date, [monthRange]),
+      );
       const recordMap = new Map<number, string>();
       for (const r of records) {
         recordMap.set(r.date.getDate(), r.status);
@@ -2678,6 +2717,7 @@ export class ReportsService {
         const date = new Date(year, month - 1, d);
         const dow = date.getDay();
         const isWeekend = dow === 0 || dow === 6;
+        const outsidePeriod = !this.schoolConfig.isDateInRanges(date, [monthRange]);
         const status = recordMap.get(d);
 
         ws.getCell(r, 1).value = d;
@@ -2687,7 +2727,7 @@ export class ReportsService {
         ws.getCell(r, 2).alignment = centerMid;
         ws.getCell(r, 2).border = borderAll;
 
-        if (isWeekend) {
+        if (outsidePeriod || isWeekend) {
           for (let c = 1; c <= 4; c++) {
             ws.getCell(r, c).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: GRAY } };
           }
@@ -2727,7 +2767,7 @@ export class ReportsService {
       }
 
       r += 2;
-      const activeDays = this.countActiveSchoolDays(student, monthFrom, monthTo);
+      const activeDays = this.schoolConfig.countActiveSchoolDaysInRanges(student, [monthRange]);
       const rate = activeDays > 0 ? (p + l + j) / activeDays : 0;
       ws.getCell(r, 1).value = 'P:';
       ws.getCell(r, 1).font = { bold: true };
@@ -2780,8 +2820,11 @@ export class ReportsService {
       totalA = 0,
       totalL = 0,
       totalJ = 0;
-    for (let month = 1; month <= 12; month++) {
-      const monthRecords = byMonth.get(month) ?? [];
+    for (const [i, monthRange] of monthRanges.entries()) {
+      const month = monthRange.month;
+      const monthRecords = (byMonth.get(month) ?? []).filter((record) =>
+        this.schoolConfig.isDateInRanges(record.date, [monthRange]),
+      );
       let mp = 0,
         ma = 0,
         ml = 0,
@@ -2797,12 +2840,10 @@ export class ReportsService {
       totalL += ml;
       totalJ += mj;
 
-      const monthFrom = new Date(year, month - 1, 1);
-      const monthTo = new Date(year, month, 0);
-      const activeDays = this.countActiveSchoolDays(student, monthFrom, monthTo);
+      const activeDays = this.schoolConfig.countActiveSchoolDaysInRanges(student, [monthRange]);
       const rate = activeDays > 0 ? (mp + ml + mj) / activeDays : 0;
 
-      const r = month + 2;
+      const r = i + 3;
       summary.getCell(r, 1).value = MONTH_NAMES_ES[month - 1] ?? '';
       summary.getCell(r, 1).border = borderAll;
       summary.getCell(r, 2).value = mp;
@@ -2830,7 +2871,7 @@ export class ReportsService {
       };
     }
 
-    const totalRow = 15;
+    const totalRow = monthRanges.length + 3;
     summary.getCell(totalRow, 1).value = 'TOTAL';
     summary.getCell(totalRow, 1).font = { bold: true };
     summary.getCell(totalRow, 1).border = borderAll;
@@ -2856,7 +2897,7 @@ export class ReportsService {
     summary.getCell(totalRow, 5).border = borderAll;
     summary.getCell(totalRow, 5).font = { bold: true };
 
-    const annualActiveDays = this.countActiveSchoolDays(student, yearFrom, yearTo);
+    const annualActiveDays = this.schoolConfig.countActiveSchoolDaysInRanges(student, ranges);
     const annualRate = annualActiveDays > 0 ? (totalP + totalL + totalJ) / annualActiveDays : 0;
     const annualPct = summary.getCell(totalRow, 6);
     annualPct.value = annualRate;
@@ -2902,11 +2943,13 @@ export class ReportsService {
       };
       year: number;
       month: number;
+      from?: Date;
       to: Date;
       records: Map<string, Map<string, string>>;
     },
   ) {
     const { course, year, month, to, records } = ctx;
+    const from = ctx.from ?? new Date(year, month - 1, 1);
     const monthName = MONTH_NAMES_ES[month - 1] ?? '';
     const ws = wb.addWorksheet(monthName.toUpperCase(), {
       pageSetup: { fitToPage: true, fitToWidth: 1, orientation: 'landscape' },
@@ -3029,6 +3072,7 @@ export class ReportsService {
       const date = new Date(year, month - 1, d);
       const dow = date.getDay();
       const isWeekend = dow === 0 || dow === 6;
+      const outsidePeriod = date < this.startOfDay(from) || date > this.startOfDay(to);
 
       const dayCell = ws.getCell(11, c);
       dayCell.value = d;
@@ -3037,7 +3081,7 @@ export class ReportsService {
       dayCell.fill = {
         type: 'pattern',
         pattern: 'solid',
-        fgColor: { argb: isWeekend ? GRAY : LIGHT_BLUE },
+        fgColor: { argb: isWeekend || outsidePeriod ? GRAY : LIGHT_BLUE },
       };
       dayCell.border = borderAll;
 
@@ -3048,7 +3092,7 @@ export class ReportsService {
       dowCell.fill = {
         type: 'pattern',
         pattern: 'solid',
-        fgColor: { argb: isWeekend ? GRAY : LIGHT_BLUE },
+        fgColor: { argb: isWeekend || outsidePeriod ? GRAY : LIGHT_BLUE },
       };
       dowCell.border = borderAll;
     }
@@ -3087,8 +3131,8 @@ export class ReportsService {
     // ---- Student rows (14..) ----
     let r = 14;
     // P2: We need the period boundaries to compute correct denominators
-    const periodFrom = new Date(year, month - 1, 1);
-    const periodTo = new Date(year, month, 0);
+    const periodFrom = from;
+    const periodTo = to;
 
     for (const student of course.students) {
       const row = ws.getRow(r);
@@ -3119,12 +3163,14 @@ export class ReportsService {
         const date = new Date(year, month - 1, d);
         const dow = date.getDay();
         const isWeekend = dow === 0 || dow === 6;
+        const outsidePeriod =
+          date < this.startOfDay(periodFrom) || date > this.startOfDay(periodTo);
         const cell = ws.getCell(r, c);
         cell.border = borderAll;
         cell.alignment = centerMid;
         cell.font = { size: 9, bold: true };
 
-        if (isWeekend) {
+        if (outsidePeriod || isWeekend) {
           cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: GRAY } };
           continue;
         }
@@ -3229,6 +3275,24 @@ export class ReportsService {
       firstName: { not: '[Eliminado]' },
       OR: [{ withdrawnAt: null }, { withdrawnAt: { gte: from } }],
     };
+  }
+
+  private toSemesterNumber(value: number): 1 | 2 {
+    return value === 2 ? 2 : 1;
+  }
+
+  private periodLabel(ranges: DateRange[]): string {
+    return ranges
+      .map((range) => `${this.shortDateLabel(range.from)} – ${this.shortDateLabel(range.to)}`)
+      .join(' · ');
+  }
+
+  private shortDateLabel(date: Date): string {
+    return new Intl.DateTimeFormat('es-CL', {
+      day: '2-digit',
+      month: 'short',
+      year: 'numeric',
+    }).format(date);
   }
 
   /**

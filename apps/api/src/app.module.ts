@@ -23,6 +23,7 @@ import { MailModule } from './mail/mail.module.js';
 import { AuditModule } from './audit/audit.module.js';
 import { AlertsModule } from './alerts/alerts.module.js';
 import { RetentionModule } from './retention/retention.module.js';
+import { SchoolConfigModule } from './school-config/school-config.module.js';
 
 @Module({
   imports: [
@@ -91,6 +92,7 @@ import { RetentionModule } from './retention/retention.module.js';
     MailModule,
     AlertsModule,
     RetentionModule,
+    SchoolConfigModule,
     HealthModule,
   ],
   providers: [

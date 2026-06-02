@@ -63,13 +63,26 @@ type SummaryStudent = {
 
 type SummaryData = {
   students: SummaryStudent[];
-  period: { from: string; to: string };
+  period: {
+    from: string;
+    to: string;
+    label?: string;
+    source?: 'saved' | 'default';
+    ranges?: Array<{ from: string; to: string }>;
+  };
 };
 
 type MatrixData = {
   students: MatrixStudent[];
   dates: string[];
   matrix: Record<string, Record<string, string>>;
+};
+
+type AcademicYearConfig = {
+  source: 'saved' | 'default';
+  firstSemester: { startDate: string; endDate: string };
+  secondSemester: { startDate: string; endDate: string };
+  annual: { ranges: Array<{ startDate: string; endDate: string }> };
 };
 
 const JUNE_LAST_DAY = 18;
@@ -123,41 +136,46 @@ function ReportsPage() {
     enabled: !!courseId,
   });
 
+  const { data: academicConfig } = useQuery<AcademicYearConfig>({
+    queryKey: ['school-academic-year-config', schoolId, year],
+    queryFn: () => api.get(`/school-config/${schoolId}/academic-year/${year}`),
+    enabled: !!schoolId,
+  });
+
   const { data: matrix, isLoading: matrixLoading } = useQuery<MatrixData>({
     queryKey: ['course-matrix-report', courseId, year, month],
     queryFn: () => api.get(`/attendance/course/${courseId}/matrix?year=${year}&month=${month}`),
     enabled: !!courseId && periodType === 'mensual',
   });
 
-  const summaryRange = useMemo(() => {
+  const summaryPath = useMemo(() => {
+    if (!courseId || periodType === 'mensual') return null;
     if (periodType === 'semestral') {
-      const from = semester === 1 ? `${year}-01-01` : `${year}-07-01`;
-      const to = semester === 1 ? `${year}-06-30` : `${year}-12-31`;
-      return { from, to };
+      return `/attendance/course/${courseId}/summary?period=semester&year=${year}&semester=${semester}`;
     }
-    if (periodType === 'anual') {
-      return { from: `${year}-01-01`, to: `${year}-12-31` };
-    }
-    return null;
-  }, [periodType, year, semester]);
+    return `/attendance/course/${courseId}/summary?period=annual&year=${year}`;
+  }, [courseId, periodType, semester, year]);
 
   const { data: summary, isLoading: summaryLoading } = useQuery<SummaryData>({
-    queryKey: ['course-summary-report', courseId, summaryRange?.from, summaryRange?.to],
-    queryFn: () =>
-      api.get(
-        `/attendance/course/${courseId}/summary?from=${summaryRange!.from}&to=${summaryRange!.to}`,
-      ),
-    enabled: !!courseId && !!summaryRange,
+    queryKey: ['course-summary-report', courseId, periodType, year, semester],
+    queryFn: () => api.get(summaryPath!),
+    enabled: !!summaryPath,
   });
+
+  const juneLastDay = useMemo(() => {
+    const firstSemesterEnd = academicConfig?.firstSemester.endDate;
+    if (!firstSemesterEnd?.startsWith(`${year}-06-`)) return JUNE_LAST_DAY;
+    return Number(firstSemesterEnd.slice(8, 10)) || JUNE_LAST_DAY;
+  }, [academicConfig?.firstSemester.endDate, year]);
 
   const filteredDates = useMemo(() => {
     if (!matrix?.dates) return [];
     if (month !== 6) return matrix.dates;
     return matrix.dates.filter((d) => {
       const day = new Date(d + 'T12:00').getDate();
-      return day <= JUNE_LAST_DAY;
+      return day <= juneLastDay;
     });
-  }, [matrix?.dates, month]);
+  }, [juneLastDay, matrix?.dates, month]);
 
   const recalculatedStudents = useMemo(() => {
     if (!matrix?.students || !matrix.matrix || filteredDates.length === 0) return [];
@@ -252,6 +270,20 @@ function ReportsPage() {
 
   const courseLabel = courses?.find((c) => c.id === courseId)?.code ?? 'CURSO';
   const studentLabel = students?.find((s) => s.id === studentId)?.lastName ?? 'ESTUDIANTE';
+  const firstSemesterLabel = academicConfig
+    ? `1er Semestre (${formatDateRange(academicConfig.firstSemester.startDate, academicConfig.firstSemester.endDate)})`
+    : '1er Semestre';
+  const secondSemesterLabel = academicConfig
+    ? `2do Semestre (${formatDateRange(academicConfig.secondSemester.startDate, academicConfig.secondSemester.endDate)})`
+    : '2do Semestre';
+  const selectedPeriodDetail =
+    periodType === 'semestral'
+      ? semester === 1
+        ? firstSemesterLabel
+        : secondSemesterLabel
+      : periodType === 'anual' && academicConfig
+        ? `Año escolar (${formatAnnualRanges(academicConfig.annual.ranges)})`
+        : '';
 
   const tabs: { id: Tab; label: string; Icon: typeof Users }[] = [
     { id: 'resumen', label: 'Resumen', Icon: Users },
@@ -343,8 +375,8 @@ function ReportsPage() {
                     onChange={(e) => setSemester(Number(e.target.value))}
                     className="w-full rounded-lg border border-border px-3 py-2 text-sm bg-background"
                   >
-                    <option value={1}>1er Semestre (Ene–Jun)</option>
-                    <option value={2}>2do Semestre (Jul–Dic)</option>
+                    <option value={1}>{firstSemesterLabel}</option>
+                    <option value={2}>{secondSemesterLabel}</option>
                   </select>
                 </div>
               )}
@@ -377,6 +409,8 @@ function ReportsPage() {
               month={month}
               year={year}
               semester={semester}
+              juneLastDay={juneLastDay}
+              periodDetail={selectedPeriodDetail}
               matrixLoading={matrixLoading}
               summaryLoading={summaryLoading}
               sortedStudents={sortedStudents}
@@ -402,6 +436,7 @@ function ReportsPage() {
               loading={loading}
               download={download}
               downloadStudent={downloadStudent}
+              academicConfig={academicConfig}
             />
           )}
         </>
@@ -416,6 +451,8 @@ function ResumenTab({
   month,
   year,
   semester,
+  juneLastDay,
+  periodDetail,
   matrixLoading,
   summaryLoading,
   sortedStudents,
@@ -430,6 +467,8 @@ function ResumenTab({
   month: number;
   year: number;
   semester: number;
+  juneLastDay: number;
+  periodDetail: string;
   matrixLoading: boolean;
   summaryLoading: boolean;
   sortedStudents: (MatrixStudent & { late: number })[];
@@ -487,10 +526,13 @@ function ResumenTab({
       : `Año ${year}`;
 
   const showJuneBanner = isMonthly && month === 6;
+  const denominatorLabel = isMonthly
+    ? 'Total días registrados'
+    : 'Total días lectivos configurados con matrícula activa';
   const showIncompleteBanner =
     !isMonthly &&
     sortedSummaryStudents.length > 0 &&
-    sortedSummaryStudents.some((s) => s.total === 0);
+    sortedSummaryStudents.some((s) => s.present + s.absent + s.late + s.justified === 0);
 
   return (
     <div className="space-y-4">
@@ -502,7 +544,7 @@ function ResumenTab({
             </div>
             <div className="min-w-0">
               <p className="text-sm font-semibold text-amber-900 dark:text-amber-200">
-                Junio: período evaluado hasta el día {JUNE_LAST_DAY}
+                Junio: período evaluado hasta el día {juneLastDay}
               </p>
               <p className="text-xs text-amber-700 dark:text-amber-400">
                 Último día de clases del mes. Los días posteriores no se incluyen en el cálculo.
@@ -579,7 +621,9 @@ function ResumenTab({
             Lista de asistencia — {periodLabel}
           </h2>
           <p className="text-xs text-muted-foreground mt-0.5">
-            Alumnos bajo {CRITICAL_THRESHOLD * 100}% destacados en rojo
+            {periodDetail
+              ? `${periodDetail}. Alumnos bajo ${CRITICAL_THRESHOLD * 100}% destacados en rojo`
+              : `Alumnos bajo ${CRITICAL_THRESHOLD * 100}% destacados en rojo`}
           </p>
         </div>
 
@@ -657,12 +701,12 @@ function ResumenTab({
           <p className="text-[10px] text-muted-foreground flex items-center gap-1">
             <CheckCircle2 className="size-3 shrink-0" />
             Porcentaje calculado conforme al Decreto 67/2018 MINEDUC. Asistencia = (Presentes +
-            Atrasos + Justificados) / Total días registrados.
+            Atrasos + Justificados) / {denominatorLabel}.
           </p>
           {showJuneBanner && (
             <p className="text-[10px] text-muted-foreground flex items-center gap-1">
               <AlertTriangle className="size-3 shrink-0" />
-              Período evaluado: 1 al {JUNE_LAST_DAY} de junio (último día de clases).
+              Período evaluado: 1 al {juneLastDay} de junio (último día de clases).
             </p>
           )}
           {below > 0 && (
@@ -693,6 +737,7 @@ function ExportarTab({
   loading,
   download,
   downloadStudent,
+  academicConfig,
 }: {
   courseId: string;
   studentId: string;
@@ -708,6 +753,7 @@ function ExportarTab({
   loading: string | null;
   download: (type: string, path: string, filename: string) => Promise<void>;
   downloadStudent: (type: string, path: string, filename: string) => Promise<void>;
+  academicConfig: AcademicYearConfig | undefined;
 }) {
   if (!courseId) {
     return (
@@ -945,7 +991,15 @@ function ExportarTab({
         <div className="border-t border-border pt-4 space-y-3">
           <h3 className="text-xs font-semibold">Semestral</h3>
           <p className="text-xs text-muted-foreground">
-            S1 = Ene–Jun · S2 = Jul–Dic. Excel incluye una hoja por mes + resumen consolidado.
+            {academicConfig
+              ? `S1 = ${formatDateRange(
+                  academicConfig.firstSemester.startDate,
+                  academicConfig.firstSemester.endDate,
+                )} · S2 = ${formatDateRange(
+                  academicConfig.secondSemester.startDate,
+                  academicConfig.secondSemester.endDate,
+                )}. Excel incluye una hoja por mes + resumen consolidado.`
+              : 'Excel incluye una hoja por mes + resumen consolidado.'}
           </p>
           <div className="flex flex-wrap gap-2">
             <button
@@ -982,7 +1036,11 @@ function ExportarTab({
         <div className="border-t border-border pt-4 space-y-3">
           <h3 className="text-xs font-semibold">Anual</h3>
           <p className="text-xs text-muted-foreground">
-            Incluye Enero–Diciembre con resumen consolidado del curso.
+            {academicConfig
+              ? `Incluye el año escolar configurado: ${formatAnnualRanges(
+                  academicConfig.annual.ranges,
+                )}.`
+              : 'Incluye el año escolar configurado con resumen consolidado del curso.'}
           </p>
           <div className="flex flex-wrap gap-2">
             <button
@@ -1018,4 +1076,19 @@ function ExportarTab({
       </div>
     </div>
   );
+}
+
+function formatDateRange(from: string, to: string): string {
+  return `${formatShortDate(from)} a ${formatShortDate(to)}`;
+}
+
+function formatAnnualRanges(ranges: AcademicYearConfig['annual']['ranges']): string {
+  return ranges.map((range) => formatDateRange(range.startDate, range.endDate)).join(' · ');
+}
+
+function formatShortDate(value: string): string {
+  return new Intl.DateTimeFormat('es-CL', {
+    day: '2-digit',
+    month: 'short',
+  }).format(new Date(`${value}T12:00:00`));
 }

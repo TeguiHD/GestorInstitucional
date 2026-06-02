@@ -27,6 +27,7 @@ import { Route as AuthJustificacionesRouteImport } from './routes/_auth.justific
 import { Route as AuthCursosRouteImport } from './routes/_auth.cursos';
 import { Route as AuthCoursesRouteImport } from './routes/_auth.courses';
 import { Route as AuthCorreosRouteImport } from './routes/_auth.correos';
+import { Route as AuthConfiguracionRouteImport } from './routes/_auth.configuracion';
 import { Route as AuthCalendarioRouteImport } from './routes/_auth.calendario';
 import { Route as AuthCalendarRouteImport } from './routes/_auth.calendar';
 import { Route as AuthAuditoriaRouteImport } from './routes/_auth.auditoria';
@@ -127,6 +128,11 @@ const AuthCorreosRoute = AuthCorreosRouteImport.update({
   path: '/correos',
   getParentRoute: () => AuthRoute,
 } as any);
+const AuthConfiguracionRoute = AuthConfiguracionRouteImport.update({
+  id: '/configuracion',
+  path: '/configuracion',
+  getParentRoute: () => AuthRoute,
+} as any);
 const AuthCalendarioRoute = AuthCalendarioRouteImport.update({
   id: '/calendario',
   path: '/calendario',
@@ -186,6 +192,7 @@ export interface FileRoutesByFullPath {
   '/auditoria': typeof AuthAuditoriaRoute;
   '/calendar': typeof AuthCalendarRoute;
   '/calendario': typeof AuthCalendarioRoute;
+  '/configuracion': typeof AuthConfiguracionRoute;
   '/correos': typeof AuthCorreosRoute;
   '/courses': typeof AuthCoursesRouteWithChildren;
   '/cursos': typeof AuthCursosRouteWithChildren;
@@ -214,6 +221,7 @@ export interface FileRoutesByTo {
   '/auditoria': typeof AuthAuditoriaRoute;
   '/calendar': typeof AuthCalendarRoute;
   '/calendario': typeof AuthCalendarioRoute;
+  '/configuracion': typeof AuthConfiguracionRoute;
   '/correos': typeof AuthCorreosRoute;
   '/courses': typeof AuthCoursesRouteWithChildren;
   '/justificaciones': typeof AuthJustificacionesRoute;
@@ -244,6 +252,7 @@ export interface FileRoutesById {
   '/_auth/auditoria': typeof AuthAuditoriaRoute;
   '/_auth/calendar': typeof AuthCalendarRoute;
   '/_auth/calendario': typeof AuthCalendarioRoute;
+  '/_auth/configuracion': typeof AuthConfiguracionRoute;
   '/_auth/correos': typeof AuthCorreosRoute;
   '/_auth/courses': typeof AuthCoursesRouteWithChildren;
   '/_auth/cursos': typeof AuthCursosRouteWithChildren;
@@ -276,6 +285,7 @@ export interface FileRouteTypes {
     | '/auditoria'
     | '/calendar'
     | '/calendario'
+    | '/configuracion'
     | '/correos'
     | '/courses'
     | '/cursos'
@@ -304,6 +314,7 @@ export interface FileRouteTypes {
     | '/auditoria'
     | '/calendar'
     | '/calendario'
+    | '/configuracion'
     | '/correos'
     | '/courses'
     | '/justificaciones'
@@ -333,6 +344,7 @@ export interface FileRouteTypes {
     | '/_auth/auditoria'
     | '/_auth/calendar'
     | '/_auth/calendario'
+    | '/_auth/configuracion'
     | '/_auth/correos'
     | '/_auth/courses'
     | '/_auth/cursos'
@@ -489,6 +501,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthCorreosRouteImport;
       parentRoute: typeof AuthRoute;
     };
+    '/_auth/configuracion': {
+      id: '/_auth/configuracion';
+      path: '/configuracion';
+      fullPath: '/configuracion';
+      preLoaderRoute: typeof AuthConfiguracionRouteImport;
+      parentRoute: typeof AuthRoute;
+    };
     '/_auth/calendario': {
       id: '/_auth/calendario';
       path: '/calendario';
@@ -590,6 +609,7 @@ interface AuthRouteChildren {
   AuthAuditoriaRoute: typeof AuthAuditoriaRoute;
   AuthCalendarRoute: typeof AuthCalendarRoute;
   AuthCalendarioRoute: typeof AuthCalendarioRoute;
+  AuthConfiguracionRoute: typeof AuthConfiguracionRoute;
   AuthCorreosRoute: typeof AuthCorreosRoute;
   AuthCoursesRoute: typeof AuthCoursesRouteWithChildren;
   AuthCursosRoute: typeof AuthCursosRouteWithChildren;
@@ -616,6 +636,7 @@ const AuthRouteChildren: AuthRouteChildren = {
   AuthAuditoriaRoute: AuthAuditoriaRoute,
   AuthCalendarRoute: AuthCalendarRoute,
   AuthCalendarioRoute: AuthCalendarioRoute,
+  AuthConfiguracionRoute: AuthConfiguracionRoute,
   AuthCorreosRoute: AuthCorreosRoute,
   AuthCoursesRoute: AuthCoursesRouteWithChildren,
   AuthCursosRoute: AuthCursosRouteWithChildren,

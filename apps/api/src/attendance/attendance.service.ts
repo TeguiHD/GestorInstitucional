@@ -13,6 +13,7 @@ import { WhatsAppService } from '../mail/whatsapp.service.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { AuditService } from '../audit/audit.service.js';
 import { parseDateOnlyUtc } from '../common/date-only.js';
+import { SchoolConfigService } from '../school-config/school-config.service.js';
 import type { RecordAttendanceDto } from './dto/record-attendance.dto.js';
 import type { JwtPayload } from '../common/decorators/current-user.decorator.js';
 
@@ -26,6 +27,7 @@ export class AttendanceService {
     private readonly calendar: CalendarService,
     private readonly mail: MailService,
     private readonly whatsapp: WhatsAppService,
+    private readonly schoolConfig: SchoolConfigService,
   ) {}
 
   /** Bulk upsert daily attendance for a course. Idempotent — safe to call multiple times. */
@@ -574,6 +576,107 @@ export class AttendanceService {
     return {
       students,
       period: { from, to },
+    };
+  }
+
+  async getCourseAcademicSummary(
+    courseId: string,
+    year: number,
+    period: 'semester' | 'annual',
+    semester?: 1 | 2,
+  ) {
+    const courseHead = await this.prisma.course.findUnique({
+      where: { id: courseId },
+      select: { schoolId: true },
+    });
+    if (!courseHead) throw new NotFoundException('Curso no encontrado');
+
+    const resolved =
+      period === 'semester'
+        ? await this.schoolConfig.getSemesterPeriod(courseHead.schoolId, year, semester ?? 1)
+        : await this.schoolConfig.getAnnualPeriod(courseHead.schoolId, year);
+    const ranges = resolved.ranges;
+
+    const [course, records] = await Promise.all([
+      this.prisma.course.findUnique({
+        where: { id: courseId },
+        include: {
+          students: {
+            where: this.schoolConfig.activeDuringRangesWhere(ranges),
+            select: {
+              id: true,
+              firstName: true,
+              lastName: true,
+              secondLastName: true,
+              enrollmentNumber: true,
+              enrolledAt: true,
+              withdrawnAt: true,
+            },
+            orderBy: [{ enrollmentNumber: 'asc' }],
+          },
+        },
+      }),
+      this.prisma.attendanceRecord.findMany({
+        where: { courseId, ...this.schoolConfig.attendanceWhereForRanges(ranges) },
+        select: { studentId: true, date: true, status: true },
+      }),
+    ]);
+
+    if (!course) throw new NotFoundException('Curso no encontrado');
+
+    const statsByStudent = new Map<
+      string,
+      { total: number; present: number; absent: number; late: number; justified: number }
+    >();
+    for (const student of course.students) {
+      statsByStudent.set(student.id, { total: 0, present: 0, absent: 0, late: 0, justified: 0 });
+    }
+
+    for (const record of records) {
+      const stats = statsByStudent.get(record.studentId);
+      if (!stats || record.status === 'WITHDRAWN') continue;
+      if (record.status === 'PRESENT') stats.present++;
+      else if (record.status === 'ABSENT') stats.absent++;
+      else if (record.status === 'LATE') {
+        stats.late++;
+        stats.present++;
+      } else if (record.status === 'JUSTIFIED') {
+        stats.justified++;
+        stats.present++;
+      }
+    }
+
+    const students = course.students.map((student) => {
+      const stats = statsByStudent.get(student.id)!;
+      const activeDays = this.schoolConfig.countActiveSchoolDaysInRanges(student, ranges);
+      const rate = activeDays > 0 ? stats.present / activeDays : null;
+      return {
+        id: student.id,
+        firstName: student.firstName,
+        lastName: student.lastName,
+        secondLastName: student.secondLastName,
+        enrollmentNumber: student.enrollmentNumber,
+        total: activeDays,
+        present: stats.present,
+        absent: stats.absent,
+        late: stats.late,
+        justified: stats.justified,
+        rate,
+      };
+    });
+
+    return {
+      students,
+      period: {
+        label: resolved.label,
+        source: resolved.source,
+        from: this.schoolConfig.formatDate(ranges[0]!.from),
+        to: this.schoolConfig.formatDate(ranges[ranges.length - 1]!.to),
+        ranges: ranges.map((range) => ({
+          from: this.schoolConfig.formatDate(range.from),
+          to: this.schoolConfig.formatDate(range.to),
+        })),
+      },
     };
   }
 

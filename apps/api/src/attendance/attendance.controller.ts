@@ -137,13 +137,33 @@ export class AttendanceController {
   })
   async getCourseSummary(
     @Param('courseId') courseId: string,
-    @Query('from') from: string,
-    @Query('to') to: string,
+    @Query('from') from: string | undefined,
+    @Query('to') to: string | undefined,
+    @Query('period') period: string | undefined,
+    @Query('year') year: string | undefined,
+    @Query('semester') semester: string | undefined,
     @CurrentUser() user: JwtPayload,
   ) {
+    await this.courses.assertAccess(courseId, user);
+    if (period) {
+      const parsedYear = this.parseYear(year ?? '');
+      if (period === 'semester') {
+        const parsedSemester = this.parseSemester(semester ?? '1');
+        return this.attendance.getCourseAcademicSummary(
+          courseId,
+          parsedYear,
+          'semester',
+          parsedSemester,
+        );
+      }
+      if (period === 'annual') {
+        return this.attendance.getCourseAcademicSummary(courseId, parsedYear, 'annual');
+      }
+      throw new BadRequestException('period debe ser semester o annual');
+    }
+
     this.assertIsoDate(from, 'from');
     this.assertIsoDate(to, 'to');
-    await this.courses.assertAccess(courseId, user);
     return this.attendance.getCourseSummary(courseId, from, to);
   }
 
@@ -163,6 +183,14 @@ export class AttendanceController {
     return month;
   }
 
+  private parseSemester(value: string): 1 | 2 {
+    const semester = this.parseIntQuery(value, 'semester');
+    if (semester !== 1 && semester !== 2) {
+      throw new BadRequestException('semester debe ser 1 o 2');
+    }
+    return semester;
+  }
+
   private parseYear(value: string): number {
     const year = this.parseIntQuery(value, 'year');
     if (year < 2020 || year > 2100) {
@@ -171,7 +199,10 @@ export class AttendanceController {
     return year;
   }
 
-  private assertIsoDate(value: string, field: string): void {
+  private assertIsoDate(value: string | undefined, field: string): asserts value is string {
+    if (!value) {
+      throw new BadRequestException(`${field} es requerido`);
+    }
     if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) {
       throw new BadRequestException(`${field} debe usar formato YYYY-MM-DD`);
     }

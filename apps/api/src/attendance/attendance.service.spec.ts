@@ -30,6 +30,7 @@ function makeService(params: { activeStudentIds: string[]; existingStudentIds?: 
   const calendar = { getNonSchoolDays: vi.fn().mockResolvedValue(new Set<string>()) };
   const mail = { sendAbsenceDaily: vi.fn() };
   const whatsapp = { sendAbsenceAlert: vi.fn() };
+  const schoolConfig = {};
 
   return {
     service: new AttendanceService(
@@ -38,6 +39,7 @@ function makeService(params: { activeStudentIds: string[]; existingStudentIds?: 
       calendar as never,
       mail as never,
       whatsapp as never,
+      schoolConfig as never,
     ),
     prisma,
   };

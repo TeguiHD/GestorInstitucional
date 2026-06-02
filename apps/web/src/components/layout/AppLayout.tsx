@@ -16,6 +16,7 @@ import {
   LogOut,
   Mail,
   Menu,
+  Settings,
   Shield,
   Trash2,
   Users,
@@ -70,6 +71,7 @@ const NAV_GROUPS: NavGroup[] = [
     heading: 'Administración',
     items: [
       { to: '/usuarios', label: 'Usuarios', icon: Users, adminOnly: true },
+      { to: '/configuracion', label: 'Configuración', icon: Settings, superAdminOnly: true },
       { to: '/alertas', label: 'Alertas', icon: Bell, adminOnly: true },
       { to: '/correos', label: 'Correos', icon: Mail, adminOnly: true },
       { to: '/auditoria', label: 'Auditoría', icon: Shield, adminOnly: true },

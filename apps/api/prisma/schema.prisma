@@ -144,14 +144,15 @@ model School {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  users              UserSchoolRole[]
-  courses            Course[]
-  students           Student[]
-  permissions        SchoolPermission[]
-  calendarDays       SchoolCalendarDay[]
-  alertRules         AlertRule[]
-  subjects           Subject[]
-  retentionSnapshots RetentionSnapshot[]
+  users               UserSchoolRole[]
+  courses             Course[]
+  students            Student[]
+  permissions         SchoolPermission[]
+  calendarDays        SchoolCalendarDay[]
+  academicYearConfigs SchoolAcademicYearConfig[]
+  alertRules          AlertRule[]
+  subjects            Subject[]
+  retentionSnapshots  RetentionSnapshot[]
 
   @@map("schools")
 }
@@ -492,6 +493,25 @@ model SchoolCalendarDay {
   @@unique([schoolId, date])
   @@index([schoolId, date])
   @@map("school_calendar_days")
+}
+
+model SchoolAcademicYearConfig {
+  id                  String   @id @default(uuid()) @db.Char(36)
+  schoolId            String   @db.Char(36)
+  year                Int
+  firstSemesterStart  DateTime @db.Date
+  firstSemesterEnd    DateTime @db.Date
+  secondSemesterStart DateTime @db.Date
+  secondSemesterEnd   DateTime @db.Date
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  school School @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+
+  @@unique([schoolId, year])
+  @@index([schoolId])
+  @@index([year])
+  @@map("school_academic_year_configs")
 }
 
 // =============================================================================
