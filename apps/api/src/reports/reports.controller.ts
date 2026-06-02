@@ -15,6 +15,7 @@ import { JwtAuthGuard } from '../common/guards/jwt-auth.guard.js';
 import { RolesGuard } from '../common/guards/roles.guard.js';
 import { CurrentUser, type JwtPayload } from '../common/decorators/current-user.decorator.js';
 import { CoursesService } from '../courses/courses.service.js';
+import { AttendanceService } from '../attendance/attendance.service.js';
 import { ReportsService } from './reports.service.js';
 
 @ApiTags('reports')
@@ -25,6 +26,7 @@ export class ReportsController {
   constructor(
     private readonly reports: ReportsService,
     private readonly courses: CoursesService,
+    private readonly attendance: AttendanceService,
   ) {}
 
   @Get('course/:courseId/excel')
@@ -207,6 +209,153 @@ export class ReportsController {
     void res.header(
       'Content-Disposition',
       `attachment; filename="semestre${semester}-${year}.pdf"`,
+    );
+    void res.header('Cache-Control', 'no-store');
+    void res.send(buffer);
+  }
+
+  @Get('student/:studentId/pdf')
+  @ApiOperation({
+    summary: 'Certificado individual mensual PDF — formato MINEDUC con bloque de firmas',
+  })
+  async getStudentMonthlyPdf(
+    @Param('studentId') studentId: string,
+    @Query('year', ParseIntPipe) year: number,
+    @Query('month', ParseIntPipe) month: number,
+    @CurrentUser() user: JwtPayload,
+    @Res() res: FastifyReply,
+  ) {
+    this.assertYearMonth(year, month);
+    await this.attendance.assertCanAccessStudent(studentId, user);
+    const buffer = await this.reports.generateStudentMonthlyPdf(studentId, year, month, user.sub);
+    void res.header('Content-Type', 'application/pdf');
+    void res.header(
+      'Content-Disposition',
+      `attachment; filename="certificado-asistencia-${year}-${String(month).padStart(2, '0')}.pdf"`,
+    );
+    void res.header('Cache-Control', 'no-store');
+    void res.send(buffer);
+  }
+
+  @Get('student/:studentId/semester/pdf')
+  @ApiOperation({ summary: 'Certificado individual semestral PDF' })
+  async getStudentSemesterPdf(
+    @Param('studentId') studentId: string,
+    @Query('year', ParseIntPipe) year: number,
+    @Query('semester', ParseIntPipe) semester: number,
+    @CurrentUser() user: JwtPayload,
+    @Res() res: FastifyReply,
+  ) {
+    this.assertYear(year);
+    this.assertSemester(semester);
+    await this.attendance.assertCanAccessStudent(studentId, user);
+    const buffer = await this.reports.generateStudentSemesterPdf(
+      studentId,
+      year,
+      semester,
+      user.sub,
+    );
+    void res.header('Content-Type', 'application/pdf');
+    void res.header(
+      'Content-Disposition',
+      `attachment; filename="certificado-asistencia-sem${semester}-${year}.pdf"`,
+    );
+    void res.header('Cache-Control', 'no-store');
+    void res.send(buffer);
+  }
+
+  @Get('student/:studentId/annual/pdf')
+  @ApiOperation({ summary: 'Certificado individual anual PDF' })
+  async getStudentAnnualPdf(
+    @Param('studentId') studentId: string,
+    @Query('year', ParseIntPipe) year: number,
+    @CurrentUser() user: JwtPayload,
+    @Res() res: FastifyReply,
+  ) {
+    this.assertYear(year);
+    await this.attendance.assertCanAccessStudent(studentId, user);
+    const buffer = await this.reports.generateStudentAnnualPdf(studentId, year, user.sub);
+    void res.header('Content-Type', 'application/pdf');
+    void res.header(
+      'Content-Disposition',
+      `attachment; filename="certificado-asistencia-anual-${year}.pdf"`,
+    );
+    void res.header('Cache-Control', 'no-store');
+    void res.send(buffer);
+  }
+
+  @Get('student/:studentId/excel')
+  @ApiOperation({ summary: 'Asistencia individual mensual Excel — grilla día×estado + resumen' })
+  async getStudentMonthlyExcel(
+    @Param('studentId') studentId: string,
+    @Query('year', ParseIntPipe) year: number,
+    @Query('month', ParseIntPipe) month: number,
+    @CurrentUser() user: JwtPayload,
+    @Res() res: FastifyReply,
+  ) {
+    this.assertYearMonth(year, month);
+    await this.attendance.assertCanAccessStudent(studentId, user);
+    const buffer = await this.reports.generateStudentMonthlyExcel(studentId, year, month, user.sub);
+    void res.header(
+      'Content-Type',
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    );
+    void res.header(
+      'Content-Disposition',
+      `attachment; filename="asistencia-individual-${year}-${String(month).padStart(2, '0')}.xlsx"`,
+    );
+    void res.header('Cache-Control', 'no-store');
+    void res.send(buffer);
+  }
+
+  @Get('student/:studentId/semester/excel')
+  @ApiOperation({ summary: 'Asistencia individual semestral Excel — hojas mensuales + resumen' })
+  async getStudentSemesterExcel(
+    @Param('studentId') studentId: string,
+    @Query('year', ParseIntPipe) year: number,
+    @Query('semester', ParseIntPipe) semester: number,
+    @CurrentUser() user: JwtPayload,
+    @Res() res: FastifyReply,
+  ) {
+    this.assertYear(year);
+    this.assertSemester(semester);
+    await this.attendance.assertCanAccessStudent(studentId, user);
+    const buffer = await this.reports.generateStudentSemesterExcel(
+      studentId,
+      year,
+      semester,
+      user.sub,
+    );
+    void res.header(
+      'Content-Type',
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    );
+    void res.header(
+      'Content-Disposition',
+      `attachment; filename="asistencia-individual-sem${semester}-${year}.xlsx"`,
+    );
+    void res.header('Cache-Control', 'no-store');
+    void res.send(buffer);
+  }
+
+  @Get('student/:studentId/annual/excel')
+  @ApiOperation({ summary: 'Asistencia individual anual Excel — 12 hojas + resumen consolidado' })
+  async getStudentAnnualExcel(
+    @Param('studentId') studentId: string,
+    @Query('year', ParseIntPipe) year: number,
+    @CurrentUser() user: JwtPayload,
+    @Res() res: FastifyReply,
+  ) {
+    this.assertYear(year);
+    await this.attendance.assertCanAccessStudent(studentId, user);
+    const buffer = await this.reports.generateStudentAnnualExcel(studentId, year, user.sub);
+    void res.header(
+      'Content-Type',
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    );
+    void res.header(
+      'Content-Disposition',
+      `attachment; filename="asistencia-individual-anual-${year}.xlsx"`,
     );
     void res.header('Cache-Control', 'no-store');
     void res.send(buffer);

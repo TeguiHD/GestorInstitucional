@@ -118,7 +118,9 @@ async function refreshAccessToken(): Promise<string> {
 
 function buildFetchInit(opts: FetchOptions, token: string | null): RequestInit {
   const headers: Record<string, string> = {};
-  if (opts.contentType !== 'none') headers['Content-Type'] = 'application/json';
+  if (opts.contentType !== 'none' && (opts.body !== undefined || opts.formData)) {
+    headers['Content-Type'] = 'application/json';
+  }
   if (token) headers['Authorization'] = `Bearer ${token}`;
 
   return {

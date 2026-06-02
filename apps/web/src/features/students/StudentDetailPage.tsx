@@ -1,11 +1,11 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link, useParams, useSearch } from '@tanstack/react-router';
-import { AlertTriangle, ArrowLeft, Copy, Star, Trash2, UserPlus } from 'lucide-react';
+import { AlertTriangle, ArrowLeft, Copy, Download, Star, Trash2, UserPlus } from 'lucide-react';
 import { useState } from 'react';
 import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import { toast } from 'sonner';
 
-import { api } from '@/lib/api';
+import { api, downloadBlob } from '@/lib/api';
 import { cn } from '@/lib/cn';
 import { parseDayLocal } from '@/lib/date';
 import { formatStudentFullName } from '@/lib/student-name';
@@ -96,6 +96,7 @@ export function StudentDetailPage() {
 
   const [period, setPeriod] = useState<Period>('month');
   const [showAddGuardian, setShowAddGuardian] = useState(false);
+  const [exportLoading, setExportLoading] = useState<string | null>(null);
   const [guardianForm, setGuardianForm] = useState({
     email: '',
     firstName: '',
@@ -106,6 +107,54 @@ export function StudentDetailPage() {
   });
 
   const range = computeRange(period);
+
+  const handleExport = async (type: 'pdf' | 'excel') => {
+    const now = new Date();
+    const year = now.getFullYear();
+    const month = now.getMonth() + 1;
+    const pad = (n: number) => String(n).padStart(2, '0');
+
+    let path = '';
+    let filename = '';
+
+    if (period === 'month' || period === 'week') {
+      if (type === 'pdf') {
+        path = `/reports/student/${studentId}/pdf?year=${year}&month=${month}`;
+        filename = `certificado-asistencia-${year}-${pad(month)}.pdf`;
+      } else {
+        path = `/reports/student/${studentId}/excel?year=${year}&month=${month}`;
+        filename = `asistencia-individual-${year}-${pad(month)}.xlsx`;
+      }
+    } else if (period === 'sem1' || period === 'sem2') {
+      const sem = period === 'sem1' ? 1 : 2;
+      if (type === 'pdf') {
+        path = `/reports/student/${studentId}/semester/pdf?year=${year}&semester=${sem}`;
+        filename = `certificado-asistencia-sem${sem}-${year}.pdf`;
+      } else {
+        path = `/reports/student/${studentId}/semester/excel?year=${year}&semester=${sem}`;
+        filename = `asistencia-individual-sem${sem}-${year}.xlsx`;
+      }
+    } else if (period === 'year' || period === 'all') {
+      if (type === 'pdf') {
+        path = `/reports/student/${studentId}/annual/pdf?year=${year}`;
+        filename = `certificado-asistencia-anual-${year}.pdf`;
+      } else {
+        path = `/reports/student/${studentId}/annual/excel?year=${year}`;
+        filename = `asistencia-individual-anual-${year}.xlsx`;
+      }
+    }
+
+    const key = `${period}-${type}`;
+    setExportLoading(key);
+    try {
+      await downloadBlob(path, filename);
+      toast.success('Reporte descargado');
+    } catch (e) {
+      toast.error((e as Error).message);
+    } finally {
+      setExportLoading(null);
+    }
+  };
 
   const { data: student } = useQuery({
     queryKey: ['student', studentId],
@@ -292,6 +341,28 @@ export function StudentDetailPage() {
           </button>
         ))}
       </div>
+
+      {/* Export buttons */}
+      {isAdmin && (
+        <div className="flex items-center gap-2 flex-wrap">
+          <button
+            onClick={() => void handleExport('pdf')}
+            disabled={exportLoading !== null}
+            className="flex items-center gap-2 text-sm px-4 py-2 rounded-lg bg-primary text-primary-foreground disabled:opacity-50"
+          >
+            <Download className="size-4" />
+            {exportLoading?.endsWith('-pdf') ? 'Generando…' : 'Exportar PDF'}
+          </button>
+          <button
+            onClick={() => void handleExport('excel')}
+            disabled={exportLoading !== null}
+            className="flex items-center gap-2 text-sm px-4 py-2 rounded-lg border border-border hover:bg-muted disabled:opacity-50"
+          >
+            <Download className="size-4" />
+            {exportLoading?.endsWith('-excel') ? 'Generando…' : 'Exportar Excel'}
+          </button>
+        </div>
+      )}
 
       {/* Stats cards */}
       {statsLoading ? (

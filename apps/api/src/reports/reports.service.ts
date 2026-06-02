@@ -1420,6 +1420,1469 @@ export class ReportsService {
     return Buffer.concat(chunks);
   }
 
+  async generateStudentMonthlyPdf(
+    studentId: string,
+    year: number,
+    month: number,
+    requestedById: string,
+  ): Promise<Buffer> {
+    const from = new Date(year, month - 1, 1);
+    const to = new Date(year, month, 0);
+
+    const student = await this.prisma.student.findUniqueOrThrow({
+      where: { id: studentId },
+      include: {
+        course: {
+          include: {
+            school: true,
+            teachers: { include: { user: true }, where: { isHead: true }, take: 1 },
+          },
+        },
+      },
+    });
+
+    const records = await this.prisma.attendanceRecord.findMany({
+      where: { studentId, date: { gte: from, lte: to } },
+      select: { date: true, status: true },
+      orderBy: { date: 'asc' },
+    });
+
+    const daysInMonth = to.getDate();
+    let p = 0,
+      a = 0,
+      l = 0,
+      j = 0;
+    for (const r of records) {
+      if (r.status === 'PRESENT') p++;
+      else if (r.status === 'ABSENT') a++;
+      else if (r.status === 'LATE') l++;
+      else if (r.status === 'JUSTIFIED') j++;
+    }
+
+    const activeDays = this.countActiveSchoolDays(student, from, to);
+    const rate = activeDays > 0 ? (p + l + j) / activeDays : 0;
+
+    const doc = new PDFDocument({ size: 'A4', margin: 48 });
+    const chunks: Buffer[] = [];
+    doc.on('data', (c) => chunks.push(c as Buffer));
+    const done = new Promise<void>((resolve) => doc.on('end', () => resolve()));
+
+    const logoPath = process.env.SCHOOL_LOGO_PATH ?? join(process.cwd(), 'assets', 'logo-cssp.png');
+    if (existsSync(logoPath)) {
+      try {
+        doc.image(logoPath, 48, 40, { fit: [60, 60] });
+      } catch {
+        /* ignore bad image */
+      }
+    }
+
+    doc
+      .fontSize(16)
+      .fillColor('#1F4E79')
+      .font('Helvetica-Bold')
+      .text(student.course.school.name.toUpperCase(), 120, 48, { align: 'left' });
+    doc
+      .fontSize(11)
+      .fillColor('#333')
+      .font('Helvetica')
+      .text('CERTIFICADO DE ASISTENCIA INDIVIDUAL', 120, 70);
+    doc
+      .fontSize(9)
+      .fillColor('#666')
+      .text(`Emitido: ${new Date().toLocaleDateString('es-CL')}`, 120, 86);
+
+    doc.moveTo(48, 115).lineTo(547, 115).strokeColor('#1F4E79').lineWidth(1.2).stroke();
+
+    const monthName = MONTH_NAMES_ES[month - 1] ?? '';
+    const head = student.course.teachers[0]?.user;
+    doc.fontSize(13).fillColor('#000').font('Helvetica-Bold').text(`${monthName} ${year}`, 48, 128);
+    doc
+      .fontSize(10)
+      .fillColor('#555')
+      .font('Helvetica')
+      .text(`Curso: ${student.course.name}`, 48, 148)
+      .text(`Profesor jefe: ${head ? `${head.firstName} ${head.lastName}` : '—'}`, 48, 162);
+
+    let y = 190;
+    doc.rect(48, y, 499, 60).fill('#F5F8FB');
+    doc.fillColor('#000').font('Helvetica-Bold').fontSize(10);
+    doc.text('DATOS DEL ESTUDIANTE', 56, y + 8);
+    doc.font('Helvetica').fontSize(9);
+    doc.text(
+      `Nombre: ${student.lastName}${student.secondLastName ? ' ' + student.secondLastName : ''}, ${student.firstName}`,
+      56,
+      y + 24,
+    );
+    doc.text(`RUT: ${student.rut}`, 56, y + 38);
+    doc.text(`N° Lista: ${student.enrollmentNumber}`, 300, y + 24);
+    doc.text(`Días hábiles del mes: ${activeDays}`, 300, y + 38);
+    y += 76;
+
+    const rowH = 18;
+    doc.rect(48, y, 499, rowH).fill('#1F4E79');
+    doc.fillColor('#fff').font('Helvetica-Bold').fontSize(9);
+    doc.text('Día', 54, y + 5, { width: 40 });
+    doc.text('Día semana', 100, y + 5, { width: 80 });
+    doc.text('Estado', 186, y + 5, { width: 120 });
+    doc.text('Símbolo', 312, y + 5, { width: 60, align: 'center' });
+    y += rowH;
+
+    doc.font('Helvetica').fontSize(9).fillColor('#000');
+    const DOW_NAMES = ['Domingo', 'Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado'];
+    const STATUS_LABELS: Record<string, { label: string; color: string }> = {
+      PRESENT: { label: 'Presente', color: '#16A34A' },
+      ABSENT: { label: 'Ausente', color: '#DC2626' },
+      LATE: { label: 'Atraso', color: '#EA580C' },
+      JUSTIFIED: { label: 'Justificado', color: '#FACC15' },
+    };
+
+    for (let d = 1; d <= daysInMonth; d++) {
+      if (y > 720) {
+        doc.addPage();
+        y = 60;
+      }
+      const date = new Date(year, month - 1, d);
+      const dow = date.getDay();
+      const isWeekend = dow === 0 || dow === 6;
+      const record = records.find((r) => r.date.getDate() === d);
+
+      const band = d % 2 === 0 ? '#F5F8FB' : '#FFFFFF';
+      doc.rect(48, y, 499, rowH).fill(band);
+      doc.fillColor('#000');
+
+      if (isWeekend) {
+        doc.rect(48, y, 499, rowH).fill('#E8EDF1');
+        doc.fillColor('#666').text(String(d), 54, y + 5, { width: 40 });
+        doc.text(DOW_NAMES[dow] ?? '', 100, y + 5, { width: 80 });
+        doc.text('—', 186, y + 5, { width: 120 });
+        doc.text('—', 312, y + 5, { width: 60, align: 'center' });
+      } else if (record) {
+        const cfg = STATUS_LABELS[record.status];
+        doc.text(String(d), 54, y + 5, { width: 40 });
+        doc.text(DOW_NAMES[dow] ?? '', 100, y + 5, { width: 80 });
+        doc.fillColor(cfg?.color ?? '#000').font('Helvetica-Bold');
+        doc.text(cfg?.label ?? record.status, 186, y + 5, { width: 120 });
+        doc.font('Helvetica');
+        doc.fillColor('#000');
+        const sym =
+          record.status === 'PRESENT'
+            ? '1'
+            : record.status === 'ABSENT'
+              ? '0'
+              : record.status === 'LATE'
+                ? 'AT'
+                : 'J';
+        doc.text(sym, 312, y + 5, { width: 60, align: 'center' });
+      } else {
+        doc.text(String(d), 54, y + 5, { width: 40 });
+        doc.text(DOW_NAMES[dow] ?? '', 100, y + 5, { width: 80 });
+        doc.fillColor('#999').text('Sin registro', 186, y + 5, { width: 120 });
+        doc.text('—', 312, y + 5, { width: 60, align: 'center' });
+      }
+      doc.fillColor('#000').font('Helvetica');
+      y += rowH;
+    }
+
+    y += 16;
+    if (y > 680) {
+      doc.addPage();
+      y = 80;
+    }
+    doc.rect(48, y, 499, 80).fill('#DCE6F1');
+    doc.fillColor('#1F4E79').font('Helvetica-Bold').fontSize(11);
+    doc.text('RESUMEN ESTADÍSTICO', 56, y + 8);
+    doc.font('Helvetica').fontSize(10).fillColor('#000');
+    doc.text(`Presentes (P): ${p}`, 56, y + 28);
+    doc.text(`Ausentes (A): ${a}`, 56, y + 44);
+    doc.text(`Atrasos (AT): ${l}`, 220, y + 28);
+    doc.text(`Justificados (J): ${j}`, 220, y + 44);
+    const rateColor = rate >= 0.9 ? '#15803d' : rate >= 0.7 ? '#b45309' : '#b91c1c';
+    doc.fillColor(rateColor).font('Helvetica-Bold').fontSize(14);
+    doc.text(`${(rate * 100).toFixed(1)}%`, 400, y + 32, { width: 100, align: 'center' });
+    doc.fillColor('#000').font('Helvetica').fontSize(9);
+    doc.text('Asistencia', 400, y + 52, { width: 100, align: 'center' });
+    y += 96;
+
+    if (y > 720) {
+      doc.addPage();
+      y = 80;
+    }
+    doc
+      .fontSize(8)
+      .fillColor('#555')
+      .font('Helvetica-Oblique')
+      .text(
+        'Documento emitido conforme al Decreto 67/2018 del MINEDUC y Ley 19.799 (FES). ' +
+          'El porcentaje se calcula sobre días de matrícula activa.',
+        48,
+        y,
+        { width: 499 },
+      );
+    y += 40;
+
+    doc.fillColor('#000').font('Helvetica').fontSize(9);
+    doc.text('_______________________________________', 80, y + 40);
+    doc.text('_______________________________________', 340, y + 40);
+    doc.text('Profesor Jefe', 130, y + 55);
+    doc.text('Director/a', 400, y + 55);
+
+    doc
+      .fontSize(7)
+      .fillColor('#999')
+      .text(
+        `Documento generado automáticamente — ${student.course.school.name} · ${new Date().toISOString()}`,
+        48,
+        800,
+        { width: 499, align: 'center' },
+      );
+
+    doc.end();
+    await done;
+
+    await this.audit.log({
+      userId: requestedById,
+      action: 'EXPORT',
+      entity: 'Student',
+      entityId: studentId,
+      meta: { year, month, format: 'student_monthly_pdf' },
+    });
+
+    return Buffer.concat(chunks);
+  }
+
+  async generateStudentSemesterPdf(
+    studentId: string,
+    year: number,
+    semester: number,
+    requestedById: string,
+  ): Promise<Buffer> {
+    const months = semester === 1 ? [1, 2, 3, 4, 5, 6] : [7, 8, 9, 10, 11, 12];
+    const semLabel = semester === 1 ? '1er Semestre' : '2do Semestre';
+    const semFrom = new Date(year, months[0]! - 1, 1);
+    const semTo = new Date(year, months[months.length - 1]!, 0, 23, 59, 59);
+
+    const student = await this.prisma.student.findUniqueOrThrow({
+      where: { id: studentId },
+      include: {
+        course: {
+          include: {
+            school: true,
+            teachers: { include: { user: true }, where: { isHead: true }, take: 1 },
+          },
+        },
+      },
+    });
+
+    const records = await this.prisma.attendanceRecord.findMany({
+      where: { studentId, date: { gte: semFrom, lte: semTo } },
+      select: { date: true, status: true },
+      orderBy: { date: 'asc' },
+    });
+
+    const byMonth = new Map<number, { p: number; a: number; l: number; j: number }>();
+    for (const m of months) byMonth.set(m, { p: 0, a: 0, l: 0, j: 0 });
+    for (const r of records) {
+      const m = r.date.getMonth() + 1;
+      const e = byMonth.get(m);
+      if (!e) continue;
+      if (r.status === 'PRESENT') e.p++;
+      else if (r.status === 'ABSENT') e.a++;
+      else if (r.status === 'LATE') e.l++;
+      else if (r.status === 'JUSTIFIED') e.j++;
+    }
+
+    let totalP = 0,
+      totalA = 0,
+      totalL = 0,
+      totalJ = 0;
+    for (const e of byMonth.values()) {
+      totalP += e.p;
+      totalA += e.a;
+      totalL += e.l;
+      totalJ += e.j;
+    }
+    const activeDays = this.countActiveSchoolDays(student, semFrom, semTo);
+    const rate = activeDays > 0 ? (totalP + totalL + totalJ) / activeDays : 0;
+
+    const doc = new PDFDocument({ size: 'A4', margin: 48 });
+    const chunks: Buffer[] = [];
+    doc.on('data', (c) => chunks.push(c as Buffer));
+    const done = new Promise<void>((resolve) => doc.on('end', () => resolve()));
+
+    const logoPath = process.env.SCHOOL_LOGO_PATH ?? join(process.cwd(), 'assets', 'logo-cssp.png');
+    if (existsSync(logoPath)) {
+      try {
+        doc.image(logoPath, 48, 40, { fit: [60, 60] });
+      } catch {
+        /* ignore */
+      }
+    }
+
+    doc
+      .fontSize(16)
+      .fillColor('#1F4E79')
+      .font('Helvetica-Bold')
+      .text(student.course.school.name.toUpperCase(), 120, 48, { align: 'left' });
+    doc
+      .fontSize(11)
+      .fillColor('#333')
+      .font('Helvetica')
+      .text(`CERTIFICADO DE ASISTENCIA INDIVIDUAL — ${semLabel} ${year}`, 120, 70);
+    doc
+      .fontSize(9)
+      .fillColor('#666')
+      .text(`Emitido: ${new Date().toLocaleDateString('es-CL')}`, 120, 86);
+    doc.moveTo(48, 115).lineTo(547, 115).strokeColor('#1F4E79').lineWidth(1.2).stroke();
+
+    const head = student.course.teachers[0]?.user;
+    doc
+      .fontSize(13)
+      .fillColor('#000')
+      .font('Helvetica-Bold')
+      .text(`${student.course.name} — ${semLabel} ${year}`, 48, 128);
+    doc
+      .fontSize(10)
+      .fillColor('#555')
+      .font('Helvetica')
+      .text(`Profesor jefe: ${head ? `${head.firstName} ${head.lastName}` : '—'}`, 48, 148);
+
+    let y = 176;
+    doc.rect(48, y, 499, 46).fill('#F5F8FB');
+    doc.fillColor('#000').font('Helvetica-Bold').fontSize(10);
+    doc.text('DATOS DEL ESTUDIANTE', 56, y + 8);
+    doc.font('Helvetica').fontSize(9);
+    doc.text(
+      `Nombre: ${student.lastName}${student.secondLastName ? ' ' + student.secondLastName : ''}, ${student.firstName}`,
+      56,
+      y + 24,
+    );
+    doc.text(`RUT: ${student.rut}`, 300, y + 24);
+    y += 62;
+
+    const rowH = 18;
+    doc.rect(48, y, 499, rowH).fill('#1F4E79');
+    doc.fillColor('#fff').font('Helvetica-Bold').fontSize(9);
+    doc.text('Mes', 54, y + 5, { width: 100 });
+    doc.text('P', 160, y + 5, { width: 40, align: 'center' });
+    doc.text('A', 206, y + 5, { width: 40, align: 'center' });
+    doc.text('AT', 252, y + 5, { width: 40, align: 'center' });
+    doc.text('J', 298, y + 5, { width: 40, align: 'center' });
+    doc.text('% Asist.', 344, y + 5, { width: 80, align: 'center' });
+    y += rowH;
+
+    doc.font('Helvetica').fontSize(9).fillColor('#000');
+    for (const [i, m] of months.entries()) {
+      const e = byMonth.get(m)!;
+      const monthActiveDays = this.countActiveSchoolDays(
+        student,
+        new Date(year, m - 1, 1),
+        new Date(year, m, 0),
+      );
+      const monthRate = monthActiveDays > 0 ? (e.p + e.l + e.j) / monthActiveDays : 0;
+      const band = i % 2 === 0 ? '#F5F8FB' : '#FFFFFF';
+      doc.rect(48, y, 499, rowH).fill(band);
+      doc.fillColor('#000');
+      doc.text(MONTH_NAMES_ES[m - 1] ?? '', 54, y + 5, { width: 100 });
+      doc.text(String(e.p), 160, y + 5, { width: 40, align: 'center' });
+      doc.text(String(e.a), 206, y + 5, { width: 40, align: 'center' });
+      doc.text(String(e.l), 252, y + 5, { width: 40, align: 'center' });
+      doc.text(String(e.j), 298, y + 5, { width: 40, align: 'center' });
+      const rateColor = monthRate >= 0.9 ? '#15803d' : monthRate >= 0.7 ? '#b45309' : '#b91c1c';
+      doc.fillColor(rateColor).font('Helvetica-Bold');
+      doc.text(monthActiveDays > 0 ? `${(monthRate * 100).toFixed(1)}%` : '—', 344, y + 5, {
+        width: 80,
+        align: 'center',
+      });
+      doc.fillColor('#000').font('Helvetica');
+      y += rowH;
+    }
+
+    y += 10;
+    doc.rect(48, y, 499, 24).fill('#DCE6F1');
+    doc.fillColor('#1F4E79').font('Helvetica-Bold').fontSize(10);
+    doc.text(`Asistencia promedio semestral: ${(rate * 100).toFixed(1)}%`, 54, y + 7);
+    y += 40;
+
+    doc.fillColor('#000').font('Helvetica').fontSize(9);
+    doc.text(`Total Presentes: ${totalP}`, 56, y);
+    doc.text(`Total Ausentes: ${totalA}`, 56, y + 14);
+    doc.text(`Total Atrasos: ${totalL}`, 220, y);
+    doc.text(`Total Justificados: ${totalJ}`, 220, y + 14);
+    y += 40;
+
+    if (y > 720) {
+      doc.addPage();
+      y = 80;
+    }
+    doc
+      .fontSize(8)
+      .fillColor('#555')
+      .font('Helvetica-Oblique')
+      .text(
+        'Documento emitido conforme al Decreto 67/2018 del MINEDUC y Ley 19.799 (FES). ' +
+          'El porcentaje se calcula sobre días de matrícula activa.',
+        48,
+        y,
+        { width: 499 },
+      );
+    y += 40;
+
+    doc.fillColor('#000').font('Helvetica').fontSize(9);
+    doc.text('_______________________________________', 80, y + 40);
+    doc.text('_______________________________________', 340, y + 40);
+    doc.text('Profesor Jefe', 130, y + 55);
+    doc.text('Director/a', 400, y + 55);
+
+    doc
+      .fontSize(7)
+      .fillColor('#999')
+      .text(
+        `Documento generado automáticamente — ${student.course.school.name} · ${new Date().toISOString()}`,
+        48,
+        800,
+        { width: 499, align: 'center' },
+      );
+
+    doc.end();
+    await done;
+
+    await this.audit.log({
+      userId: requestedById,
+      action: 'EXPORT',
+      entity: 'Student',
+      entityId: studentId,
+      meta: { year, semester, format: 'student_semester_pdf' },
+    });
+
+    return Buffer.concat(chunks);
+  }
+
+  async generateStudentAnnualPdf(
+    studentId: string,
+    year: number,
+    requestedById: string,
+  ): Promise<Buffer> {
+    const yearFrom = new Date(year, 0, 1);
+    const yearTo = new Date(year, 11, 31, 23, 59, 59);
+
+    const student = await this.prisma.student.findUniqueOrThrow({
+      where: { id: studentId },
+      include: {
+        course: {
+          include: {
+            school: true,
+            teachers: { include: { user: true }, where: { isHead: true }, take: 1 },
+          },
+        },
+      },
+    });
+
+    const records = await this.prisma.attendanceRecord.findMany({
+      where: { studentId, date: { gte: yearFrom, lte: yearTo } },
+      select: { date: true, status: true },
+      orderBy: { date: 'asc' },
+    });
+
+    const byMonth = new Map<number, { p: number; a: number; l: number; j: number }>();
+    for (let m = 1; m <= 12; m++) byMonth.set(m, { p: 0, a: 0, l: 0, j: 0 });
+    for (const r of records) {
+      const m = r.date.getMonth() + 1;
+      const e = byMonth.get(m);
+      if (!e) continue;
+      if (r.status === 'PRESENT') e.p++;
+      else if (r.status === 'ABSENT') e.a++;
+      else if (r.status === 'LATE') e.l++;
+      else if (r.status === 'JUSTIFIED') e.j++;
+    }
+
+    let totalP = 0,
+      totalA = 0,
+      totalL = 0,
+      totalJ = 0;
+    for (const e of byMonth.values()) {
+      totalP += e.p;
+      totalA += e.a;
+      totalL += e.l;
+      totalJ += e.j;
+    }
+    const activeDays = this.countActiveSchoolDays(student, yearFrom, yearTo);
+    const rate = activeDays > 0 ? (totalP + totalL + totalJ) / activeDays : 0;
+
+    const doc = new PDFDocument({ size: 'A4', margin: 48 });
+    const chunks: Buffer[] = [];
+    doc.on('data', (c) => chunks.push(c as Buffer));
+    const done = new Promise<void>((resolve) => doc.on('end', () => resolve()));
+
+    const logoPath = process.env.SCHOOL_LOGO_PATH ?? join(process.cwd(), 'assets', 'logo-cssp.png');
+    if (existsSync(logoPath)) {
+      try {
+        doc.image(logoPath, 48, 40, { fit: [60, 60] });
+      } catch {
+        /* ignore */
+      }
+    }
+
+    doc
+      .fontSize(16)
+      .fillColor('#1F4E79')
+      .font('Helvetica-Bold')
+      .text(student.course.school.name.toUpperCase(), 120, 48, { align: 'left' });
+    doc
+      .fontSize(11)
+      .fillColor('#333')
+      .font('Helvetica')
+      .text(`CERTIFICADO DE ASISTENCIA INDIVIDUAL — ${year}`, 120, 70);
+    doc
+      .fontSize(9)
+      .fillColor('#666')
+      .text(`Emitido: ${new Date().toLocaleDateString('es-CL')}`, 120, 86);
+    doc.moveTo(48, 115).lineTo(547, 115).strokeColor('#1F4E79').lineWidth(1.2).stroke();
+
+    const head = student.course.teachers[0]?.user;
+    doc
+      .fontSize(13)
+      .fillColor('#000')
+      .font('Helvetica-Bold')
+      .text(`${student.course.name} — ${year}`, 48, 128);
+    doc
+      .fontSize(10)
+      .fillColor('#555')
+      .font('Helvetica')
+      .text(`Profesor jefe: ${head ? `${head.firstName} ${head.lastName}` : '—'}`, 48, 148);
+
+    let y = 176;
+    doc.rect(48, y, 499, 46).fill('#F5F8FB');
+    doc.fillColor('#000').font('Helvetica-Bold').fontSize(10);
+    doc.text('DATOS DEL ESTUDIANTE', 56, y + 8);
+    doc.font('Helvetica').fontSize(9);
+    doc.text(
+      `Nombre: ${student.lastName}${student.secondLastName ? ' ' + student.secondLastName : ''}, ${student.firstName}`,
+      56,
+      y + 24,
+    );
+    doc.text(`RUT: ${student.rut}`, 300, y + 24);
+    y += 62;
+
+    const rowH = 18;
+    doc.rect(48, y, 499, rowH).fill('#1F4E79');
+    doc.fillColor('#fff').font('Helvetica-Bold').fontSize(9);
+    doc.text('Mes', 54, y + 5, { width: 100 });
+    doc.text('P', 160, y + 5, { width: 40, align: 'center' });
+    doc.text('A', 206, y + 5, { width: 40, align: 'center' });
+    doc.text('AT', 252, y + 5, { width: 40, align: 'center' });
+    doc.text('J', 298, y + 5, { width: 40, align: 'center' });
+    doc.text('% Asist.', 344, y + 5, { width: 80, align: 'center' });
+    y += rowH;
+
+    doc.font('Helvetica').fontSize(9).fillColor('#000');
+    for (let m = 1; m <= 12; m++) {
+      if (y > 740) {
+        doc.addPage();
+        y = 60;
+      }
+      const e = byMonth.get(m)!;
+      const monthActiveDays = this.countActiveSchoolDays(
+        student,
+        new Date(year, m - 1, 1),
+        new Date(year, m, 0),
+      );
+      const monthRate = monthActiveDays > 0 ? (e.p + e.l + e.j) / monthActiveDays : 0;
+      const band = m % 2 === 0 ? '#F5F8FB' : '#FFFFFF';
+      doc.rect(48, y, 499, rowH).fill(band);
+      doc.fillColor('#000');
+      doc.text(MONTH_NAMES_ES[m - 1] ?? '', 54, y + 5, { width: 100 });
+      doc.text(String(e.p), 160, y + 5, { width: 40, align: 'center' });
+      doc.text(String(e.a), 206, y + 5, { width: 40, align: 'center' });
+      doc.text(String(e.l), 252, y + 5, { width: 40, align: 'center' });
+      doc.text(String(e.j), 298, y + 5, { width: 40, align: 'center' });
+      const rateColor = monthRate >= 0.9 ? '#15803d' : monthRate >= 0.7 ? '#b45309' : '#b91c1c';
+      doc.fillColor(rateColor).font('Helvetica-Bold');
+      doc.text(monthActiveDays > 0 ? `${(monthRate * 100).toFixed(1)}%` : '—', 344, y + 5, {
+        width: 80,
+        align: 'center',
+      });
+      doc.fillColor('#000').font('Helvetica');
+      y += rowH;
+    }
+
+    y += 10;
+    doc.rect(48, y, 499, 24).fill('#DCE6F1');
+    doc.fillColor('#1F4E79').font('Helvetica-Bold').fontSize(10);
+    doc.text(`Asistencia promedio anual: ${(rate * 100).toFixed(1)}%`, 54, y + 7);
+    y += 40;
+
+    doc.fillColor('#000').font('Helvetica').fontSize(9);
+    doc.text(`Total Presentes: ${totalP}`, 56, y);
+    doc.text(`Total Ausentes: ${totalA}`, 56, y + 14);
+    doc.text(`Total Atrasos: ${totalL}`, 220, y);
+    doc.text(`Total Justificados: ${totalJ}`, 220, y + 14);
+    y += 40;
+
+    if (y > 720) {
+      doc.addPage();
+      y = 80;
+    }
+    doc
+      .fontSize(8)
+      .fillColor('#555')
+      .font('Helvetica-Oblique')
+      .text(
+        'Documento emitido conforme al Decreto 67/2018 del MINEDUC y Ley 19.799 (FES). ' +
+          'El porcentaje se calcula sobre días de matrícula activa.',
+        48,
+        y,
+        { width: 499 },
+      );
+    y += 40;
+
+    doc.fillColor('#000').font('Helvetica').fontSize(9);
+    doc.text('_______________________________________', 80, y + 40);
+    doc.text('_______________________________________', 340, y + 40);
+    doc.text('Profesor Jefe', 130, y + 55);
+    doc.text('Director/a', 400, y + 55);
+
+    doc
+      .fontSize(7)
+      .fillColor('#999')
+      .text(
+        `Documento generado automáticamente — ${student.course.school.name} · ${new Date().toISOString()}`,
+        48,
+        800,
+        { width: 499, align: 'center' },
+      );
+
+    doc.end();
+    await done;
+
+    await this.audit.log({
+      userId: requestedById,
+      action: 'EXPORT',
+      entity: 'Student',
+      entityId: studentId,
+      meta: { year, format: 'student_annual_pdf' },
+    });
+
+    return Buffer.concat(chunks);
+  }
+
+  async generateStudentMonthlyExcel(
+    studentId: string,
+    year: number,
+    month: number,
+    requestedById: string,
+  ): Promise<Buffer> {
+    const from = new Date(year, month - 1, 1);
+    const to = new Date(year, month, 0);
+
+    const student = await this.prisma.student.findUniqueOrThrow({
+      where: { id: studentId },
+      include: {
+        course: {
+          include: {
+            school: true,
+            teachers: { include: { user: true }, where: { isHead: true }, take: 1 },
+          },
+        },
+      },
+    });
+
+    const records = await this.prisma.attendanceRecord.findMany({
+      where: { studentId, date: { gte: from, lte: to } },
+      select: { date: true, status: true },
+      orderBy: { date: 'asc' },
+    });
+
+    const daysInMonth = to.getDate();
+    const recordMap = new Map<number, string>();
+    for (const r of records) {
+      recordMap.set(r.date.getDate(), r.status);
+    }
+
+    const wb = new ExcelJS.Workbook();
+    wb.creator = 'Asistencia CSSP';
+    wb.created = new Date();
+
+    const ws = wb.addWorksheet('ASISTENCIA', { views: [{ showGridLines: false }] });
+    const BLUE = 'FF1F4E79';
+    const GREEN = 'FF00B050';
+    const RED = 'FFC00000';
+    const YELLOW = 'FFFFFF00';
+    const ORANGE = 'FFED7D31';
+    const GRAY = 'FFD9D9D9';
+    const thin = { style: 'thin' as const, color: { argb: 'FF000000' } };
+    const borderAll = { top: thin, bottom: thin, left: thin, right: thin };
+    const centerMid = { horizontal: 'center' as const, vertical: 'middle' as const };
+
+    ws.getColumn(1).width = 8;
+    ws.getColumn(2).width = 14;
+    ws.getColumn(3).width = 16;
+    ws.getColumn(4).width = 10;
+    ws.getColumn(5).width = 12;
+
+    ws.mergeCells('A1:E1');
+    const titleCell = ws.getCell('A1');
+    titleCell.value = `${student.course.school.name.toUpperCase()} — ASISTENCIA INDIVIDUAL`;
+    titleCell.font = { bold: true, size: 14, color: { argb: 'FFFFFFFF' } };
+    titleCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: BLUE } };
+    titleCell.alignment = centerMid;
+    ws.getRow(1).height = 24;
+
+    ws.mergeCells('A2:E2');
+    const monthName = MONTH_NAMES_ES[month - 1] ?? '';
+    ws.getCell('A2').value = `${student.course.name} — ${monthName} ${year}`;
+    ws.getCell('A2').alignment = centerMid;
+    ws.getCell('A2').font = { bold: true, size: 11 };
+    ws.getRow(2).height = 18;
+
+    let r = 4;
+    ws.getCell(r, 1).value = 'Estudiante:';
+    ws.getCell(r, 1).font = { bold: true };
+    ws.mergeCells(r, 2, r, 5);
+    ws.getCell(r, 2).value =
+      `${student.lastName}${student.secondLastName ? ' ' + student.secondLastName : ''}, ${student.firstName}`;
+    r++;
+    ws.getCell(r, 1).value = 'RUT:';
+    ws.getCell(r, 1).font = { bold: true };
+    ws.getCell(r, 2).value = student.rut;
+    ws.getCell(r, 3).value = 'N° Lista:';
+    ws.getCell(r, 3).font = { bold: true };
+    ws.getCell(r, 4).value = student.enrollmentNumber;
+    r += 2;
+
+    const headerRow = ws.getRow(r);
+    headerRow.height = 20;
+    ['Día', 'Día semana', 'Estado', 'Símbolo', 'Nota'].forEach((h, i) => {
+      const cell = ws.getCell(r, i + 1);
+      cell.value = h;
+      cell.font = { bold: true, color: { argb: 'FFFFFFFF' } };
+      cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: BLUE } };
+      cell.alignment = centerMid;
+      cell.border = borderAll;
+    });
+    r++;
+
+    const DOW_NAMES = ['Domingo', 'Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado'];
+    const STATUS_LABELS: Record<string, { label: string; color: string; sym: string }> = {
+      PRESENT: { label: 'Presente', color: GREEN, sym: '1' },
+      ABSENT: { label: 'Ausente', color: RED, sym: '0' },
+      LATE: { label: 'Atraso', color: ORANGE, sym: 'AT' },
+      JUSTIFIED: { label: 'Justificado', color: YELLOW, sym: 'J' },
+    };
+
+    let p = 0,
+      a = 0,
+      l = 0,
+      j = 0;
+    for (let d = 1; d <= daysInMonth; d++) {
+      const date = new Date(year, month - 1, d);
+      const dow = date.getDay();
+      const isWeekend = dow === 0 || dow === 6;
+      const status = recordMap.get(d);
+
+      ws.getCell(r, 1).value = d;
+      ws.getCell(r, 1).alignment = centerMid;
+      ws.getCell(r, 1).border = borderAll;
+      ws.getCell(r, 2).value = DOW_NAMES[dow];
+      ws.getCell(r, 2).alignment = centerMid;
+      ws.getCell(r, 2).border = borderAll;
+
+      if (isWeekend) {
+        for (let c = 1; c <= 5; c++) {
+          ws.getCell(r, c).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: GRAY } };
+        }
+        ws.getCell(r, 3).value = '—';
+        ws.getCell(r, 4).value = '—';
+      } else if (status) {
+        const cfg = STATUS_LABELS[status];
+        ws.getCell(r, 3).value = cfg?.label ?? status;
+        ws.getCell(r, 3).border = borderAll;
+        ws.getCell(r, 4).value = cfg?.sym ?? '';
+        ws.getCell(r, 4).alignment = centerMid;
+        ws.getCell(r, 4).border = borderAll;
+        ws.getCell(r, 4).font = { bold: true };
+        if (cfg) {
+          ws.getCell(r, 4).fill = {
+            type: 'pattern',
+            pattern: 'solid',
+            fgColor: { argb: cfg.color },
+          };
+          if (cfg.sym !== 'J') {
+            ws.getCell(r, 4).font = { bold: true, color: { argb: 'FFFFFFFF' } };
+          }
+        }
+        if (status === 'PRESENT') p++;
+        else if (status === 'ABSENT') a++;
+        else if (status === 'LATE') l++;
+        else if (status === 'JUSTIFIED') j++;
+      } else {
+        ws.getCell(r, 3).value = 'Sin registro';
+        ws.getCell(r, 3).font = { italic: true, color: { argb: 'FF999999' } };
+        ws.getCell(r, 4).value = '—';
+      }
+      ws.getCell(r, 3).alignment = centerMid;
+      ws.getCell(r, 3).border = borderAll;
+      ws.getCell(r, 5).border = borderAll;
+      r++;
+    }
+
+    r += 2;
+    ws.mergeCells(r, 1, r, 5);
+    ws.getCell(r, 1).value = 'RESUMEN';
+    ws.getCell(r, 1).font = { bold: true, size: 12, color: { argb: 'FFFFFFFF' } };
+    ws.getCell(r, 1).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: BLUE } };
+    ws.getCell(r, 1).alignment = centerMid;
+    r++;
+
+    const activeDays = this.countActiveSchoolDays(student, from, to);
+    const rate = activeDays > 0 ? (p + l + j) / activeDays : 0;
+
+    ws.getCell(r, 1).value = 'Presentes:';
+    ws.getCell(r, 1).font = { bold: true };
+    ws.getCell(r, 2).value = p;
+    ws.getCell(r, 2).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFE2EFDA' } };
+    ws.getCell(r, 3).value = 'Ausentes:';
+    ws.getCell(r, 3).font = { bold: true };
+    ws.getCell(r, 4).value = a;
+    ws.getCell(r, 4).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFCE4E4' } };
+    r++;
+    ws.getCell(r, 1).value = 'Atrasos:';
+    ws.getCell(r, 1).font = { bold: true };
+    ws.getCell(r, 2).value = l;
+    ws.getCell(r, 3).value = 'Justificados:';
+    ws.getCell(r, 3).font = { bold: true };
+    ws.getCell(r, 4).value = j;
+    ws.getCell(r, 4).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFFF2CC' } };
+    r++;
+    ws.getCell(r, 1).value = '% Asistencia:';
+    ws.getCell(r, 1).font = { bold: true };
+    const pctCell = ws.getCell(r, 2);
+    pctCell.value = rate;
+    pctCell.numFmt = '0.0%';
+    pctCell.font = { bold: true, size: 12 };
+    pctCell.fill = {
+      type: 'pattern',
+      pattern: 'solid',
+      fgColor: { argb: rate >= 0.9 ? 'FFE2EFDA' : rate >= 0.7 ? 'FFFFF2CC' : 'FFFCE4E4' },
+    };
+    r += 2;
+
+    ws.mergeCells(r, 1, r, 5);
+    ws.getCell(r, 1).value =
+      'Documento emitido conforme al Decreto 67/2018 del MINEDUC y Ley 19.799 (FES). ' +
+      'El porcentaje se calcula sobre días de matrícula activa.';
+    ws.getCell(r, 1).font = { italic: true, size: 8, color: { argb: 'FF666666' } };
+    ws.getCell(r, 1).alignment = { wrapText: true };
+    ws.getRow(r).height = 30;
+
+    const meta = wb.addWorksheet('RESUMEN');
+    meta.getColumn(1).width = 20;
+    meta.getColumn(2).width = 40;
+    meta.addRow(['Establecimiento:', student.course.school.name]);
+    meta.addRow(['Curso:', student.course.name]);
+    meta.addRow([
+      'Estudiante:',
+      `${student.lastName}${student.secondLastName ? ' ' + student.secondLastName : ''}, ${student.firstName}`,
+    ]);
+    meta.addRow(['RUT:', student.rut]);
+    meta.addRow(['N° Lista:', student.enrollmentNumber]);
+    meta.addRow(['Período:', `${monthName} ${year}`]);
+    meta.addRow(['Generado:', new Date().toLocaleDateString('es-CL')]);
+    meta.getColumn(1).font = { bold: true };
+
+    await this.audit.log({
+      userId: requestedById,
+      action: 'EXPORT',
+      entity: 'Student',
+      entityId: studentId,
+      meta: { year, month, format: 'student_monthly_xlsx' },
+    });
+
+    return Buffer.from(await wb.xlsx.writeBuffer());
+  }
+
+  async generateStudentSemesterExcel(
+    studentId: string,
+    year: number,
+    semester: number,
+    requestedById: string,
+  ): Promise<Buffer> {
+    const months = semester === 1 ? [1, 2, 3, 4, 5, 6] : [7, 8, 9, 10, 11, 12];
+    const semLabel = semester === 1 ? '1er Semestre' : '2do Semestre';
+    const semFrom = new Date(year, months[0]! - 1, 1);
+    const semTo = new Date(year, months[months.length - 1]!, 0, 23, 59, 59);
+
+    const student = await this.prisma.student.findUniqueOrThrow({
+      where: { id: studentId },
+      include: {
+        course: {
+          include: {
+            school: true,
+            teachers: { include: { user: true }, where: { isHead: true }, take: 1 },
+          },
+        },
+      },
+    });
+
+    const allRecords = await this.prisma.attendanceRecord.findMany({
+      where: { studentId, date: { gte: semFrom, lte: semTo } },
+      select: { date: true, status: true },
+      orderBy: { date: 'asc' },
+    });
+
+    const byMonth = new Map<number, Array<{ date: Date; status: string }>>();
+    for (const r of allRecords) {
+      const m = r.date.getMonth() + 1;
+      if (!byMonth.has(m)) byMonth.set(m, []);
+      byMonth.get(m)!.push(r);
+    }
+
+    const wb = new ExcelJS.Workbook();
+    wb.creator = 'Asistencia CSSP';
+
+    const BLUE = 'FF1F4E79';
+    const GREEN = 'FF00B050';
+    const RED = 'FFC00000';
+    const YELLOW = 'FFFFFF00';
+    const ORANGE = 'FFED7D31';
+    const GRAY = 'FFD9D9D9';
+    const thin = { style: 'thin' as const, color: { argb: 'FF000000' } };
+    const borderAll = { top: thin, bottom: thin, left: thin, right: thin };
+    const centerMid = { horizontal: 'center' as const, vertical: 'middle' as const };
+
+    const DOW_NAMES = ['Domingo', 'Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado'];
+    const STATUS_MAP: Record<string, { label: string; color: string; sym: string }> = {
+      PRESENT: { label: 'Presente', color: GREEN, sym: '1' },
+      ABSENT: { label: 'Ausente', color: RED, sym: '0' },
+      LATE: { label: 'Atraso', color: ORANGE, sym: 'AT' },
+      JUSTIFIED: { label: 'Justificado', color: YELLOW, sym: 'J' },
+    };
+
+    for (const month of months) {
+      const monthName = MONTH_NAMES_ES[month - 1] ?? '';
+      const monthFrom = new Date(year, month - 1, 1);
+      const monthTo = new Date(year, month, 0);
+      const daysInMonth = monthTo.getDate();
+      const records = byMonth.get(month) ?? [];
+      const recordMap = new Map<number, string>();
+      for (const r of records) {
+        recordMap.set(r.date.getDate(), r.status);
+      }
+
+      const ws = wb.addWorksheet(monthName.toUpperCase(), { views: [{ showGridLines: false }] });
+      ws.getColumn(1).width = 8;
+      ws.getColumn(2).width = 14;
+      ws.getColumn(3).width = 16;
+      ws.getColumn(4).width = 10;
+
+      ws.mergeCells('A1:D1');
+      const titleCell = ws.getCell('A1');
+      titleCell.value = `${student.course.school.name} — ${monthName.toUpperCase()} ${year}`;
+      titleCell.font = { bold: true, size: 13, color: { argb: 'FFFFFFFF' } };
+      titleCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: BLUE } };
+      titleCell.alignment = centerMid;
+      ws.getRow(1).height = 22;
+
+      ws.mergeCells('A2:D2');
+      ws.getCell('A2').value =
+        `${student.lastName}${student.secondLastName ? ' ' + student.secondLastName : ''}, ${student.firstName} — RUT ${student.rut}`;
+      ws.getCell('A2').alignment = centerMid;
+      ws.getCell('A2').font = { bold: true, size: 10 };
+
+      let r = 4;
+      const headerRow = ws.getRow(r);
+      headerRow.height = 20;
+      ['Día', 'Día semana', 'Estado', 'Símbolo'].forEach((h, i) => {
+        const cell = ws.getCell(r, i + 1);
+        cell.value = h;
+        cell.font = { bold: true, color: { argb: 'FFFFFFFF' } };
+        cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: BLUE } };
+        cell.alignment = centerMid;
+        cell.border = borderAll;
+      });
+      r++;
+
+      let p = 0,
+        a = 0,
+        l = 0,
+        j = 0;
+      for (let d = 1; d <= daysInMonth; d++) {
+        const date = new Date(year, month - 1, d);
+        const dow = date.getDay();
+        const isWeekend = dow === 0 || dow === 6;
+        const status = recordMap.get(d);
+
+        ws.getCell(r, 1).value = d;
+        ws.getCell(r, 1).alignment = centerMid;
+        ws.getCell(r, 1).border = borderAll;
+        ws.getCell(r, 2).value = DOW_NAMES[dow];
+        ws.getCell(r, 2).alignment = centerMid;
+        ws.getCell(r, 2).border = borderAll;
+
+        if (isWeekend) {
+          for (let c = 1; c <= 4; c++) {
+            ws.getCell(r, c).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: GRAY } };
+          }
+          ws.getCell(r, 3).value = '—';
+          ws.getCell(r, 4).value = '—';
+        } else if (status) {
+          const cfg = STATUS_MAP[status];
+          ws.getCell(r, 3).value = cfg?.label ?? status;
+          ws.getCell(r, 3).alignment = centerMid;
+          ws.getCell(r, 3).border = borderAll;
+          ws.getCell(r, 4).value = cfg?.sym ?? '';
+          ws.getCell(r, 4).alignment = centerMid;
+          ws.getCell(r, 4).border = borderAll;
+          ws.getCell(r, 4).font = { bold: true };
+          if (cfg) {
+            ws.getCell(r, 4).fill = {
+              type: 'pattern',
+              pattern: 'solid',
+              fgColor: { argb: cfg.color },
+            };
+            if (cfg.sym !== 'J') {
+              ws.getCell(r, 4).font = { bold: true, color: { argb: 'FFFFFFFF' } };
+            }
+          }
+          if (status === 'PRESENT') p++;
+          else if (status === 'ABSENT') a++;
+          else if (status === 'LATE') l++;
+          else if (status === 'JUSTIFIED') j++;
+        } else {
+          ws.getCell(r, 3).value = 'Sin registro';
+          ws.getCell(r, 3).font = { italic: true, color: { argb: 'FF999999' } };
+          ws.getCell(r, 4).value = '—';
+        }
+        ws.getCell(r, 3).border = borderAll;
+        ws.getCell(r, 4).border = borderAll;
+        r++;
+      }
+
+      r += 2;
+      const activeDays = this.countActiveSchoolDays(student, monthFrom, monthTo);
+      const rate = activeDays > 0 ? (p + l + j) / activeDays : 0;
+      ws.getCell(r, 1).value = 'P:';
+      ws.getCell(r, 1).font = { bold: true };
+      ws.getCell(r, 2).value = p;
+      ws.getCell(r, 3).value = 'A:';
+      ws.getCell(r, 3).font = { bold: true };
+      ws.getCell(r, 4).value = a;
+      r++;
+      ws.getCell(r, 1).value = 'AT:';
+      ws.getCell(r, 1).font = { bold: true };
+      ws.getCell(r, 2).value = l;
+      ws.getCell(r, 3).value = 'J:';
+      ws.getCell(r, 3).font = { bold: true };
+      ws.getCell(r, 4).value = j;
+      r++;
+      ws.getCell(r, 1).value = '%:';
+      ws.getCell(r, 1).font = { bold: true };
+      const pctCell = ws.getCell(r, 2);
+      pctCell.value = rate;
+      pctCell.numFmt = '0.0%';
+      pctCell.font = { bold: true };
+    }
+
+    const summary = wb.addWorksheet('RESUMEN SEMESTRAL', { views: [{ showGridLines: false }] });
+    summary.getColumn(1).width = 16;
+    summary.getColumn(2).width = 10;
+    summary.getColumn(3).width = 10;
+    summary.getColumn(4).width = 10;
+    summary.getColumn(5).width = 10;
+    summary.getColumn(6).width = 12;
+
+    summary.mergeCells('A1:F1');
+    summary.getCell('A1').value =
+      `${student.course.school.name} — ${semLabel} ${year} — ${student.lastName}, ${student.firstName}`;
+    summary.getCell('A1').font = { bold: true, size: 12, color: { argb: 'FFFFFFFF' } };
+    summary.getCell('A1').fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: BLUE } };
+    summary.getCell('A1').alignment = centerMid;
+    summary.getRow(1).height = 22;
+
+    ['Mes', 'P', 'A', 'AT', 'J', '% Asist.'].forEach((h, i) => {
+      const c = summary.getCell(2, i + 1);
+      c.value = h;
+      c.font = { bold: true, color: { argb: 'FFFFFFFF' } };
+      c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: BLUE } };
+      c.alignment = centerMid;
+      c.border = borderAll;
+    });
+
+    let totalP = 0,
+      totalA = 0,
+      totalL = 0,
+      totalJ = 0;
+    for (const [i, month] of months.entries()) {
+      const monthRecords = byMonth.get(month) ?? [];
+      let mp = 0,
+        ma = 0,
+        ml = 0,
+        mj = 0;
+      for (const r of monthRecords) {
+        if (r.status === 'PRESENT') mp++;
+        else if (r.status === 'ABSENT') ma++;
+        else if (r.status === 'LATE') ml++;
+        else if (r.status === 'JUSTIFIED') mj++;
+      }
+      totalP += mp;
+      totalA += ma;
+      totalL += ml;
+      totalJ += mj;
+
+      const monthFrom = new Date(year, month - 1, 1);
+      const monthTo = new Date(year, month, 0);
+      const activeDays = this.countActiveSchoolDays(student, monthFrom, monthTo);
+      const rate = activeDays > 0 ? (mp + ml + mj) / activeDays : 0;
+
+      const r = i + 3;
+      summary.getCell(r, 1).value = MONTH_NAMES_ES[month - 1] ?? '';
+      summary.getCell(r, 1).border = borderAll;
+      summary.getCell(r, 2).value = mp;
+      summary.getCell(r, 2).alignment = centerMid;
+      summary.getCell(r, 2).border = borderAll;
+      summary.getCell(r, 3).value = ma;
+      summary.getCell(r, 3).alignment = centerMid;
+      summary.getCell(r, 3).border = borderAll;
+      summary.getCell(r, 4).value = ml;
+      summary.getCell(r, 4).alignment = centerMid;
+      summary.getCell(r, 4).border = borderAll;
+      summary.getCell(r, 5).value = mj;
+      summary.getCell(r, 5).alignment = centerMid;
+      summary.getCell(r, 5).border = borderAll;
+      const pctCell = summary.getCell(r, 6);
+      pctCell.value = rate;
+      pctCell.numFmt = '0.0%';
+      pctCell.alignment = centerMid;
+      pctCell.border = borderAll;
+      pctCell.font = { bold: true };
+      pctCell.fill = {
+        type: 'pattern',
+        pattern: 'solid',
+        fgColor: { argb: rate >= 0.9 ? 'FFE2EFDA' : rate >= 0.7 ? 'FFFFF2CC' : 'FFFCE4E4' },
+      };
+    }
+
+    await this.audit.log({
+      userId: requestedById,
+      action: 'EXPORT',
+      entity: 'Student',
+      entityId: studentId,
+      meta: { year, semester, format: 'student_semester_xlsx' },
+    });
+
+    return Buffer.from(await wb.xlsx.writeBuffer());
+  }
+
+  async generateStudentAnnualExcel(
+    studentId: string,
+    year: number,
+    requestedById: string,
+  ): Promise<Buffer> {
+    const yearFrom = new Date(year, 0, 1);
+    const yearTo = new Date(year, 11, 31, 23, 59, 59);
+
+    const student = await this.prisma.student.findUniqueOrThrow({
+      where: { id: studentId },
+      include: {
+        course: {
+          include: {
+            school: true,
+            teachers: { include: { user: true }, where: { isHead: true }, take: 1 },
+          },
+        },
+      },
+    });
+
+    const allRecords = await this.prisma.attendanceRecord.findMany({
+      where: { studentId, date: { gte: yearFrom, lte: yearTo } },
+      select: { date: true, status: true },
+      orderBy: { date: 'asc' },
+    });
+
+    const byMonth = new Map<number, Array<{ date: Date; status: string }>>();
+    for (const r of allRecords) {
+      const m = r.date.getMonth() + 1;
+      if (!byMonth.has(m)) byMonth.set(m, []);
+      byMonth.get(m)!.push(r);
+    }
+
+    const wb = new ExcelJS.Workbook();
+    wb.creator = 'Asistencia CSSP';
+
+    const BLUE = 'FF1F4E79';
+    const GREEN = 'FF00B050';
+    const RED = 'FFC00000';
+    const YELLOW = 'FFFFFF00';
+    const ORANGE = 'FFED7D31';
+    const GRAY = 'FFD9D9D9';
+    const thin = { style: 'thin' as const, color: { argb: 'FF000000' } };
+    const borderAll = { top: thin, bottom: thin, left: thin, right: thin };
+    const centerMid = { horizontal: 'center' as const, vertical: 'middle' as const };
+
+    const DOW_NAMES = ['Domingo', 'Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado'];
+    const STATUS_MAP: Record<string, { label: string; color: string; sym: string }> = {
+      PRESENT: { label: 'Presente', color: GREEN, sym: '1' },
+      ABSENT: { label: 'Ausente', color: RED, sym: '0' },
+      LATE: { label: 'Atraso', color: ORANGE, sym: 'AT' },
+      JUSTIFIED: { label: 'Justificado', color: YELLOW, sym: 'J' },
+    };
+
+    for (let month = 1; month <= 12; month++) {
+      const monthName = MONTH_NAMES_ES[month - 1] ?? '';
+      const monthFrom = new Date(year, month - 1, 1);
+      const monthTo = new Date(year, month, 0);
+      const daysInMonth = monthTo.getDate();
+      const records = byMonth.get(month) ?? [];
+      const recordMap = new Map<number, string>();
+      for (const r of records) {
+        recordMap.set(r.date.getDate(), r.status);
+      }
+
+      const ws = wb.addWorksheet(monthName.toUpperCase(), { views: [{ showGridLines: false }] });
+      ws.getColumn(1).width = 8;
+      ws.getColumn(2).width = 14;
+      ws.getColumn(3).width = 16;
+      ws.getColumn(4).width = 10;
+
+      ws.mergeCells('A1:D1');
+      const titleCell = ws.getCell('A1');
+      titleCell.value = `${student.course.school.name} — ${monthName.toUpperCase()} ${year}`;
+      titleCell.font = { bold: true, size: 13, color: { argb: 'FFFFFFFF' } };
+      titleCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: BLUE } };
+      titleCell.alignment = centerMid;
+      ws.getRow(1).height = 22;
+
+      ws.mergeCells('A2:D2');
+      ws.getCell('A2').value =
+        `${student.lastName}${student.secondLastName ? ' ' + student.secondLastName : ''}, ${student.firstName} — RUT ${student.rut}`;
+      ws.getCell('A2').alignment = centerMid;
+      ws.getCell('A2').font = { bold: true, size: 10 };
+
+      let r = 4;
+      const headerRow = ws.getRow(r);
+      headerRow.height = 20;
+      ['Día', 'Día semana', 'Estado', 'Símbolo'].forEach((h, i) => {
+        const cell = ws.getCell(r, i + 1);
+        cell.value = h;
+        cell.font = { bold: true, color: { argb: 'FFFFFFFF' } };
+        cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: BLUE } };
+        cell.alignment = centerMid;
+        cell.border = borderAll;
+      });
+      r++;
+
+      let p = 0,
+        a = 0,
+        l = 0,
+        j = 0;
+      for (let d = 1; d <= daysInMonth; d++) {
+        const date = new Date(year, month - 1, d);
+        const dow = date.getDay();
+        const isWeekend = dow === 0 || dow === 6;
+        const status = recordMap.get(d);
+
+        ws.getCell(r, 1).value = d;
+        ws.getCell(r, 1).alignment = centerMid;
+        ws.getCell(r, 1).border = borderAll;
+        ws.getCell(r, 2).value = DOW_NAMES[dow];
+        ws.getCell(r, 2).alignment = centerMid;
+        ws.getCell(r, 2).border = borderAll;
+
+        if (isWeekend) {
+          for (let c = 1; c <= 4; c++) {
+            ws.getCell(r, c).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: GRAY } };
+          }
+          ws.getCell(r, 3).value = '—';
+          ws.getCell(r, 4).value = '—';
+        } else if (status) {
+          const cfg = STATUS_MAP[status];
+          ws.getCell(r, 3).value = cfg?.label ?? status;
+          ws.getCell(r, 3).alignment = centerMid;
+          ws.getCell(r, 3).border = borderAll;
+          ws.getCell(r, 4).value = cfg?.sym ?? '';
+          ws.getCell(r, 4).alignment = centerMid;
+          ws.getCell(r, 4).border = borderAll;
+          ws.getCell(r, 4).font = { bold: true };
+          if (cfg) {
+            ws.getCell(r, 4).fill = {
+              type: 'pattern',
+              pattern: 'solid',
+              fgColor: { argb: cfg.color },
+            };
+            if (cfg.sym !== 'J') {
+              ws.getCell(r, 4).font = { bold: true, color: { argb: 'FFFFFFFF' } };
+            }
+          }
+          if (status === 'PRESENT') p++;
+          else if (status === 'ABSENT') a++;
+          else if (status === 'LATE') l++;
+          else if (status === 'JUSTIFIED') j++;
+        } else {
+          ws.getCell(r, 3).value = 'Sin registro';
+          ws.getCell(r, 3).font = { italic: true, color: { argb: 'FF999999' } };
+          ws.getCell(r, 4).value = '—';
+        }
+        ws.getCell(r, 3).border = borderAll;
+        ws.getCell(r, 4).border = borderAll;
+        r++;
+      }
+
+      r += 2;
+      const activeDays = this.countActiveSchoolDays(student, monthFrom, monthTo);
+      const rate = activeDays > 0 ? (p + l + j) / activeDays : 0;
+      ws.getCell(r, 1).value = 'P:';
+      ws.getCell(r, 1).font = { bold: true };
+      ws.getCell(r, 2).value = p;
+      ws.getCell(r, 3).value = 'A:';
+      ws.getCell(r, 3).font = { bold: true };
+      ws.getCell(r, 4).value = a;
+      r++;
+      ws.getCell(r, 1).value = 'AT:';
+      ws.getCell(r, 1).font = { bold: true };
+      ws.getCell(r, 2).value = l;
+      ws.getCell(r, 3).value = 'J:';
+      ws.getCell(r, 3).font = { bold: true };
+      ws.getCell(r, 4).value = j;
+      r++;
+      ws.getCell(r, 1).value = '%:';
+      ws.getCell(r, 1).font = { bold: true };
+      const pctCell = ws.getCell(r, 2);
+      pctCell.value = rate;
+      pctCell.numFmt = '0.0%';
+      pctCell.font = { bold: true };
+    }
+
+    const summary = wb.addWorksheet('RESUMEN ANUAL', { views: [{ showGridLines: false }] });
+    summary.getColumn(1).width = 16;
+    summary.getColumn(2).width = 10;
+    summary.getColumn(3).width = 10;
+    summary.getColumn(4).width = 10;
+    summary.getColumn(5).width = 10;
+    summary.getColumn(6).width = 12;
+
+    summary.mergeCells('A1:F1');
+    summary.getCell('A1').value =
+      `${student.course.school.name} — ${year} — ${student.lastName}, ${student.firstName}`;
+    summary.getCell('A1').font = { bold: true, size: 12, color: { argb: 'FFFFFFFF' } };
+    summary.getCell('A1').fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: BLUE } };
+    summary.getCell('A1').alignment = centerMid;
+    summary.getRow(1).height = 22;
+
+    ['Mes', 'P', 'A', 'AT', 'J', '% Asist.'].forEach((h, i) => {
+      const c = summary.getCell(2, i + 1);
+      c.value = h;
+      c.font = { bold: true, color: { argb: 'FFFFFFFF' } };
+      c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: BLUE } };
+      c.alignment = centerMid;
+      c.border = borderAll;
+    });
+
+    let totalP = 0,
+      totalA = 0,
+      totalL = 0,
+      totalJ = 0;
+    for (let month = 1; month <= 12; month++) {
+      const monthRecords = byMonth.get(month) ?? [];
+      let mp = 0,
+        ma = 0,
+        ml = 0,
+        mj = 0;
+      for (const r of monthRecords) {
+        if (r.status === 'PRESENT') mp++;
+        else if (r.status === 'ABSENT') ma++;
+        else if (r.status === 'LATE') ml++;
+        else if (r.status === 'JUSTIFIED') mj++;
+      }
+      totalP += mp;
+      totalA += ma;
+      totalL += ml;
+      totalJ += mj;
+
+      const monthFrom = new Date(year, month - 1, 1);
+      const monthTo = new Date(year, month, 0);
+      const activeDays = this.countActiveSchoolDays(student, monthFrom, monthTo);
+      const rate = activeDays > 0 ? (mp + ml + mj) / activeDays : 0;
+
+      const r = month + 2;
+      summary.getCell(r, 1).value = MONTH_NAMES_ES[month - 1] ?? '';
+      summary.getCell(r, 1).border = borderAll;
+      summary.getCell(r, 2).value = mp;
+      summary.getCell(r, 2).alignment = centerMid;
+      summary.getCell(r, 2).border = borderAll;
+      summary.getCell(r, 3).value = ma;
+      summary.getCell(r, 3).alignment = centerMid;
+      summary.getCell(r, 3).border = borderAll;
+      summary.getCell(r, 4).value = ml;
+      summary.getCell(r, 4).alignment = centerMid;
+      summary.getCell(r, 4).border = borderAll;
+      summary.getCell(r, 5).value = mj;
+      summary.getCell(r, 5).alignment = centerMid;
+      summary.getCell(r, 5).border = borderAll;
+      const pctCell = summary.getCell(r, 6);
+      pctCell.value = rate;
+      pctCell.numFmt = '0.0%';
+      pctCell.alignment = centerMid;
+      pctCell.border = borderAll;
+      pctCell.font = { bold: true };
+      pctCell.fill = {
+        type: 'pattern',
+        pattern: 'solid',
+        fgColor: { argb: rate >= 0.9 ? 'FFE2EFDA' : rate >= 0.7 ? 'FFFFF2CC' : 'FFFCE4E4' },
+      };
+    }
+
+    const totalRow = 15;
+    summary.getCell(totalRow, 1).value = 'TOTAL';
+    summary.getCell(totalRow, 1).font = { bold: true };
+    summary.getCell(totalRow, 1).border = borderAll;
+    summary.getCell(totalRow, 1).fill = {
+      type: 'pattern',
+      pattern: 'solid',
+      fgColor: { argb: 'FFDCE6F1' },
+    };
+    summary.getCell(totalRow, 2).value = totalP;
+    summary.getCell(totalRow, 2).alignment = centerMid;
+    summary.getCell(totalRow, 2).border = borderAll;
+    summary.getCell(totalRow, 2).font = { bold: true };
+    summary.getCell(totalRow, 3).value = totalA;
+    summary.getCell(totalRow, 3).alignment = centerMid;
+    summary.getCell(totalRow, 3).border = borderAll;
+    summary.getCell(totalRow, 3).font = { bold: true };
+    summary.getCell(totalRow, 4).value = totalL;
+    summary.getCell(totalRow, 4).alignment = centerMid;
+    summary.getCell(totalRow, 4).border = borderAll;
+    summary.getCell(totalRow, 4).font = { bold: true };
+    summary.getCell(totalRow, 5).value = totalJ;
+    summary.getCell(totalRow, 5).alignment = centerMid;
+    summary.getCell(totalRow, 5).border = borderAll;
+    summary.getCell(totalRow, 5).font = { bold: true };
+
+    const annualActiveDays = this.countActiveSchoolDays(student, yearFrom, yearTo);
+    const annualRate = annualActiveDays > 0 ? (totalP + totalL + totalJ) / annualActiveDays : 0;
+    const annualPct = summary.getCell(totalRow, 6);
+    annualPct.value = annualRate;
+    annualPct.numFmt = '0.0%';
+    annualPct.alignment = centerMid;
+    annualPct.border = borderAll;
+    annualPct.font = { bold: true, size: 12 };
+    annualPct.fill = {
+      type: 'pattern',
+      pattern: 'solid',
+      fgColor: {
+        argb: annualRate >= 0.9 ? 'FFE2EFDA' : annualRate >= 0.7 ? 'FFFFF2CC' : 'FFFCE4E4',
+      },
+    };
+
+    await this.audit.log({
+      userId: requestedById,
+      action: 'EXPORT',
+      entity: 'Student',
+      entityId: studentId,
+      meta: { year, format: 'student_annual_xlsx' },
+    });
+
+    return Buffer.from(await wb.xlsx.writeBuffer());
+  }
+
   private buildMonthSheet(
     wb: ExcelJS.Workbook,
     ctx: {
@@ -1836,7 +3299,9 @@ export class ReportsService {
     const centerMid = { horizontal: 'center' as const, vertical: 'middle' as const };
     const monthName = MONTH_NAMES_ES[month - 1] ?? '';
 
-    const ws = wb.addWorksheet('CONTROL SUBVENCIONES', { views: [{ showGridLines: false }] });
+    const ws = wb.addWorksheet(`SUBV ${monthName.substring(0, 3).toUpperCase()}`, {
+      views: [{ showGridLines: false }],
+    });
     ws.getColumn(1).width = 6;
     ws.getColumn(2).width = 8;
     ws.getColumn(3).width = 38;
