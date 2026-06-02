@@ -131,6 +131,22 @@ export class AttendanceController {
     return this.attendance.getCourseMatrix(courseId, parsedYear, parsedMonth);
   }
 
+  @Get('course/:courseId/summary')
+  @ApiOperation({
+    summary: 'Resumen de asistencia por alumno en un rango de fechas (semestral/anual)',
+  })
+  async getCourseSummary(
+    @Param('courseId') courseId: string,
+    @Query('from') from: string,
+    @Query('to') to: string,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    this.assertIsoDate(from, 'from');
+    this.assertIsoDate(to, 'to');
+    await this.courses.assertAccess(courseId, user);
+    return this.attendance.getCourseSummary(courseId, from, to);
+  }
+
   private parseIntQuery(value: string, field: string): number {
     const parsed = Number(value);
     if (!Number.isInteger(parsed)) {

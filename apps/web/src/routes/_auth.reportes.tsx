@@ -47,6 +47,25 @@ type MatrixStudent = {
   rate: number | null;
 };
 
+type SummaryStudent = {
+  id: string;
+  firstName: string;
+  lastName: string;
+  secondLastName?: string | null;
+  enrollmentNumber: number;
+  total: number;
+  present: number;
+  absent: number;
+  late: number;
+  justified: number;
+  rate: number | null;
+};
+
+type SummaryData = {
+  students: SummaryStudent[];
+  period: { from: string; to: string };
+};
+
 type MatrixData = {
   students: MatrixStudent[];
   dates: string[];
@@ -110,6 +129,27 @@ function ReportsPage() {
     enabled: !!courseId && periodType === 'mensual',
   });
 
+  const summaryRange = useMemo(() => {
+    if (periodType === 'semestral') {
+      const from = semester === 1 ? `${year}-01-01` : `${year}-07-01`;
+      const to = semester === 1 ? `${year}-06-30` : `${year}-12-31`;
+      return { from, to };
+    }
+    if (periodType === 'anual') {
+      return { from: `${year}-01-01`, to: `${year}-12-31` };
+    }
+    return null;
+  }, [periodType, year, semester]);
+
+  const { data: summary, isLoading: summaryLoading } = useQuery<SummaryData>({
+    queryKey: ['course-summary-report', courseId, summaryRange?.from, summaryRange?.to],
+    queryFn: () =>
+      api.get(
+        `/attendance/course/${courseId}/summary?from=${summaryRange!.from}&to=${summaryRange!.to}`,
+      ),
+    enabled: !!courseId && !!summaryRange,
+  });
+
   const filteredDates = useMemo(() => {
     if (!matrix?.dates) return [];
     if (month !== 6) return matrix.dates;
@@ -155,12 +195,26 @@ function ReportsPage() {
     [recalculatedStudents],
   );
 
+  const sortedSummaryStudents = useMemo(() => {
+    if (!summary?.students) return [];
+    return [...summary.students].sort((a, b) => (a.rate ?? -1) - (b.rate ?? -1));
+  }, [summary]);
+
   const validRates = recalculatedStudents.filter((s) => s.rate != null);
   const avgRate =
     validRates.length > 0
       ? validRates.reduce((acc, s) => acc + s.rate!, 0) / validRates.length
       : null;
   const belowCritical = recalculatedStudents.filter(
+    (s) => s.rate != null && s.rate < CRITICAL_THRESHOLD,
+  ).length;
+
+  const validSummaryRates = sortedSummaryStudents.filter((s) => s.rate != null);
+  const avgSummaryRate =
+    validSummaryRates.length > 0
+      ? validSummaryRates.reduce((acc, s) => acc + s.rate!, 0) / validSummaryRates.length
+      : null;
+  const belowSummaryCritical = sortedSummaryStudents.filter(
     (s) => s.rate != null && s.rate < CRITICAL_THRESHOLD,
   ).length;
 
@@ -322,10 +376,15 @@ function ReportsPage() {
               periodType={periodType}
               month={month}
               year={year}
+              semester={semester}
               matrixLoading={matrixLoading}
+              summaryLoading={summaryLoading}
               sortedStudents={sortedStudents}
+              sortedSummaryStudents={sortedSummaryStudents}
               avgRate={avgRate}
+              avgSummaryRate={avgSummaryRate}
               belowCritical={belowCritical}
+              belowSummaryCritical={belowSummaryCritical}
             />
           ) : (
             <ExportarTab
@@ -356,19 +415,29 @@ function ResumenTab({
   periodType,
   month,
   year,
+  semester,
   matrixLoading,
+  summaryLoading,
   sortedStudents,
+  sortedSummaryStudents,
   avgRate,
+  avgSummaryRate,
   belowCritical,
+  belowSummaryCritical,
 }: {
   courseId: string;
   periodType: PeriodType;
   month: number;
   year: number;
+  semester: number;
   matrixLoading: boolean;
+  summaryLoading: boolean;
   sortedStudents: (MatrixStudent & { late: number })[];
+  sortedSummaryStudents: SummaryStudent[];
   avgRate: number | null;
+  avgSummaryRate: number | null;
   belowCritical: number;
+  belowSummaryCritical: number;
 }) {
   if (!courseId) {
     return (
@@ -380,21 +449,13 @@ function ResumenTab({
     );
   }
 
-  if (periodType !== 'mensual') {
-    return (
-      <div className="rounded-xl border border-border bg-background p-8 text-center">
-        <CalendarDays className="size-10 text-muted-foreground/30 mx-auto mb-3" />
-        <p className="text-sm font-medium text-muted-foreground">
-          El resumen visual está disponible solo para períodos mensuales.
-        </p>
-        <p className="text-xs text-muted-foreground/70 mt-1">
-          Cambia a "Mensual" en el selector de período para ver los datos.
-        </p>
-      </div>
-    );
-  }
+  const isMonthly = periodType === 'mensual';
+  const isLoading = isMonthly ? matrixLoading : summaryLoading;
+  const students = isMonthly ? sortedStudents : sortedSummaryStudents;
+  const avg = isMonthly ? avgRate : avgSummaryRate;
+  const below = isMonthly ? belowCritical : belowSummaryCritical;
 
-  if (matrixLoading) {
+  if (isLoading) {
     return (
       <div className="rounded-xl border border-border bg-background p-10 text-center">
         <div className="h-6 w-32 animate-pulse bg-muted rounded mx-auto" />
@@ -403,20 +464,37 @@ function ResumenTab({
     );
   }
 
-  if (sortedStudents.length === 0) {
+  if (students.length === 0) {
+    const periodLabel = isMonthly
+      ? `${MONTH_NAMES[month - 1]} ${year}`
+      : periodType === 'semestral'
+        ? `${semester === 1 ? '1er' : '2do'} Semestre ${year}`
+        : `Año ${year}`;
     return (
       <div className="rounded-xl border border-border bg-background p-10 text-center">
         <Users className="size-10 text-muted-foreground/30 mx-auto mb-3" />
         <p className="text-sm font-medium text-muted-foreground">
-          Sin registros para {MONTH_NAMES[month - 1]} {year}
+          Sin registros para {periodLabel}
         </p>
       </div>
     );
   }
 
+  const periodLabel = isMonthly
+    ? `${MONTH_NAMES[month - 1]} ${year}`
+    : periodType === 'semestral'
+      ? `${semester === 1 ? '1er' : '2do'} Semestre ${year}`
+      : `Año ${year}`;
+
+  const showJuneBanner = isMonthly && month === 6;
+  const showIncompleteBanner =
+    !isMonthly &&
+    sortedSummaryStudents.length > 0 &&
+    sortedSummaryStudents.some((s) => s.total === 0);
+
   return (
     <div className="space-y-4">
-      {month === 6 && (
+      {showJuneBanner && (
         <div className="rounded-xl border border-amber-300 dark:border-amber-700/50 bg-amber-50 dark:bg-amber-950/30 overflow-hidden">
           <div className="px-4 py-3 flex items-center gap-3">
             <div className="size-9 rounded-lg bg-amber-200 dark:bg-amber-800/50 flex items-center justify-center flex-shrink-0">
@@ -434,6 +512,25 @@ function ResumenTab({
         </div>
       )}
 
+      {showIncompleteBanner && (
+        <div className="rounded-xl border border-blue-300 dark:border-blue-700/50 bg-blue-50 dark:bg-blue-950/30 overflow-hidden">
+          <div className="px-4 py-3 flex items-center gap-3">
+            <div className="size-9 rounded-lg bg-blue-200 dark:bg-blue-800/50 flex items-center justify-center flex-shrink-0">
+              <CalendarDays className="size-4.5 text-blue-700 dark:text-blue-400" />
+            </div>
+            <div className="min-w-0">
+              <p className="text-sm font-semibold text-blue-900 dark:text-blue-200">
+                Período en curso
+              </p>
+              <p className="text-xs text-blue-700 dark:text-blue-400">
+                Datos disponibles hasta la última fecha con registro. Los meses sin asistencia no se
+                incluyen en el cálculo.
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
+
       <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
         <div className="rounded-xl border border-border bg-background p-4">
           <p className="text-[10px] text-muted-foreground uppercase tracking-wide font-medium">
@@ -443,16 +540,16 @@ function ResumenTab({
             className="text-2xl font-bold mt-1"
             style={{
               color:
-                avgRate == null
+                avg == null
                   ? '#94a3b8'
-                  : avgRate >= 0.9
+                  : avg >= 0.9
                     ? '#22c55e'
-                    : avgRate >= CRITICAL_THRESHOLD
+                    : avg >= CRITICAL_THRESHOLD
                       ? '#f59e0b'
                       : '#ef4444',
             }}
           >
-            {avgRate != null ? `${(avgRate * 100).toFixed(1)}%` : '—'}
+            {avg != null ? `${(avg * 100).toFixed(1)}%` : '—'}
           </p>
         </div>
         <div className="rounded-xl border border-border bg-background p-4">
@@ -461,9 +558,9 @@ function ResumenTab({
           </p>
           <p
             className="text-2xl font-bold mt-1"
-            style={{ color: belowCritical > 0 ? '#ef4444' : '#22c55e' }}
+            style={{ color: below > 0 ? '#ef4444' : '#22c55e' }}
           >
-            {belowCritical}
+            {below}
           </p>
           <p className="text-[10px] text-muted-foreground">alumnos críticos</p>
         </div>
@@ -471,7 +568,7 @@ function ResumenTab({
           <p className="text-[10px] text-muted-foreground uppercase tracking-wide font-medium">
             Total alumnos
           </p>
-          <p className="text-2xl font-bold mt-1">{sortedStudents.length}</p>
+          <p className="text-2xl font-bold mt-1">{students.length}</p>
         </div>
       </div>
 
@@ -479,7 +576,7 @@ function ResumenTab({
         <div className="px-5 py-4 border-b border-border">
           <h2 className="text-sm font-semibold flex items-center gap-2">
             <Users className="size-4" />
-            Lista de asistencia — {MONTH_NAMES[month - 1]} {year}
+            Lista de asistencia — {periodLabel}
           </h2>
           <p className="text-xs text-muted-foreground mt-0.5">
             Alumnos bajo {CRITICAL_THRESHOLD * 100}% destacados en rojo
@@ -500,7 +597,7 @@ function ResumenTab({
               </tr>
             </thead>
             <tbody>
-              {sortedStudents.map((s, i) => {
+              {students.map((s, i) => {
                 const isCritical = s.rate != null && s.rate < CRITICAL_THRESHOLD;
                 return (
                   <tr
@@ -562,17 +659,17 @@ function ResumenTab({
             Porcentaje calculado conforme al Decreto 67/2018 MINEDUC. Asistencia = (Presentes +
             Atrasos + Justificados) / Total días registrados.
           </p>
-          {month === 6 && (
+          {showJuneBanner && (
             <p className="text-[10px] text-muted-foreground flex items-center gap-1">
               <AlertTriangle className="size-3 shrink-0" />
               Período evaluado: 1 al {JUNE_LAST_DAY} de junio (último día de clases).
             </p>
           )}
-          {belowCritical > 0 && (
+          {below > 0 && (
             <p className="text-[10px] text-red-600 dark:text-red-400 flex items-center gap-1 font-medium">
               <XCircle className="size-3 shrink-0" />
-              {belowCritical} {belowCritical === 1 ? 'alumno bajo' : 'alumnos bajo'}{' '}
-              {CRITICAL_THRESHOLD * 100}% — requiere atención prioritaria según normativa MINEDUC.
+              {below} {below === 1 ? 'alumno bajo' : 'alumnos bajo'} {CRITICAL_THRESHOLD * 100}% —
+              requiere atención prioritaria según normativa MINEDUC.
             </p>
           )}
         </div>

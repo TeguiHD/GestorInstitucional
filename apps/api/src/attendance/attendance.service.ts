@@ -494,6 +494,89 @@ export class AttendanceService {
     return { students: studentStats, dates, matrix, nonSchoolDays, schoolDays, today: todayKey };
   }
 
+  async getCourseSummary(courseId: string, from: string, to: string) {
+    const fromDate = new Date(from + 'T00:00:00.000Z');
+    const toDate = new Date(to + 'T23:59:59.999Z');
+
+    const [course, records] = await Promise.all([
+      this.prisma.course.findUnique({
+        where: { id: courseId },
+        include: {
+          students: {
+            where: {
+              enrolledAt: { lte: toDate },
+              firstName: { not: '[Eliminado]' },
+              OR: [{ withdrawnAt: null }, { withdrawnAt: { gte: fromDate } }],
+            },
+            select: {
+              id: true,
+              firstName: true,
+              lastName: true,
+              secondLastName: true,
+              enrollmentNumber: true,
+              enrolledAt: true,
+              withdrawnAt: true,
+            },
+            orderBy: [{ enrollmentNumber: 'asc' }],
+          },
+        },
+      }),
+      this.prisma.attendanceRecord.findMany({
+        where: { courseId, date: { gte: fromDate, lte: toDate } },
+        select: { studentId: true, date: true, status: true },
+      }),
+    ]);
+
+    if (!course) throw new NotFoundException('Curso no encontrado');
+
+    const statsByStudent = new Map<
+      string,
+      { total: number; present: number; absent: number; late: number; justified: number }
+    >();
+    for (const s of course.students) {
+      statsByStudent.set(s.id, { total: 0, present: 0, absent: 0, late: 0, justified: 0 });
+    }
+
+    for (const r of records) {
+      const stats = statsByStudent.get(r.studentId);
+      if (!stats) continue;
+      if (r.status === 'WITHDRAWN') continue;
+      stats.total++;
+      if (r.status === 'PRESENT') stats.present++;
+      else if (r.status === 'ABSENT') stats.absent++;
+      else if (r.status === 'LATE') {
+        stats.late++;
+        stats.present++;
+      } else if (r.status === 'JUSTIFIED') {
+        stats.justified++;
+        stats.present++;
+      }
+    }
+
+    const students = course.students.map((s) => {
+      const stats = statsByStudent.get(s.id)!;
+      const rate = stats.total > 0 ? stats.present / stats.total : null;
+      return {
+        id: s.id,
+        firstName: s.firstName,
+        lastName: s.lastName,
+        secondLastName: s.secondLastName,
+        enrollmentNumber: s.enrollmentNumber,
+        total: stats.total,
+        present: stats.present,
+        absent: stats.absent,
+        late: stats.late,
+        justified: stats.justified,
+        rate,
+      };
+    });
+
+    return {
+      students,
+      period: { from, to },
+    };
+  }
+
   async getMissingAttendance(schoolId: string, from: string, to: string) {
     const fromDate = new Date(from);
     const toDate = new Date(to);
