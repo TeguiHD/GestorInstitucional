@@ -627,7 +627,11 @@ export class JustificationsService {
       throw new ForbiddenException('Solo SUPER_ADMIN puede ver la papelera');
     }
     return this.prisma.attendanceJustification.findMany({
-      where: { deletedAt: { not: null }, record: { student: { schoolId } } },
+      where: {
+        deletedAt: { not: null },
+        reason: { not: '[eliminado]' },
+        record: { student: { schoolId } },
+      },
       orderBy: { deletedAt: 'desc' },
       include: {
         record: {

@@ -522,6 +522,7 @@ export class UsersService {
     return this.prisma.user.findMany({
       where: {
         deletedAt: { not: null },
+        firstName: { not: '[Eliminado]' },
         schoolRoles: { some: { schoolId } },
       },
       select: {
