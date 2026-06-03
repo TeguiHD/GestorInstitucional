@@ -1260,142 +1260,6 @@ function ExportarTab({
     <div className="space-y-4">
       <div className="rounded-xl border border-border bg-background p-4 space-y-4">
         <div className="flex items-center gap-2">
-          <GraduationCap className="size-4 text-primary" />
-          <div>
-            <h2 className="text-sm font-semibold">Reporte Individual</h2>
-            <p className="text-xs text-muted-foreground">
-              Certificado formal con formato MINEDUC (Decreto 67/2018)
-            </p>
-          </div>
-        </div>
-
-        <div>
-          <label className="text-xs text-muted-foreground block mb-1.5">Estudiante</label>
-          <SearchableSelect
-            options={
-              students?.map((s) => ({
-                value: s.id,
-                label: `${s.lastName}${s.secondLastName ? ` ${s.secondLastName}` : ''}, ${s.firstName}`,
-                sublabel: s.rut,
-              })) ?? []
-            }
-            value={studentId}
-            onChange={setStudentId}
-            placeholder="— Selecciona un estudiante —"
-            searchPlaceholder="Buscar por nombre o RUT…"
-          />
-        </div>
-
-        <div className="grid gap-3 sm:grid-cols-3">
-          <div className="space-y-2">
-            <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
-              Mensual
-            </h3>
-            <ExportButton
-              icon={FileText}
-              label="PDF"
-              sublabel={`${MONTH_NAMES[month - 1]} ${year}`}
-              onClick={() =>
-                downloadStudent(
-                  'student-month-pdf',
-                  `/reports/student/${studentId}/pdf?year=${year}&month=${month}`,
-                  `certificado-asistencia-${year}-${String(month).padStart(2, '0')}-${studentLabel}.pdf`,
-                )
-              }
-              disabled={!studentId}
-              loading={loading === 'student-month-pdf'}
-              variant="primary"
-            />
-            <ExportButton
-              icon={FileSpreadsheet}
-              label="Excel"
-              sublabel={`${MONTH_NAMES[month - 1]} ${year}`}
-              onClick={() =>
-                downloadStudent(
-                  'student-month-xlsx',
-                  `/reports/student/${studentId}/excel?year=${year}&month=${month}`,
-                  `asistencia-individual-${year}-${String(month).padStart(2, '0')}-${studentLabel}.xlsx`,
-                )
-              }
-              disabled={!studentId}
-              loading={loading === 'student-month-xlsx'}
-            />
-          </div>
-
-          <div className="space-y-2">
-            <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
-              Semestral
-            </h3>
-            <ExportButton
-              icon={FileText}
-              label="PDF"
-              sublabel={`${semester === 1 ? '1er' : '2do'} Semestre ${year}`}
-              onClick={() =>
-                downloadStudent(
-                  'student-sem-pdf',
-                  `/reports/student/${studentId}/semester/pdf?year=${year}&semester=${semester}`,
-                  `certificado-asistencia-sem${semester}-${year}-${studentLabel}.pdf`,
-                )
-              }
-              disabled={!studentId}
-              loading={loading === 'student-sem-pdf'}
-              variant="primary"
-            />
-            <ExportButton
-              icon={FileSpreadsheet}
-              label="Excel"
-              sublabel={`${semester === 1 ? '1er' : '2do'} Semestre ${year}`}
-              onClick={() =>
-                downloadStudent(
-                  'student-sem-xlsx',
-                  `/reports/student/${studentId}/semester/excel?year=${year}&semester=${semester}`,
-                  `asistencia-individual-sem${semester}-${year}-${studentLabel}.xlsx`,
-                )
-              }
-              disabled={!studentId}
-              loading={loading === 'student-sem-xlsx'}
-            />
-          </div>
-
-          <div className="space-y-2">
-            <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
-              Anual
-            </h3>
-            <ExportButton
-              icon={FileText}
-              label="PDF"
-              sublabel={`Año ${year}`}
-              onClick={() =>
-                downloadStudent(
-                  'student-annual-pdf',
-                  `/reports/student/${studentId}/annual/pdf?year=${year}`,
-                  `certificado-asistencia-anual-${year}-${studentLabel}.pdf`,
-                )
-              }
-              disabled={!studentId}
-              loading={loading === 'student-annual-pdf'}
-              variant="primary"
-            />
-            <ExportButton
-              icon={FileSpreadsheet}
-              label="Excel"
-              sublabel={`Año ${year}`}
-              onClick={() =>
-                downloadStudent(
-                  'student-annual-xlsx',
-                  `/reports/student/${studentId}/annual/excel?year=${year}`,
-                  `asistencia-individual-anual-${year}-${studentLabel}.xlsx`,
-                )
-              }
-              disabled={!studentId}
-              loading={loading === 'student-annual-xlsx'}
-            />
-          </div>
-        </div>
-      </div>
-
-      <div className="rounded-xl border border-border bg-background p-4 space-y-4">
-        <div className="flex items-center gap-2">
           <Users className="size-4 text-primary" />
           <div>
             <h2 className="text-sm font-semibold">Reporte del Curso</h2>
@@ -1564,6 +1428,142 @@ function ExportarTab({
                 )
               }
               loading={loading === 'annual-pdf'}
+            />
+          </div>
+        </div>
+      </div>
+
+      <div className="rounded-xl border border-border bg-background p-4 space-y-4">
+        <div className="flex items-center gap-2">
+          <GraduationCap className="size-4 text-primary" />
+          <div>
+            <h2 className="text-sm font-semibold">Reporte Individual</h2>
+            <p className="text-xs text-muted-foreground">
+              Certificado formal con formato MINEDUC (Decreto 67/2018)
+            </p>
+          </div>
+        </div>
+
+        <div>
+          <label className="text-xs text-muted-foreground block mb-1.5">Estudiante</label>
+          <SearchableSelect
+            options={
+              students?.map((s) => ({
+                value: s.id,
+                label: `${s.lastName}${s.secondLastName ? ` ${s.secondLastName}` : ''}, ${s.firstName}`,
+                sublabel: s.rut,
+              })) ?? []
+            }
+            value={studentId}
+            onChange={setStudentId}
+            placeholder="— Selecciona un estudiante —"
+            searchPlaceholder="Buscar por nombre o RUT…"
+          />
+        </div>
+
+        <div className="grid gap-3 sm:grid-cols-3">
+          <div className="space-y-2">
+            <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
+              Mensual
+            </h3>
+            <ExportButton
+              icon={FileText}
+              label="PDF"
+              sublabel={`${MONTH_NAMES[month - 1]} ${year}`}
+              onClick={() =>
+                downloadStudent(
+                  'student-month-pdf',
+                  `/reports/student/${studentId}/pdf?year=${year}&month=${month}`,
+                  `certificado-asistencia-${year}-${String(month).padStart(2, '0')}-${studentLabel}.pdf`,
+                )
+              }
+              disabled={!studentId}
+              loading={loading === 'student-month-pdf'}
+              variant="primary"
+            />
+            <ExportButton
+              icon={FileSpreadsheet}
+              label="Excel"
+              sublabel={`${MONTH_NAMES[month - 1]} ${year}`}
+              onClick={() =>
+                downloadStudent(
+                  'student-month-xlsx',
+                  `/reports/student/${studentId}/excel?year=${year}&month=${month}`,
+                  `asistencia-individual-${year}-${String(month).padStart(2, '0')}-${studentLabel}.xlsx`,
+                )
+              }
+              disabled={!studentId}
+              loading={loading === 'student-month-xlsx'}
+            />
+          </div>
+
+          <div className="space-y-2">
+            <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
+              Semestral
+            </h3>
+            <ExportButton
+              icon={FileText}
+              label="PDF"
+              sublabel={`${semester === 1 ? '1er' : '2do'} Semestre ${year}`}
+              onClick={() =>
+                downloadStudent(
+                  'student-sem-pdf',
+                  `/reports/student/${studentId}/semester/pdf?year=${year}&semester=${semester}`,
+                  `certificado-asistencia-sem${semester}-${year}-${studentLabel}.pdf`,
+                )
+              }
+              disabled={!studentId}
+              loading={loading === 'student-sem-pdf'}
+              variant="primary"
+            />
+            <ExportButton
+              icon={FileSpreadsheet}
+              label="Excel"
+              sublabel={`${semester === 1 ? '1er' : '2do'} Semestre ${year}`}
+              onClick={() =>
+                downloadStudent(
+                  'student-sem-xlsx',
+                  `/reports/student/${studentId}/semester/excel?year=${year}&semester=${semester}`,
+                  `asistencia-individual-sem${semester}-${year}-${studentLabel}.xlsx`,
+                )
+              }
+              disabled={!studentId}
+              loading={loading === 'student-sem-xlsx'}
+            />
+          </div>
+
+          <div className="space-y-2">
+            <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
+              Anual
+            </h3>
+            <ExportButton
+              icon={FileText}
+              label="PDF"
+              sublabel={`Año ${year}`}
+              onClick={() =>
+                downloadStudent(
+                  'student-annual-pdf',
+                  `/reports/student/${studentId}/annual/pdf?year=${year}`,
+                  `certificado-asistencia-anual-${year}-${studentLabel}.pdf`,
+                )
+              }
+              disabled={!studentId}
+              loading={loading === 'student-annual-pdf'}
+              variant="primary"
+            />
+            <ExportButton
+              icon={FileSpreadsheet}
+              label="Excel"
+              sublabel={`Año ${year}`}
+              onClick={() =>
+                downloadStudent(
+                  'student-annual-xlsx',
+                  `/reports/student/${studentId}/annual/excel?year=${year}`,
+                  `asistencia-individual-anual-${year}-${studentLabel}.xlsx`,
+                )
+              }
+              disabled={!studentId}
+              loading={loading === 'student-annual-xlsx'}
             />
           </div>
         </div>
