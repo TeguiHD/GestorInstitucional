@@ -10,6 +10,7 @@ import {
   FileSpreadsheet,
   FileText,
   GraduationCap,
+  Info,
   LayoutGrid,
   Users,
   XCircle,
@@ -336,16 +337,21 @@ function ReportsPage() {
         ? `Año escolar (${formatAnnualRanges(academicConfig.annual.ranges)})`
         : '';
 
-  const tabs: { id: Tab; label: string; Icon: typeof Users }[] = [
+  const handlePeriodChange = (newPeriod: PeriodType) => {
+    setPeriodType(newPeriod);
+    if (newPeriod === 'mensual' && tab === 'planilla') {
+      setTab('resumen');
+    }
+  };
+
+  const tabs: { id: Tab; label: string; Icon: typeof Users; disabled?: boolean }[] = [
     { id: 'resumen', label: 'Resumen', Icon: Users },
-    ...(periodType !== 'mensual'
-      ? [{ id: 'planilla' as Tab, label: 'Planilla', Icon: LayoutGrid }]
-      : []),
+    { id: 'planilla', label: 'Planilla', Icon: LayoutGrid, disabled: periodType === 'mensual' },
     { id: 'exportar', label: 'Exportar', Icon: Download },
   ];
 
   return (
-    <div className="max-w-5xl space-y-5 overflow-hidden">
+    <div className="max-w-5xl space-y-4 overflow-hidden">
       <div>
         <h1 className="text-2xl font-bold tracking-tight">Reportes</h1>
         <p className="text-sm text-muted-foreground">
@@ -361,7 +367,7 @@ function ReportsPage() {
         />
       ) : (
         <>
-          <div className="rounded-xl border border-border bg-background p-4 space-y-4">
+          <div className="rounded-xl border border-border bg-background p-4 space-y-3">
             <div>
               <label className="text-xs text-muted-foreground block mb-1.5">Curso</label>
               <select
@@ -381,8 +387,8 @@ function ReportsPage() {
               </select>
             </div>
 
-            <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-              <div>
+            <div className="flex flex-col sm:flex-row gap-3">
+              <div className="w-full sm:w-24">
                 <label className="text-xs text-muted-foreground block mb-1.5">Año</label>
                 <input
                   type="number"
@@ -393,20 +399,30 @@ function ReportsPage() {
                   className="w-full rounded-lg border border-border px-3 py-2 text-sm bg-background"
                 />
               </div>
-              <div>
+
+              <div className="flex-1">
                 <label className="text-xs text-muted-foreground block mb-1.5">Período</label>
-                <select
-                  value={periodType}
-                  onChange={(e) => setPeriodType(e.target.value as PeriodType)}
-                  className="w-full rounded-lg border border-border px-3 py-2 text-sm bg-background"
-                >
-                  <option value="mensual">Mensual</option>
-                  <option value="semestral">Semestral</option>
-                  <option value="anual">Anual</option>
-                </select>
+                <div className="flex gap-1 rounded-lg border border-border p-1 bg-muted/30">
+                  {(['mensual', 'semestral', 'anual'] as PeriodType[]).map((p) => (
+                    <button
+                      key={p}
+                      type="button"
+                      onClick={() => handlePeriodChange(p)}
+                      className={cn(
+                        'flex-1 rounded-md px-3 py-1.5 text-xs font-medium transition capitalize',
+                        periodType === p
+                          ? 'bg-primary text-primary-foreground shadow-sm'
+                          : 'text-muted-foreground hover:text-foreground hover:bg-background',
+                      )}
+                    >
+                      {p}
+                    </button>
+                  ))}
+                </div>
               </div>
+
               {periodType === 'mensual' && (
-                <div>
+                <div className="w-full sm:w-36">
                   <label className="text-xs text-muted-foreground block mb-1.5">Mes</label>
                   <select
                     value={month}
@@ -422,7 +438,7 @@ function ReportsPage() {
                 </div>
               )}
               {periodType === 'semestral' && (
-                <div>
+                <div className="w-full sm:w-48">
                   <label className="text-xs text-muted-foreground block mb-1.5">Semestre</label>
                   <select
                     value={semester}
@@ -438,16 +454,20 @@ function ReportsPage() {
           </div>
 
           <div className="flex gap-1 overflow-x-auto border-b border-border">
-            {tabs.map(({ id, label, Icon }) => (
+            {tabs.map(({ id, label, Icon, disabled }) => (
               <button
                 key={id}
                 type="button"
-                onClick={() => setTab(id)}
+                onClick={() => !disabled && setTab(id)}
+                disabled={disabled}
+                title={disabled ? 'Disponible solo para períodos semestral o anual' : undefined}
                 className={cn(
                   'flex items-center gap-2 border-b-2 px-4 py-2.5 text-sm font-medium transition whitespace-nowrap',
-                  tab === id
+                  tab === id && !disabled
                     ? 'border-primary text-primary'
-                    : 'border-transparent text-muted-foreground hover:text-foreground',
+                    : disabled
+                      ? 'border-transparent text-muted-foreground/50 cursor-not-allowed'
+                      : 'border-transparent text-muted-foreground hover:text-foreground',
                 )}
               >
                 <Icon className="size-4" />
@@ -502,6 +522,54 @@ function ReportsPage() {
         </>
       )}
     </div>
+  );
+}
+
+function KpiCard({
+  label,
+  value,
+  color,
+  sub,
+}: {
+  label: string;
+  value: string;
+  color: 'green' | 'amber' | 'red' | 'muted';
+  sub?: string;
+}) {
+  const colorClasses = {
+    green: 'text-green-600 dark:text-green-400',
+    amber: 'text-amber-600 dark:text-amber-400',
+    red: 'text-red-600 dark:text-red-400',
+    muted: 'text-foreground',
+  };
+
+  return (
+    <div className="rounded-xl border border-border bg-background p-4">
+      <p className="text-[10px] text-muted-foreground uppercase tracking-wide font-medium">
+        {label}
+      </p>
+      <p className={cn('text-2xl font-bold mt-1', colorClasses[color])}>{value}</p>
+      {sub && <p className="text-[10px] text-muted-foreground mt-0.5">{sub}</p>}
+    </div>
+  );
+}
+
+function RateBadge({ rate }: { rate: number | null }) {
+  return (
+    <span
+      className={cn(
+        'inline-block rounded-full px-2 py-0.5 text-xs font-semibold',
+        rate == null
+          ? 'bg-muted text-muted-foreground'
+          : rate >= 0.9
+            ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400'
+            : rate >= CRITICAL_THRESHOLD
+              ? 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400'
+              : 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400',
+      )}
+    >
+      {rate != null ? `${(rate * 100).toFixed(1)}%` : '—'}
+    </span>
   );
 }
 
@@ -594,88 +662,48 @@ function ResumenTab({
     sortedSummaryStudents.length > 0 &&
     sortedSummaryStudents.some((s) => s.present + s.absent + s.late + s.justified === 0);
 
+  const avgColor =
+    avg == null ? 'muted' : avg >= 0.9 ? 'green' : avg >= CRITICAL_THRESHOLD ? 'amber' : 'red';
+
   return (
     <div className="space-y-4">
       {showJuneBanner && (
-        <div className="rounded-xl border border-amber-300 dark:border-amber-700/50 bg-amber-50 dark:bg-amber-950/30 overflow-hidden">
-          <div className="px-4 py-3 flex items-center gap-3">
-            <div className="size-9 rounded-lg bg-amber-200 dark:bg-amber-800/50 flex items-center justify-center flex-shrink-0">
-              <AlertTriangle className="size-4.5 text-amber-700 dark:text-amber-400" />
-            </div>
-            <div className="min-w-0">
-              <p className="text-sm font-semibold text-amber-900 dark:text-amber-200">
-                Junio: período evaluado hasta el día {juneLastDay}
-              </p>
-              <p className="text-xs text-amber-700 dark:text-amber-400">
-                Último día de clases del mes. Los días posteriores no se incluyen en el cálculo.
-              </p>
-            </div>
-          </div>
+        <div className="flex items-center gap-2 rounded-lg border border-amber-300 dark:border-amber-700/50 bg-amber-50 dark:bg-amber-950/30 px-3 py-2">
+          <AlertTriangle className="size-4 text-amber-600 dark:text-amber-400 shrink-0" />
+          <p className="text-xs text-amber-800 dark:text-amber-200">
+            <span className="font-semibold">Junio:</span> período evaluado hasta el día{' '}
+            {juneLastDay} (último día de clases)
+          </p>
         </div>
       )}
 
       {showIncompleteBanner && (
-        <div className="rounded-xl border border-blue-300 dark:border-blue-700/50 bg-blue-50 dark:bg-blue-950/30 overflow-hidden">
-          <div className="px-4 py-3 flex items-center gap-3">
-            <div className="size-9 rounded-lg bg-blue-200 dark:bg-blue-800/50 flex items-center justify-center flex-shrink-0">
-              <CalendarDays className="size-4.5 text-blue-700 dark:text-blue-400" />
-            </div>
-            <div className="min-w-0">
-              <p className="text-sm font-semibold text-blue-900 dark:text-blue-200">
-                Período en curso
-              </p>
-              <p className="text-xs text-blue-700 dark:text-blue-400">
-                Datos disponibles hasta la última fecha con registro. Los meses sin asistencia no se
-                incluyen en el cálculo.
-              </p>
-            </div>
-          </div>
+        <div className="flex items-center gap-2 rounded-lg border border-blue-300 dark:border-blue-700/50 bg-blue-50 dark:bg-blue-950/30 px-3 py-2">
+          <Info className="size-4 text-blue-600 dark:text-blue-400 shrink-0" />
+          <p className="text-xs text-blue-800 dark:text-blue-200">
+            <span className="font-semibold">Período en curso:</span> datos hasta la última fecha con
+            registro
+          </p>
         </div>
       )}
 
-      <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-        <div className="rounded-xl border border-border bg-background p-4">
-          <p className="text-[10px] text-muted-foreground uppercase tracking-wide font-medium">
-            Asistencia promedio
-          </p>
-          <p
-            className="text-2xl font-bold mt-1"
-            style={{
-              color:
-                avg == null
-                  ? '#94a3b8'
-                  : avg >= 0.9
-                    ? '#22c55e'
-                    : avg >= CRITICAL_THRESHOLD
-                      ? '#f59e0b'
-                      : '#ef4444',
-            }}
-          >
-            {avg != null ? `${(avg * 100).toFixed(1)}%` : '—'}
-          </p>
-        </div>
-        <div className="rounded-xl border border-border bg-background p-4">
-          <p className="text-[10px] text-muted-foreground uppercase tracking-wide font-medium">
-            Bajo {CRITICAL_THRESHOLD * 100}%
-          </p>
-          <p
-            className="text-2xl font-bold mt-1"
-            style={{ color: below > 0 ? '#ef4444' : '#22c55e' }}
-          >
-            {below}
-          </p>
-          <p className="text-[10px] text-muted-foreground">alumnos críticos</p>
-        </div>
-        <div className="rounded-xl border border-border bg-background p-4 col-span-2 sm:col-span-1">
-          <p className="text-[10px] text-muted-foreground uppercase tracking-wide font-medium">
-            Total alumnos
-          </p>
-          <p className="text-2xl font-bold mt-1">{students.length}</p>
-        </div>
+      <div className="grid grid-cols-3 gap-3">
+        <KpiCard
+          label="Asistencia promedio"
+          value={avg != null ? `${(avg * 100).toFixed(1)}%` : '—'}
+          color={avgColor}
+        />
+        <KpiCard
+          label={`Bajo ${CRITICAL_THRESHOLD * 100}%`}
+          value={String(below)}
+          color={below > 0 ? 'red' : 'green'}
+          sub="alumnos críticos"
+        />
+        <KpiCard label="Total alumnos" value={String(students.length)} color="muted" />
       </div>
 
       <div className="rounded-xl border border-border bg-background overflow-hidden">
-        <div className="px-5 py-4 border-b border-border">
+        <div className="px-4 py-3 border-b border-border">
           <h2 className="text-sm font-semibold flex items-center gap-2">
             <Users className="size-4" />
             Lista de asistencia — {periodLabel}
@@ -687,17 +715,17 @@ function ResumenTab({
           </p>
         </div>
 
-        <div className="overflow-x-auto">
+        <div className="hidden sm:block overflow-x-auto">
           <table className="w-full text-sm">
             <thead>
               <tr className="bg-muted/50 text-xs text-muted-foreground uppercase tracking-wide border-b border-border">
-                <th className="text-left px-5 py-3">#</th>
-                <th className="text-left px-5 py-3">Alumno</th>
-                <th className="text-center px-3 py-3">Pres.</th>
-                <th className="text-center px-3 py-3">Aus.</th>
-                <th className="hidden sm:table-cell text-center px-3 py-3">Atrasos</th>
-                <th className="hidden sm:table-cell text-center px-3 py-3">Justif.</th>
-                <th className="text-right px-5 py-3">%</th>
+                <th className="text-left px-4 py-2.5">#</th>
+                <th className="text-left px-4 py-2.5">Alumno</th>
+                <th className="text-center px-3 py-2.5">Pres.</th>
+                <th className="text-center px-3 py-2.5">Aus.</th>
+                <th className="hidden md:table-cell text-center px-3 py-2.5">Atrasos</th>
+                <th className="hidden md:table-cell text-center px-3 py-2.5">Justif.</th>
+                <th className="text-right px-4 py-2.5">%</th>
               </tr>
             </thead>
             <tbody>
@@ -713,8 +741,8 @@ function ResumenTab({
                         : 'hover:bg-muted/20',
                     )}
                   >
-                    <td className="px-5 py-2.5 text-muted-foreground text-xs">{i + 1}</td>
-                    <td className="px-5 py-2.5 font-medium">
+                    <td className="px-4 py-2 text-muted-foreground text-xs">{i + 1}</td>
+                    <td className="px-4 py-2 font-medium">
                       <div className="flex items-center gap-1.5">
                         {isCritical && <AlertTriangle className="size-3.5 text-red-500 shrink-0" />}
                         <span className="truncate" title={formatStudentFullName(s)}>
@@ -722,33 +750,20 @@ function ResumenTab({
                         </span>
                       </div>
                     </td>
-                    <td className="px-3 py-2.5 text-center tabular-nums text-green-600 dark:text-green-400">
+                    <td className="px-3 py-2 text-center tabular-nums text-green-600 dark:text-green-400">
                       {s.present}
                     </td>
-                    <td className="px-3 py-2.5 text-center tabular-nums text-red-600 dark:text-red-400">
+                    <td className="px-3 py-2 text-center tabular-nums text-red-600 dark:text-red-400">
                       {s.absent}
                     </td>
-                    <td className="hidden sm:table-cell px-3 py-2.5 text-center tabular-nums text-orange-600 dark:text-orange-400">
+                    <td className="hidden md:table-cell px-3 py-2 text-center tabular-nums text-orange-600 dark:text-orange-400">
                       {s.late}
                     </td>
-                    <td className="hidden sm:table-cell px-3 py-2.5 text-center tabular-nums text-yellow-600 dark:text-yellow-400">
+                    <td className="hidden md:table-cell px-3 py-2 text-center tabular-nums text-yellow-600 dark:text-yellow-400">
                       {s.justified}
                     </td>
-                    <td className="px-5 py-2.5 text-right">
-                      <span
-                        className={cn(
-                          'inline-block rounded-full px-2 py-0.5 text-xs font-semibold',
-                          s.rate == null
-                            ? 'bg-muted text-muted-foreground'
-                            : s.rate >= 0.9
-                              ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400'
-                              : s.rate >= CRITICAL_THRESHOLD
-                                ? 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400'
-                                : 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400',
-                        )}
-                      >
-                        {s.rate != null ? `${(s.rate * 100).toFixed(1)}%` : '—'}
-                      </span>
+                    <td className="px-4 py-2 text-right">
+                      <RateBadge rate={s.rate} />
                     </td>
                   </tr>
                 );
@@ -757,7 +772,44 @@ function ResumenTab({
           </table>
         </div>
 
-        <div className="px-5 py-3 border-t border-border bg-muted/20 space-y-1">
+        <div className="sm:hidden divide-y divide-border">
+          {students.map((s, i) => {
+            const isCritical = s.rate != null && s.rate < CRITICAL_THRESHOLD;
+            return (
+              <div
+                key={s.id}
+                className={cn('px-4 py-3', isCritical && 'bg-red-50 dark:bg-red-950/20')}
+              >
+                <div className="flex items-center justify-between gap-2">
+                  <div className="flex items-center gap-2 min-w-0">
+                    <span className="text-xs text-muted-foreground w-5 shrink-0">{i + 1}</span>
+                    {isCritical && <AlertTriangle className="size-3.5 text-red-500 shrink-0" />}
+                    <span className="text-sm font-medium truncate" title={formatStudentFullName(s)}>
+                      {formatStudentFullName(s)}
+                    </span>
+                  </div>
+                  <RateBadge rate={s.rate} />
+                </div>
+                <div className="flex gap-3 mt-2 text-xs pl-7">
+                  <span className="text-green-600 dark:text-green-400">
+                    <span className="text-muted-foreground">P:</span> {s.present}
+                  </span>
+                  <span className="text-red-600 dark:text-red-400">
+                    <span className="text-muted-foreground">A:</span> {s.absent}
+                  </span>
+                  <span className="text-orange-600 dark:text-orange-400">
+                    <span className="text-muted-foreground">AT:</span> {s.late}
+                  </span>
+                  <span className="text-yellow-600 dark:text-yellow-400">
+                    <span className="text-muted-foreground">J:</span> {s.justified}
+                  </span>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+
+        <div className="px-4 py-2.5 border-t border-border bg-muted/20 space-y-1">
           <p className="text-[10px] text-muted-foreground flex items-center gap-1">
             <CheckCircle2 className="size-3 shrink-0" />
             Porcentaje calculado conforme al Decreto 67/2018 MINEDUC. Asistencia = (Presentes +
@@ -862,7 +914,7 @@ function PlanillaTab({
   return (
     <div className="space-y-4">
       <div className="rounded-xl border border-border bg-background overflow-hidden">
-        <div className="px-5 py-4 border-b border-border">
+        <div className="px-4 py-3 border-b border-border">
           <h2 className="text-sm font-semibold flex items-center gap-2">
             <LayoutGrid className="size-4" />
             Planilla de asistencia — {breakdown.period.label}
@@ -876,8 +928,8 @@ function PlanillaTab({
           <table className="w-full text-sm">
             <thead>
               <tr className="bg-muted/50 text-xs text-muted-foreground uppercase tracking-wide border-b border-border">
-                <th className="text-left px-5 py-3 sticky left-0 bg-muted/50 z-10">#</th>
-                <th className="text-left px-5 py-3 sticky left-12 bg-muted/50 z-10 min-w-[180px]">
+                <th className="text-left px-4 py-2.5 sticky left-0 bg-muted/50 z-10">#</th>
+                <th className="text-left px-4 py-2.5 sticky left-10 bg-muted/50 z-10 min-w-[160px]">
                   Alumno
                 </th>
                 {months.map((month, idx) => {
@@ -887,7 +939,7 @@ function PlanillaTab({
                     <th
                       key={month.month}
                       className={cn(
-                        'text-center px-3 py-3 cursor-pointer transition hover:opacity-80',
+                        'text-center px-2 py-2.5 cursor-pointer transition hover:opacity-80',
                         color.bg,
                       )}
                       onClick={() => toggleMonth(month.month)}
@@ -898,7 +950,9 @@ function PlanillaTab({
                         ) : (
                           <ChevronRight className="size-3" />
                         )}
-                        <span className={color.text}>{MONTH_NAMES[month.month - 1]}</span>
+                        <span className={cn('text-[11px]', color.text)}>
+                          {MONTH_NAMES[month.month - 1]?.slice(0, 3)}
+                        </span>
                       </div>
                       <div className="text-[10px] font-normal mt-0.5 opacity-70">
                         {monthAverages[idx] != null
@@ -908,7 +962,7 @@ function PlanillaTab({
                     </th>
                   );
                 })}
-                <th className="text-right px-5 py-3">Prom.</th>
+                <th className="text-right px-4 py-2.5">Prom.</th>
               </tr>
             </thead>
             <tbody>
@@ -924,10 +978,10 @@ function PlanillaTab({
                         : 'hover:bg-muted/20',
                     )}
                   >
-                    <td className="px-5 py-2.5 text-muted-foreground text-xs sticky left-0 bg-inherit z-10">
+                    <td className="px-4 py-2 text-muted-foreground text-xs sticky left-0 bg-inherit z-10">
                       {idx + 1}
                     </td>
-                    <td className="px-5 py-2.5 font-medium sticky left-12 bg-inherit z-10 min-w-[180px]">
+                    <td className="px-4 py-2 font-medium sticky left-10 bg-inherit z-10 min-w-[160px]">
                       <div className="flex items-center gap-1.5">
                         {isCritical && <AlertTriangle className="size-3.5 text-red-500 shrink-0" />}
                         <span className="truncate" title={formatStudentFullName(student)}>
@@ -943,7 +997,7 @@ function PlanillaTab({
                         <td
                           key={month.month}
                           className={cn(
-                            'px-3 py-2.5 text-center cursor-pointer transition hover:opacity-80',
+                            'px-2 py-2 text-center cursor-pointer transition hover:opacity-80',
                             color.bg,
                             isExpanded && 'ring-2 ring-primary ring-inset',
                           )}
@@ -951,7 +1005,7 @@ function PlanillaTab({
                         >
                           <span
                             className={cn(
-                              'inline-block rounded-full px-2 py-0.5 text-xs font-semibold',
+                              'inline-block rounded-full px-1.5 py-0.5 text-[11px] font-semibold',
                               stats?.rate == null
                                 ? 'bg-muted text-muted-foreground'
                                 : stats.rate >= 0.9
@@ -966,21 +1020,8 @@ function PlanillaTab({
                         </td>
                       );
                     })}
-                    <td className="px-5 py-2.5 text-right">
-                      <span
-                        className={cn(
-                          'inline-block rounded-full px-2 py-0.5 text-xs font-semibold',
-                          student.rate == null
-                            ? 'bg-muted text-muted-foreground'
-                            : student.rate >= 0.9
-                              ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400'
-                              : student.rate >= CRITICAL_THRESHOLD
-                                ? 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400'
-                                : 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400',
-                        )}
-                      >
-                        {student.rate != null ? `${(student.rate * 100).toFixed(1)}%` : '—'}
-                      </span>
+                    <td className="px-4 py-2 text-right">
+                      <RateBadge rate={student.rate} />
                     </td>
                   </tr>
                 );
@@ -989,7 +1030,7 @@ function PlanillaTab({
           </table>
         </div>
 
-        <div className="px-5 py-3 border-t border-border bg-muted/20">
+        <div className="px-4 py-2.5 border-t border-border bg-muted/20">
           <p className="text-[10px] text-muted-foreground flex items-center gap-1">
             <CheckCircle2 className="size-3 shrink-0" />
             Porcentaje calculado conforme al Decreto 67/2018 MINEDUC. Haz clic en un mes para ver el
@@ -1047,7 +1088,7 @@ function MonthDetail({
 
   return (
     <div className="rounded-xl border border-border bg-background overflow-hidden">
-      <div className="px-5 py-3 border-b border-border bg-primary/5">
+      <div className="px-4 py-2.5 border-b border-border bg-primary/5">
         <h3 className="text-sm font-semibold flex items-center gap-2">
           <CalendarDays className="size-4" />
           Detalle de {monthName} {year}
@@ -1057,13 +1098,13 @@ function MonthDetail({
         <table className="w-full text-xs">
           <thead>
             <tr className="bg-muted/30 border-b border-border">
-              <th className="text-left px-3 py-2 sticky left-0 bg-muted/30 z-10 min-w-[150px]">
+              <th className="text-left px-3 py-2 sticky left-0 bg-muted/30 z-10 min-w-[140px]">
                 Alumno
               </th>
               {dates.map((date) => {
                 const day = new Date(date + 'T12:00').getDate();
                 return (
-                  <th key={date} className="px-1 py-2 text-center min-w-[28px]">
+                  <th key={date} className="px-1 py-2 text-center min-w-[26px]">
                     {day}
                   </th>
                 );
@@ -1073,7 +1114,7 @@ function MonthDetail({
           <tbody>
             {students.map((student) => (
               <tr key={student.id} className="border-t border-border/50">
-                <td className="px-3 py-1.5 sticky left-0 bg-background z-10 truncate max-w-[150px]">
+                <td className="px-3 py-1.5 sticky left-0 bg-background z-10 truncate max-w-[140px]">
                   {formatStudentFullName(student)}
                 </td>
                 {dates.map((date) => {
@@ -1116,7 +1157,7 @@ function MonthDetail({
           </tbody>
         </table>
       </div>
-      <div className="px-5 py-2 border-t border-border bg-muted/10 flex gap-3 text-[10px]">
+      <div className="px-4 py-2 border-t border-border bg-muted/10 flex gap-3 text-[10px]">
         <span className="flex items-center gap-1">
           <span className="inline-block size-3 rounded bg-green-100 dark:bg-green-900/30" />P
         </span>
@@ -1132,6 +1173,43 @@ function MonthDetail({
         </span>
       </div>
     </div>
+  );
+}
+
+function ExportButton({
+  icon: Icon,
+  label,
+  sublabel,
+  onClick,
+  disabled,
+  loading,
+  variant = 'secondary',
+}: {
+  icon: typeof FileText;
+  label: string;
+  sublabel?: string;
+  onClick: () => void;
+  disabled?: boolean;
+  loading?: boolean;
+  variant?: 'primary' | 'secondary';
+}) {
+  return (
+    <button
+      onClick={onClick}
+      disabled={disabled || loading}
+      className={cn(
+        'flex items-center gap-3 w-full rounded-lg px-3 py-2.5 text-left transition disabled:opacity-50',
+        variant === 'primary'
+          ? 'bg-primary text-primary-foreground hover:opacity-90'
+          : 'border border-border hover:bg-muted',
+      )}
+    >
+      <Icon className="size-4 shrink-0" />
+      <div className="min-w-0">
+        <p className="text-sm font-medium">{loading ? 'Generando…' : label}</p>
+        {sublabel && <p className="text-[10px] opacity-70 truncate">{sublabel}</p>}
+      </div>
+    </button>
   );
 }
 
@@ -1180,16 +1258,17 @@ function ExportarTab({
 
   return (
     <div className="space-y-4">
-      <div className="rounded-xl border border-border bg-background p-5 space-y-4">
-        <div>
-          <h2 className="text-sm font-semibold flex items-center gap-2">
-            <GraduationCap className="size-4" />
-            Reporte Individual
-          </h2>
-          <p className="text-xs text-muted-foreground mt-0.5">
-            Certificado formal de asistencia con formato MINEDUC (Decreto 67/2018)
-          </p>
+      <div className="rounded-xl border border-border bg-background p-4 space-y-4">
+        <div className="flex items-center gap-2">
+          <GraduationCap className="size-4 text-primary" />
+          <div>
+            <h2 className="text-sm font-semibold">Reporte Individual</h2>
+            <p className="text-xs text-muted-foreground">
+              Certificado formal con formato MINEDUC (Decreto 67/2018)
+            </p>
+          </div>
         </div>
+
         <div>
           <label className="text-xs text-muted-foreground block mb-1.5">Estudiante</label>
           <SearchableSelect
@@ -1207,10 +1286,15 @@ function ExportarTab({
           />
         </div>
 
-        <div className="border-t border-border pt-4 space-y-3">
-          <h3 className="text-xs font-semibold">Mensual</h3>
-          <div className="flex flex-wrap gap-2">
-            <button
+        <div className="grid gap-3 sm:grid-cols-3">
+          <div className="space-y-2">
+            <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
+              Mensual
+            </h3>
+            <ExportButton
+              icon={FileText}
+              label="PDF"
+              sublabel={`${MONTH_NAMES[month - 1]} ${year}`}
               onClick={() =>
                 downloadStudent(
                   'student-month-pdf',
@@ -1218,13 +1302,14 @@ function ExportarTab({
                   `certificado-asistencia-${year}-${String(month).padStart(2, '0')}-${studentLabel}.pdf`,
                 )
               }
-              disabled={loading === 'student-month-pdf' || !studentId}
-              className="inline-flex items-center gap-2 text-sm px-4 py-2 rounded-lg bg-primary text-primary-foreground disabled:opacity-50"
-            >
-              <FileText className="size-4" />
-              {loading === 'student-month-pdf' ? 'Generando…' : 'PDF'}
-            </button>
-            <button
+              disabled={!studentId}
+              loading={loading === 'student-month-pdf'}
+              variant="primary"
+            />
+            <ExportButton
+              icon={FileSpreadsheet}
+              label="Excel"
+              sublabel={`${MONTH_NAMES[month - 1]} ${year}`}
               onClick={() =>
                 downloadStudent(
                   'student-month-xlsx',
@@ -1232,19 +1317,19 @@ function ExportarTab({
                   `asistencia-individual-${year}-${String(month).padStart(2, '0')}-${studentLabel}.xlsx`,
                 )
               }
-              disabled={loading === 'student-month-xlsx' || !studentId}
-              className="inline-flex items-center gap-2 text-sm px-4 py-2 rounded-lg border border-border hover:bg-muted disabled:opacity-50"
-            >
-              <FileSpreadsheet className="size-4" />
-              {loading === 'student-month-xlsx' ? 'Generando…' : 'Excel'}
-            </button>
+              disabled={!studentId}
+              loading={loading === 'student-month-xlsx'}
+            />
           </div>
-        </div>
 
-        <div className="border-t border-border pt-4 space-y-3">
-          <h3 className="text-xs font-semibold">Semestral</h3>
-          <div className="flex flex-wrap gap-2">
-            <button
+          <div className="space-y-2">
+            <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
+              Semestral
+            </h3>
+            <ExportButton
+              icon={FileText}
+              label="PDF"
+              sublabel={`${semester === 1 ? '1er' : '2do'} Semestre ${year}`}
               onClick={() =>
                 downloadStudent(
                   'student-sem-pdf',
@@ -1252,13 +1337,14 @@ function ExportarTab({
                   `certificado-asistencia-sem${semester}-${year}-${studentLabel}.pdf`,
                 )
               }
-              disabled={loading === 'student-sem-pdf' || !studentId}
-              className="inline-flex items-center gap-2 text-sm px-4 py-2 rounded-lg bg-primary text-primary-foreground disabled:opacity-50"
-            >
-              <FileText className="size-4" />
-              {loading === 'student-sem-pdf' ? 'Generando…' : 'PDF'}
-            </button>
-            <button
+              disabled={!studentId}
+              loading={loading === 'student-sem-pdf'}
+              variant="primary"
+            />
+            <ExportButton
+              icon={FileSpreadsheet}
+              label="Excel"
+              sublabel={`${semester === 1 ? '1er' : '2do'} Semestre ${year}`}
               onClick={() =>
                 downloadStudent(
                   'student-sem-xlsx',
@@ -1266,19 +1352,19 @@ function ExportarTab({
                   `asistencia-individual-sem${semester}-${year}-${studentLabel}.xlsx`,
                 )
               }
-              disabled={loading === 'student-sem-xlsx' || !studentId}
-              className="inline-flex items-center gap-2 text-sm px-4 py-2 rounded-lg border border-border hover:bg-muted disabled:opacity-50"
-            >
-              <FileSpreadsheet className="size-4" />
-              {loading === 'student-sem-xlsx' ? 'Generando…' : 'Excel'}
-            </button>
+              disabled={!studentId}
+              loading={loading === 'student-sem-xlsx'}
+            />
           </div>
-        </div>
 
-        <div className="border-t border-border pt-4 space-y-3">
-          <h3 className="text-xs font-semibold">Anual</h3>
-          <div className="flex flex-wrap gap-2">
-            <button
+          <div className="space-y-2">
+            <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
+              Anual
+            </h3>
+            <ExportButton
+              icon={FileText}
+              label="PDF"
+              sublabel={`Año ${year}`}
               onClick={() =>
                 downloadStudent(
                   'student-annual-pdf',
@@ -1286,13 +1372,14 @@ function ExportarTab({
                   `certificado-asistencia-anual-${year}-${studentLabel}.pdf`,
                 )
               }
-              disabled={loading === 'student-annual-pdf' || !studentId}
-              className="inline-flex items-center gap-2 text-sm px-4 py-2 rounded-lg bg-primary text-primary-foreground disabled:opacity-50"
-            >
-              <FileText className="size-4" />
-              {loading === 'student-annual-pdf' ? 'Generando…' : 'PDF'}
-            </button>
-            <button
+              disabled={!studentId}
+              loading={loading === 'student-annual-pdf'}
+              variant="primary"
+            />
+            <ExportButton
+              icon={FileSpreadsheet}
+              label="Excel"
+              sublabel={`Año ${year}`}
               onClick={() =>
                 downloadStudent(
                   'student-annual-xlsx',
@@ -1300,62 +1387,64 @@ function ExportarTab({
                   `asistencia-individual-anual-${year}-${studentLabel}.xlsx`,
                 )
               }
-              disabled={loading === 'student-annual-xlsx' || !studentId}
-              className="inline-flex items-center gap-2 text-sm px-4 py-2 rounded-lg border border-border hover:bg-muted disabled:opacity-50"
-            >
-              <FileSpreadsheet className="size-4" />
-              {loading === 'student-annual-xlsx' ? 'Generando…' : 'Excel'}
-            </button>
+              disabled={!studentId}
+              loading={loading === 'student-annual-xlsx'}
+            />
           </div>
         </div>
       </div>
 
-      <div className="rounded-xl border border-border bg-background p-5 space-y-4">
-        <div>
-          <h2 className="text-sm font-semibold flex items-center gap-2">
-            <Users className="size-4" />
-            Reporte del Curso
-          </h2>
-          <p className="text-xs text-muted-foreground mt-0.5">
-            Exporta la asistencia consolidada de todo el curso
-          </p>
-        </div>
-
-        <div className="border-t border-border pt-4 space-y-3">
-          <h3 className="text-xs font-semibold">Semanal</h3>
-          <div className="flex items-center gap-3 flex-wrap">
-            <div>
-              <label className="text-xs text-muted-foreground block mb-1">
-                Semana desde (lunes)
-              </label>
-              <input
-                type="date"
-                value={weekStart}
-                onChange={(e) => setWeekStart(e.target.value)}
-                className="rounded-lg border border-border px-3 py-1.5 text-sm bg-background"
-              />
-            </div>
-            <button
-              onClick={() =>
-                download(
-                  'weekly',
-                  `/reports/course/${courseId}/weekly?weekStart=${weekStart}`,
-                  `semana-${weekStart}-${courseLabel}.xlsx`,
-                )
-              }
-              disabled={loading === 'weekly'}
-              className="inline-flex items-center gap-2 text-sm px-4 py-2 rounded-lg bg-primary text-primary-foreground disabled:opacity-50 mt-4"
-            >
-              <FileSpreadsheet className="size-4" />
-              {loading === 'weekly' ? 'Generando…' : 'Excel semanal'}
-            </button>
+      <div className="rounded-xl border border-border bg-background p-4 space-y-4">
+        <div className="flex items-center gap-2">
+          <Users className="size-4 text-primary" />
+          <div>
+            <h2 className="text-sm font-semibold">Reporte del Curso</h2>
+            <p className="text-xs text-muted-foreground">Asistencia consolidada de {courseLabel}</p>
           </div>
         </div>
 
-        <div className="border-t border-border pt-4 space-y-3">
-          <h3 className="text-xs font-semibold">Mensual</h3>
-          <div className="flex flex-wrap gap-2">
-            <button
+        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+          <div className="space-y-2">
+            <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
+              Semanal
+            </h3>
+            <div className="space-y-2">
+              <div>
+                <label className="text-[10px] text-muted-foreground block mb-1">
+                  Semana desde (lunes)
+                </label>
+                <input
+                  type="date"
+                  value={weekStart}
+                  onChange={(e) => setWeekStart(e.target.value)}
+                  className="w-full rounded-lg border border-border px-2 py-1.5 text-xs bg-background"
+                />
+              </div>
+              <ExportButton
+                icon={FileSpreadsheet}
+                label="Excel"
+                sublabel={`Semana ${weekStart}`}
+                onClick={() =>
+                  download(
+                    'weekly',
+                    `/reports/course/${courseId}/weekly?weekStart=${weekStart}`,
+                    `semana-${weekStart}-${courseLabel}.xlsx`,
+                  )
+                }
+                loading={loading === 'weekly'}
+                variant="primary"
+              />
+            </div>
+          </div>
+
+          <div className="space-y-2">
+            <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
+              Mensual
+            </h3>
+            <ExportButton
+              icon={FileSpreadsheet}
+              label="Excel"
+              sublabel={`${MONTH_NAMES[month - 1]} ${year}`}
               onClick={() =>
                 download(
                   'month-xlsx',
@@ -1363,13 +1452,13 @@ function ExportarTab({
                   `asistencia-${year}-${String(month).padStart(2, '0')}-${courseLabel}.xlsx`,
                 )
               }
-              disabled={loading === 'month-xlsx'}
-              className="inline-flex items-center gap-2 text-sm px-4 py-2 rounded-lg bg-primary text-primary-foreground disabled:opacity-50"
-            >
-              <FileSpreadsheet className="size-4" />
-              {loading === 'month-xlsx' ? 'Generando…' : 'Excel'}
-            </button>
-            <button
+              loading={loading === 'month-xlsx'}
+              variant="primary"
+            />
+            <ExportButton
+              icon={FileText}
+              label="PDF Resumen"
+              sublabel={`${MONTH_NAMES[month - 1]} ${year}`}
               onClick={() =>
                 download(
                   'month-pdf',
@@ -1377,13 +1466,12 @@ function ExportarTab({
                   `informe-${year}-${String(month).padStart(2, '0')}-${courseLabel}.pdf`,
                 )
               }
-              disabled={loading === 'month-pdf'}
-              className="inline-flex items-center gap-2 text-sm px-4 py-2 rounded-lg border border-border hover:bg-muted disabled:opacity-50"
-            >
-              <FileText className="size-4" />
-              {loading === 'month-pdf' ? 'Generando…' : 'PDF resumen'}
-            </button>
-            <button
+              loading={loading === 'month-pdf'}
+            />
+            <ExportButton
+              icon={FileText}
+              label="PDF MINEDUC"
+              sublabel="Lista oficial día×alumno"
               onClick={() =>
                 download(
                   'month-grid-pdf',
@@ -1391,31 +1479,31 @@ function ExportarTab({
                   `lista-mensual-${year}-${String(month).padStart(2, '0')}-${courseLabel}.pdf`,
                 )
               }
-              disabled={loading === 'month-grid-pdf'}
-              className="inline-flex items-center gap-2 text-sm px-4 py-2 rounded-lg border border-border hover:bg-muted disabled:opacity-50"
-              title="Lista oficial estilo MINEDUC con grilla día×alumno (A4 horizontal)"
-            >
-              <FileText className="size-4" />
-              {loading === 'month-grid-pdf' ? 'Generando…' : 'PDF MINEDUC'}
-            </button>
+              loading={loading === 'month-grid-pdf'}
+            />
           </div>
-        </div>
 
-        <div className="border-t border-border pt-4 space-y-3">
-          <h3 className="text-xs font-semibold">Semestral</h3>
-          <p className="text-xs text-muted-foreground">
-            {academicConfig
-              ? `S1 = ${formatDateRange(
-                  academicConfig.firstSemester.startDate,
-                  academicConfig.firstSemester.endDate,
-                )} · S2 = ${formatDateRange(
-                  academicConfig.secondSemester.startDate,
-                  academicConfig.secondSemester.endDate,
-                )}. Excel incluye una hoja por mes + resumen consolidado.`
-              : 'Excel incluye una hoja por mes + resumen consolidado.'}
-          </p>
-          <div className="flex flex-wrap gap-2">
-            <button
+          <div className="space-y-2">
+            <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
+              Semestral
+            </h3>
+            {academicConfig && (
+              <p className="text-[10px] text-muted-foreground">
+                {semester === 1
+                  ? formatDateRange(
+                      academicConfig.firstSemester.startDate,
+                      academicConfig.firstSemester.endDate,
+                    )
+                  : formatDateRange(
+                      academicConfig.secondSemester.startDate,
+                      academicConfig.secondSemester.endDate,
+                    )}
+              </p>
+            )}
+            <ExportButton
+              icon={FileSpreadsheet}
+              label="Excel"
+              sublabel={`${semester === 1 ? '1er' : '2do'} Semestre ${year}`}
               onClick={() =>
                 download(
                   'sem-xlsx',
@@ -1423,13 +1511,13 @@ function ExportarTab({
                   `semestre${semester}-${year}-${courseLabel}.xlsx`,
                 )
               }
-              disabled={loading === 'sem-xlsx'}
-              className="inline-flex items-center gap-2 text-sm px-4 py-2 rounded-lg bg-primary text-primary-foreground disabled:opacity-50"
-            >
-              <FileSpreadsheet className="size-4" />
-              {loading === 'sem-xlsx' ? 'Generando…' : 'Excel semestral'}
-            </button>
-            <button
+              loading={loading === 'sem-xlsx'}
+              variant="primary"
+            />
+            <ExportButton
+              icon={FileText}
+              label="PDF"
+              sublabel={`${semester === 1 ? '1er' : '2do'} Semestre ${year}`}
               onClick={() =>
                 download(
                   'sem-pdf',
@@ -1437,26 +1525,23 @@ function ExportarTab({
                   `semestre${semester}-${year}-${courseLabel}.pdf`,
                 )
               }
-              disabled={loading === 'sem-pdf'}
-              className="inline-flex items-center gap-2 text-sm px-4 py-2 rounded-lg border border-border hover:bg-muted disabled:opacity-50"
-            >
-              <FileText className="size-4" />
-              {loading === 'sem-pdf' ? 'Generando…' : 'PDF semestral'}
-            </button>
+              loading={loading === 'sem-pdf'}
+            />
           </div>
-        </div>
 
-        <div className="border-t border-border pt-4 space-y-3">
-          <h3 className="text-xs font-semibold">Anual</h3>
-          <p className="text-xs text-muted-foreground">
-            {academicConfig
-              ? `Incluye el año escolar configurado: ${formatAnnualRanges(
-                  academicConfig.annual.ranges,
-                )}.`
-              : 'Incluye el año escolar configurado con resumen consolidado del curso.'}
-          </p>
-          <div className="flex flex-wrap gap-2">
-            <button
+          <div className="space-y-2">
+            <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
+              Anual
+            </h3>
+            {academicConfig && (
+              <p className="text-[10px] text-muted-foreground">
+                {formatAnnualRanges(academicConfig.annual.ranges)}
+              </p>
+            )}
+            <ExportButton
+              icon={FileSpreadsheet}
+              label="Excel"
+              sublabel={`Año ${year}`}
               onClick={() =>
                 download(
                   'annual-xlsx',
@@ -1464,13 +1549,13 @@ function ExportarTab({
                   `anual-${year}-${courseLabel}.xlsx`,
                 )
               }
-              disabled={loading === 'annual-xlsx'}
-              className="inline-flex items-center gap-2 text-sm px-4 py-2 rounded-lg bg-primary text-primary-foreground disabled:opacity-50"
-            >
-              <FileSpreadsheet className="size-4" />
-              {loading === 'annual-xlsx' ? 'Generando…' : 'Excel anual'}
-            </button>
-            <button
+              loading={loading === 'annual-xlsx'}
+              variant="primary"
+            />
+            <ExportButton
+              icon={FileText}
+              label="PDF"
+              sublabel={`Año ${year}`}
               onClick={() =>
                 download(
                   'annual-pdf',
@@ -1478,12 +1563,8 @@ function ExportarTab({
                   `anual-${year}-${courseLabel}.pdf`,
                 )
               }
-              disabled={loading === 'annual-pdf'}
-              className="inline-flex items-center gap-2 text-sm px-4 py-2 rounded-lg border border-border hover:bg-muted disabled:opacity-50"
-            >
-              <FileText className="size-4" />
-              {loading === 'annual-pdf' ? 'Generando…' : 'PDF anual'}
-            </button>
+              loading={loading === 'annual-pdf'}
+            />
           </div>
         </div>
       </div>
