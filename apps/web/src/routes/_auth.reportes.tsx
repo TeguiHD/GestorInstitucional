@@ -4,10 +4,13 @@ import {
   AlertTriangle,
   CalendarDays,
   CheckCircle2,
+  ChevronDown,
+  ChevronRight,
   Download,
   FileSpreadsheet,
   FileText,
   GraduationCap,
+  LayoutGrid,
   Users,
   XCircle,
 } from 'lucide-react';
@@ -103,7 +106,41 @@ const MONTH_NAMES = [
   'Diciembre',
 ];
 
-type Tab = 'resumen' | 'exportar';
+type MonthlyBreakdownData = {
+  students: {
+    id: string;
+    firstName: string;
+    lastName: string;
+    secondLastName?: string | null;
+    enrollmentNumber: number;
+  }[];
+  months: {
+    month: number;
+    year: number;
+    from: string;
+    to: string;
+    stats: Record<
+      string,
+      {
+        total: number;
+        present: number;
+        absent: number;
+        late: number;
+        justified: number;
+        rate: number | null;
+      }
+    >;
+  }[];
+  period: {
+    label: string;
+    source: 'saved' | 'default';
+    from: string;
+    to: string;
+    ranges: Array<{ from: string; to: string }>;
+  };
+};
+
+type Tab = 'resumen' | 'planilla' | 'exportar';
 type PeriodType = 'mensual' | 'semestral' | 'anual';
 
 function ReportsPage() {
@@ -160,6 +197,20 @@ function ReportsPage() {
     queryKey: ['course-summary-report', courseId, periodType, year, semester],
     queryFn: () => api.get(summaryPath!),
     enabled: !!summaryPath,
+  });
+
+  const breakdownPath = useMemo(() => {
+    if (!courseId || periodType === 'mensual') return null;
+    if (periodType === 'semestral') {
+      return `/attendance/course/${courseId}/monthly-breakdown?period=semester&year=${year}&semester=${semester}`;
+    }
+    return `/attendance/course/${courseId}/monthly-breakdown?period=annual&year=${year}`;
+  }, [courseId, periodType, semester, year]);
+
+  const { data: breakdown, isLoading: breakdownLoading } = useQuery<MonthlyBreakdownData>({
+    queryKey: ['course-monthly-breakdown', courseId, periodType, year, semester],
+    queryFn: () => api.get(breakdownPath!),
+    enabled: !!breakdownPath,
   });
 
   const juneLastDay = useMemo(() => {
@@ -287,6 +338,9 @@ function ReportsPage() {
 
   const tabs: { id: Tab; label: string; Icon: typeof Users }[] = [
     { id: 'resumen', label: 'Resumen', Icon: Users },
+    ...(periodType !== 'mensual'
+      ? [{ id: 'planilla' as Tab, label: 'Planilla', Icon: LayoutGrid }]
+      : []),
     { id: 'exportar', label: 'Exportar', Icon: Download },
   ];
 
@@ -419,6 +473,12 @@ function ReportsPage() {
               avgSummaryRate={avgSummaryRate}
               belowCritical={belowCritical}
               belowSummaryCritical={belowSummaryCritical}
+            />
+          ) : tab === 'planilla' ? (
+            <PlanillaTab
+              courseId={courseId}
+              breakdown={breakdown}
+              breakdownLoading={breakdownLoading}
             />
           ) : (
             <ExportarTab
@@ -717,6 +777,359 @@ function ResumenTab({
             </p>
           )}
         </div>
+      </div>
+    </div>
+  );
+}
+
+const MONTH_COLORS = [
+  { bg: 'bg-blue-50 dark:bg-blue-950/20', text: 'text-blue-700 dark:text-blue-400' },
+  { bg: 'bg-emerald-50 dark:bg-emerald-950/20', text: 'text-emerald-700 dark:text-emerald-400' },
+  { bg: 'bg-violet-50 dark:bg-violet-950/20', text: 'text-violet-700 dark:text-violet-400' },
+  { bg: 'bg-amber-50 dark:bg-amber-950/20', text: 'text-amber-700 dark:text-amber-400' },
+  { bg: 'bg-rose-50 dark:bg-rose-950/20', text: 'text-rose-700 dark:text-rose-400' },
+  { bg: 'bg-cyan-50 dark:bg-cyan-950/20', text: 'text-cyan-700 dark:text-cyan-400' },
+];
+
+function PlanillaTab({
+  courseId,
+  breakdown,
+  breakdownLoading,
+}: {
+  courseId: string;
+  breakdown: MonthlyBreakdownData | undefined;
+  breakdownLoading: boolean;
+}) {
+  const [expandedMonth, setExpandedMonth] = useState<number | null>(null);
+
+  if (!courseId) {
+    return (
+      <EmptyState
+        icon={LayoutGrid}
+        title="Selecciona un curso"
+        description="Elige un curso para ver la planilla de asistencia."
+      />
+    );
+  }
+
+  if (breakdownLoading) {
+    return (
+      <div className="rounded-xl border border-border bg-background p-10 text-center">
+        <div className="h-6 w-32 animate-pulse bg-muted rounded mx-auto" />
+        <p className="text-xs text-muted-foreground mt-2">Cargando planilla…</p>
+      </div>
+    );
+  }
+
+  if (!breakdown || breakdown.months.length === 0) {
+    return (
+      <div className="rounded-xl border border-border bg-background p-10 text-center">
+        <LayoutGrid className="size-10 text-muted-foreground/30 mx-auto mb-3" />
+        <p className="text-sm font-medium text-muted-foreground">Sin datos para este período</p>
+      </div>
+    );
+  }
+
+  const { students, months } = breakdown;
+
+  const studentAverages = students.map((student) => {
+    let totalDays = 0;
+    let totalPresent = 0;
+    for (const month of months) {
+      const stats = month.stats[student.id];
+      if (stats) {
+        totalDays += stats.total;
+        totalPresent += stats.present;
+      }
+    }
+    const rate = totalDays > 0 ? totalPresent / totalDays : null;
+    return { ...student, rate };
+  });
+
+  const sortedStudents = [...studentAverages].sort((a, b) => (a.rate ?? -1) - (b.rate ?? -1));
+
+  const monthAverages = months.map((month) => {
+    const rates = Object.values(month.stats)
+      .map((s) => s.rate)
+      .filter((r): r is number => r !== null);
+    return rates.length > 0 ? rates.reduce((a, b) => a + b, 0) / rates.length : null;
+  });
+
+  const toggleMonth = (month: number) => {
+    setExpandedMonth(expandedMonth === month ? null : month);
+  };
+
+  return (
+    <div className="space-y-4">
+      <div className="rounded-xl border border-border bg-background overflow-hidden">
+        <div className="px-5 py-4 border-b border-border">
+          <h2 className="text-sm font-semibold flex items-center gap-2">
+            <LayoutGrid className="size-4" />
+            Planilla de asistencia — {breakdown.period.label}
+          </h2>
+          <p className="text-xs text-muted-foreground mt-0.5">
+            Haz clic en un mes para ver el detalle día a día
+          </p>
+        </div>
+
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="bg-muted/50 text-xs text-muted-foreground uppercase tracking-wide border-b border-border">
+                <th className="text-left px-5 py-3 sticky left-0 bg-muted/50 z-10">#</th>
+                <th className="text-left px-5 py-3 sticky left-12 bg-muted/50 z-10 min-w-[180px]">
+                  Alumno
+                </th>
+                {months.map((month, idx) => {
+                  const color = MONTH_COLORS[idx % MONTH_COLORS.length]!;
+                  const isExpanded = expandedMonth === month.month;
+                  return (
+                    <th
+                      key={month.month}
+                      className={cn(
+                        'text-center px-3 py-3 cursor-pointer transition hover:opacity-80',
+                        color.bg,
+                      )}
+                      onClick={() => toggleMonth(month.month)}
+                    >
+                      <div className="flex items-center justify-center gap-1">
+                        {isExpanded ? (
+                          <ChevronDown className="size-3" />
+                        ) : (
+                          <ChevronRight className="size-3" />
+                        )}
+                        <span className={color.text}>{MONTH_NAMES[month.month - 1]}</span>
+                      </div>
+                      <div className="text-[10px] font-normal mt-0.5 opacity-70">
+                        {monthAverages[idx] != null
+                          ? `${(monthAverages[idx]! * 100).toFixed(0)}%`
+                          : '—'}
+                      </div>
+                    </th>
+                  );
+                })}
+                <th className="text-right px-5 py-3">Prom.</th>
+              </tr>
+            </thead>
+            <tbody>
+              {sortedStudents.map((student, idx) => {
+                const isCritical = student.rate != null && student.rate < CRITICAL_THRESHOLD;
+                return (
+                  <tr
+                    key={student.id}
+                    className={cn(
+                      'border-t border-border transition',
+                      isCritical
+                        ? 'bg-red-50 dark:bg-red-950/20 hover:bg-red-100 dark:hover:bg-red-950/30'
+                        : 'hover:bg-muted/20',
+                    )}
+                  >
+                    <td className="px-5 py-2.5 text-muted-foreground text-xs sticky left-0 bg-inherit z-10">
+                      {idx + 1}
+                    </td>
+                    <td className="px-5 py-2.5 font-medium sticky left-12 bg-inherit z-10 min-w-[180px]">
+                      <div className="flex items-center gap-1.5">
+                        {isCritical && <AlertTriangle className="size-3.5 text-red-500 shrink-0" />}
+                        <span className="truncate" title={formatStudentFullName(student)}>
+                          {formatStudentFullName(student)}
+                        </span>
+                      </div>
+                    </td>
+                    {months.map((month, monthIdx) => {
+                      const stats = month.stats[student.id];
+                      const color = MONTH_COLORS[monthIdx % MONTH_COLORS.length]!;
+                      const isExpanded = expandedMonth === month.month;
+                      return (
+                        <td
+                          key={month.month}
+                          className={cn(
+                            'px-3 py-2.5 text-center cursor-pointer transition hover:opacity-80',
+                            color.bg,
+                            isExpanded && 'ring-2 ring-primary ring-inset',
+                          )}
+                          onClick={() => toggleMonth(month.month)}
+                        >
+                          <span
+                            className={cn(
+                              'inline-block rounded-full px-2 py-0.5 text-xs font-semibold',
+                              stats?.rate == null
+                                ? 'bg-muted text-muted-foreground'
+                                : stats.rate >= 0.9
+                                  ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400'
+                                  : stats.rate >= CRITICAL_THRESHOLD
+                                    ? 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400'
+                                    : 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400',
+                            )}
+                          >
+                            {stats?.rate != null ? `${(stats.rate * 100).toFixed(0)}%` : '—'}
+                          </span>
+                        </td>
+                      );
+                    })}
+                    <td className="px-5 py-2.5 text-right">
+                      <span
+                        className={cn(
+                          'inline-block rounded-full px-2 py-0.5 text-xs font-semibold',
+                          student.rate == null
+                            ? 'bg-muted text-muted-foreground'
+                            : student.rate >= 0.9
+                              ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400'
+                              : student.rate >= CRITICAL_THRESHOLD
+                                ? 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400'
+                                : 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400',
+                        )}
+                      >
+                        {student.rate != null ? `${(student.rate * 100).toFixed(1)}%` : '—'}
+                      </span>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+
+        <div className="px-5 py-3 border-t border-border bg-muted/20">
+          <p className="text-[10px] text-muted-foreground flex items-center gap-1">
+            <CheckCircle2 className="size-3 shrink-0" />
+            Porcentaje calculado conforme al Decreto 67/2018 MINEDUC. Haz clic en un mes para ver el
+            detalle.
+          </p>
+        </div>
+      </div>
+
+      {expandedMonth !== null && (
+        <MonthDetail
+          courseId={courseId}
+          month={expandedMonth}
+          year={months.find((m) => m.month === expandedMonth)?.year ?? new Date().getFullYear()}
+          monthName={MONTH_NAMES[expandedMonth - 1] ?? ''}
+        />
+      )}
+    </div>
+  );
+}
+
+function MonthDetail({
+  courseId,
+  month,
+  year,
+  monthName,
+}: {
+  courseId: string;
+  month: number;
+  year: number;
+  monthName: string;
+}) {
+  const { data: matrix, isLoading } = useQuery<MatrixData>({
+    queryKey: ['course-matrix-report', courseId, year, month],
+    queryFn: () => api.get(`/attendance/course/${courseId}/matrix?year=${year}&month=${month}`),
+  });
+
+  if (isLoading) {
+    return (
+      <div className="rounded-xl border border-border bg-background p-6 text-center">
+        <div className="h-4 w-24 animate-pulse bg-muted rounded mx-auto" />
+        <p className="text-xs text-muted-foreground mt-2">Cargando detalle…</p>
+      </div>
+    );
+  }
+
+  if (!matrix || matrix.students.length === 0) {
+    return (
+      <div className="rounded-xl border border-border bg-background p-6 text-center">
+        <p className="text-sm text-muted-foreground">Sin datos para {monthName}</p>
+      </div>
+    );
+  }
+
+  const { students, dates, matrix: matrixData } = matrix;
+
+  return (
+    <div className="rounded-xl border border-border bg-background overflow-hidden">
+      <div className="px-5 py-3 border-b border-border bg-primary/5">
+        <h3 className="text-sm font-semibold flex items-center gap-2">
+          <CalendarDays className="size-4" />
+          Detalle de {monthName} {year}
+        </h3>
+      </div>
+      <div className="overflow-x-auto">
+        <table className="w-full text-xs">
+          <thead>
+            <tr className="bg-muted/30 border-b border-border">
+              <th className="text-left px-3 py-2 sticky left-0 bg-muted/30 z-10 min-w-[150px]">
+                Alumno
+              </th>
+              {dates.map((date) => {
+                const day = new Date(date + 'T12:00').getDate();
+                return (
+                  <th key={date} className="px-1 py-2 text-center min-w-[28px]">
+                    {day}
+                  </th>
+                );
+              })}
+            </tr>
+          </thead>
+          <tbody>
+            {students.map((student) => (
+              <tr key={student.id} className="border-t border-border/50">
+                <td className="px-3 py-1.5 sticky left-0 bg-background z-10 truncate max-w-[150px]">
+                  {formatStudentFullName(student)}
+                </td>
+                {dates.map((date) => {
+                  const status = matrixData[student.id]?.[date];
+                  return (
+                    <td key={date} className="px-1 py-1.5 text-center">
+                      <span
+                        className={cn(
+                          'inline-block size-5 rounded text-[10px] leading-5 font-medium',
+                          status === 'PRESENT' &&
+                            'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400',
+                          status === 'ABSENT' &&
+                            'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400',
+                          status === 'LATE' &&
+                            'bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-400',
+                          status === 'JUSTIFIED' &&
+                            'bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-400',
+                          status === 'WITHDRAWN' &&
+                            'bg-gray-100 text-gray-500 dark:bg-gray-800 dark:text-gray-400',
+                          !status && 'text-muted-foreground/30',
+                        )}
+                      >
+                        {status === 'PRESENT'
+                          ? 'P'
+                          : status === 'ABSENT'
+                            ? 'A'
+                            : status === 'LATE'
+                              ? 'AT'
+                              : status === 'JUSTIFIED'
+                                ? 'J'
+                                : status === 'WITHDRAWN'
+                                  ? 'R'
+                                  : '·'}
+                      </span>
+                    </td>
+                  );
+                })}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <div className="px-5 py-2 border-t border-border bg-muted/10 flex gap-3 text-[10px]">
+        <span className="flex items-center gap-1">
+          <span className="inline-block size-3 rounded bg-green-100 dark:bg-green-900/30" />P
+        </span>
+        <span className="flex items-center gap-1">
+          <span className="inline-block size-3 rounded bg-red-100 dark:bg-red-900/30" />A
+        </span>
+        <span className="flex items-center gap-1">
+          <span className="inline-block size-3 rounded bg-orange-100 dark:bg-orange-900/30" />
+          AT
+        </span>
+        <span className="flex items-center gap-1">
+          <span className="inline-block size-3 rounded bg-yellow-100 dark:bg-yellow-900/30" />J
+        </span>
       </div>
     </div>
   );

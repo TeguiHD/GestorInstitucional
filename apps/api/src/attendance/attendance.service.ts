@@ -680,6 +680,140 @@ export class AttendanceService {
     };
   }
 
+  async getMonthlyBreakdown(
+    courseId: string,
+    year: number,
+    period: 'semester' | 'annual',
+    semester?: 1 | 2,
+  ) {
+    const courseHead = await this.prisma.course.findUnique({
+      where: { id: courseId },
+      select: { schoolId: true },
+    });
+    if (!courseHead) throw new NotFoundException('Curso no encontrado');
+
+    const resolved =
+      period === 'semester'
+        ? await this.schoolConfig.getSemesterPeriod(courseHead.schoolId, year, semester ?? 1)
+        : await this.schoolConfig.getAnnualPeriod(courseHead.schoolId, year);
+
+    const ranges = resolved.ranges;
+    const monthRanges = this.schoolConfig.monthsForRanges(ranges);
+
+    const [course, records] = await Promise.all([
+      this.prisma.course.findUnique({
+        where: { id: courseId },
+        include: {
+          students: {
+            where: this.schoolConfig.activeDuringRangesWhere(ranges),
+            select: {
+              id: true,
+              firstName: true,
+              lastName: true,
+              secondLastName: true,
+              enrollmentNumber: true,
+              enrolledAt: true,
+              withdrawnAt: true,
+            },
+            orderBy: [{ enrollmentNumber: 'asc' }],
+          },
+        },
+      }),
+      this.prisma.attendanceRecord.findMany({
+        where: { courseId, ...this.schoolConfig.attendanceWhereForRanges(ranges) },
+        select: { studentId: true, date: true, status: true },
+      }),
+    ]);
+
+    if (!course) throw new NotFoundException('Curso no encontrado');
+
+    const recordsByStudentAndDate = new Map<string, Map<string, string>>();
+    for (const r of records) {
+      if (r.status === 'WITHDRAWN') continue;
+      if (!recordsByStudentAndDate.has(r.studentId)) {
+        recordsByStudentAndDate.set(r.studentId, new Map());
+      }
+      const dateKey = this.schoolConfig.formatDate(r.date);
+      recordsByStudentAndDate.get(r.studentId)!.set(dateKey, r.status);
+    }
+
+    const months = monthRanges.map((mr) => {
+      const monthFrom = { from: mr.from, to: mr.to };
+      const stats: Record<
+        string,
+        {
+          total: number;
+          present: number;
+          absent: number;
+          late: number;
+          justified: number;
+          rate: number | null;
+        }
+      > = {};
+
+      for (const student of course.students) {
+        const activeDays = this.schoolConfig.countActiveSchoolDaysInRanges(student, [monthFrom]);
+        const studentRecords = recordsByStudentAndDate.get(student.id);
+
+        let present = 0;
+        let absent = 0;
+        let late = 0;
+        let justified = 0;
+
+        if (studentRecords) {
+          const fromKey = this.schoolConfig.formatDate(mr.from);
+          const toKey = this.schoolConfig.formatDate(mr.to);
+          for (const [dateKey, status] of studentRecords) {
+            if (dateKey < fromKey || dateKey > toKey) continue;
+            if (status === 'PRESENT') present++;
+            else if (status === 'ABSENT') absent++;
+            else if (status === 'LATE') {
+              late++;
+              present++;
+            } else if (status === 'JUSTIFIED') {
+              justified++;
+              present++;
+            }
+          }
+        }
+
+        const rate = activeDays > 0 ? present / activeDays : null;
+        stats[student.id] = { total: activeDays, present, absent, late, justified, rate };
+      }
+
+      return {
+        month: mr.month,
+        year: mr.from.getFullYear(),
+        from: this.schoolConfig.formatDate(mr.from),
+        to: this.schoolConfig.formatDate(mr.to),
+        stats,
+      };
+    });
+
+    const students = course.students.map((s) => ({
+      id: s.id,
+      firstName: s.firstName,
+      lastName: s.lastName,
+      secondLastName: s.secondLastName,
+      enrollmentNumber: s.enrollmentNumber,
+    }));
+
+    return {
+      students,
+      months,
+      period: {
+        label: resolved.label,
+        source: resolved.source,
+        from: this.schoolConfig.formatDate(ranges[0]!.from),
+        to: this.schoolConfig.formatDate(ranges[ranges.length - 1]!.to),
+        ranges: ranges.map((range) => ({
+          from: this.schoolConfig.formatDate(range.from),
+          to: this.schoolConfig.formatDate(range.to),
+        })),
+      },
+    };
+  }
+
   async getMissingAttendance(schoolId: string, from: string, to: string) {
     const fromDate = new Date(from);
     const toDate = new Date(to);

@@ -131,6 +131,26 @@ export class AttendanceController {
     return this.attendance.getCourseMatrix(courseId, parsedYear, parsedMonth);
   }
 
+  @Get('course/:courseId/monthly-breakdown')
+  @ApiOperation({
+    summary: 'Desglose mensual de asistencia por alumno para un periodo académico',
+  })
+  async getMonthlyBreakdown(
+    @Param('courseId') courseId: string,
+    @Query('period') period: string,
+    @Query('year') year: string,
+    @Query('semester') semester: string | undefined,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    await this.courses.assertAccess(courseId, user);
+    const parsedYear = this.parseYear(year);
+    if (period !== 'semester' && period !== 'annual') {
+      throw new BadRequestException('period debe ser semester o annual');
+    }
+    const parsedSemester = period === 'semester' ? this.parseSemester(semester ?? '1') : undefined;
+    return this.attendance.getMonthlyBreakdown(courseId, parsedYear, period, parsedSemester);
+  }
+
   @Get('course/:courseId/summary')
   @ApiOperation({
     summary: 'Resumen de asistencia por alumno en un rango de fechas (semestral/anual)',
