@@ -646,9 +646,16 @@ export class AttendanceService {
       }
     }
 
+    const today = new Date();
+    today.setHours(23, 59, 59, 999);
+    const cappedRanges = ranges.map((r) => ({
+      from: r.from,
+      to: r.to < today ? r.to : today,
+    }));
+
     const students = course.students.map((student) => {
       const stats = statsByStudent.get(student.id)!;
-      const activeDays = this.schoolConfig.countActiveSchoolDaysInRanges(student, ranges);
+      const activeDays = this.schoolConfig.countActiveSchoolDaysInRanges(student, cappedRanges);
       const rate = activeDays > 0 ? stats.present / activeDays : null;
       return {
         id: student.id,
@@ -737,8 +744,12 @@ export class AttendanceService {
       recordsByStudentAndDate.get(r.studentId)!.set(dateKey, r.status);
     }
 
+    const today = new Date();
+    today.setHours(23, 59, 59, 999);
+
     const months = monthRanges.map((mr) => {
-      const monthFrom = { from: mr.from, to: mr.to };
+      const cappedTo = mr.to < today ? mr.to : today;
+      const monthFrom = { from: mr.from, to: cappedTo };
       const stats: Record<
         string,
         {
