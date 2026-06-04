@@ -596,6 +596,11 @@ export class AttendanceService {
         ? await this.schoolConfig.getSemesterPeriod(courseHead.schoolId, year, semester ?? 1)
         : await this.schoolConfig.getAnnualPeriod(courseHead.schoolId, year);
     const ranges = resolved.ranges;
+    const nonSchoolDays = await this.calendar.getNonSchoolDays(
+      courseHead.schoolId,
+      ranges[0]!.from,
+      ranges[ranges.length - 1]!.to,
+    );
 
     const [course, records] = await Promise.all([
       this.prisma.course.findUnique({
@@ -655,7 +660,11 @@ export class AttendanceService {
 
     const students = course.students.map((student) => {
       const stats = statsByStudent.get(student.id)!;
-      const activeDays = this.schoolConfig.countActiveSchoolDaysInRanges(student, cappedRanges);
+      const activeDays = this.schoolConfig.countActiveSchoolDaysInRanges(
+        student,
+        cappedRanges,
+        nonSchoolDays,
+      );
       const rate = activeDays > 0 ? stats.present / activeDays : null;
       return {
         id: student.id,
@@ -705,6 +714,11 @@ export class AttendanceService {
         : await this.schoolConfig.getAnnualPeriod(courseHead.schoolId, year);
 
     const ranges = resolved.ranges;
+    const nonSchoolDays = await this.calendar.getNonSchoolDays(
+      courseHead.schoolId,
+      ranges[0]!.from,
+      ranges[ranges.length - 1]!.to,
+    );
     const monthRanges = this.schoolConfig.monthsForRanges(ranges);
 
     const [course, records] = await Promise.all([
@@ -763,7 +777,11 @@ export class AttendanceService {
       > = {};
 
       for (const student of course.students) {
-        const activeDays = this.schoolConfig.countActiveSchoolDaysInRanges(student, [monthFrom]);
+        const activeDays = this.schoolConfig.countActiveSchoolDaysInRanges(
+          student,
+          [monthFrom],
+          nonSchoolDays,
+        );
         const studentRecords = recordsByStudentAndDate.get(student.id);
 
         let present = 0;

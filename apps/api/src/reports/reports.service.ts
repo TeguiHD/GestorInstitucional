@@ -9,6 +9,7 @@ import { WITHDRAWAL_REASONS, type WithdrawalReason } from '@asistencia/shared';
 
 import { PrismaService } from '../prisma/prisma.service.js';
 import { AuditService } from '../audit/audit.service.js';
+import { CalendarService } from '../calendar/calendar.service.js';
 import { SchoolConfigService, type DateRange } from '../school-config/school-config.service.js';
 
 function formatWithdrawalReason(
@@ -45,6 +46,7 @@ export class ReportsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly audit: AuditService,
+    private readonly calendar: CalendarService,
     private readonly schoolConfig: SchoolConfigService,
   ) {}
 
@@ -102,6 +104,8 @@ export class ReportsService {
       recordMap.get(r.studentId)!.set(key, SYMBOL[r.status] ?? '-');
     }
 
+    const nonSchoolDays = await this.calendar.getNonSchoolDays(course.school.id, from, to);
+
     const wb = new ExcelJS.Workbook();
     wb.creator = 'Asistencia CSSP';
     wb.created = new Date();
@@ -112,10 +116,11 @@ export class ReportsService {
       month,
       to,
       records: recordMap,
+      nonSchoolDays,
     });
 
     // P3: add MINEDUC Control de Subvenciones sheet
-    this.buildMovimientosSheet(wb, { course, year, month, from, to, events });
+    this.buildMovimientosSheet(wb, { course, year, month, from, to, events, nonSchoolDays });
 
     await this.audit.log({
       userId: requestedById,
@@ -155,6 +160,8 @@ export class ReportsService {
       where: { courseId, date: { gte: from, lte: to } },
       select: { studentId: true, status: true },
     });
+
+    const nonSchoolDays = await this.calendar.getNonSchoolDays(course.school.id, from, to);
 
     const perStudent = new Map<string, { p: number; a: number; l: number; j: number }>();
     for (const s of course.students) perStudent.set(s.id, { p: 0, a: 0, l: 0, j: 0 });
@@ -235,9 +242,9 @@ export class ReportsService {
         y = 60;
       }
       const c = perStudent.get(s.id)!;
-      const tot = c.p + c.a + c.l + c.j;
-      const rate = tot > 0 ? (c.p + c.l + c.j) / tot : 0;
-      if (tot > 0) {
+      const activeDays = this.countActiveSchoolDays(s, from, to, nonSchoolDays);
+      const rate = activeDays > 0 ? (c.p + c.l + c.j) / activeDays : 0;
+      if (activeDays > 0) {
         totalRate += rate;
         totalStudents++;
       }
@@ -258,7 +265,7 @@ export class ReportsService {
       doc.text(String(c.j), 468, y + 5, { width: 22, align: 'center' });
       const rateColor = rate >= 0.9 ? '#15803d' : rate >= 0.7 ? '#b45309' : '#b91c1c';
       doc.fillColor(rateColor).font('Helvetica-Bold');
-      doc.text(tot > 0 ? `${(rate * 100).toFixed(1)}%` : '—', 494, y + 5, {
+      doc.text(activeDays > 0 ? `${(rate * 100).toFixed(1)}%` : '—', 494, y + 5, {
         width: 50,
         align: 'center',
       });
@@ -337,6 +344,8 @@ export class ReportsService {
       where: { courseId, date: { gte: from, lte: to } },
       select: { studentId: true, date: true, status: true },
     });
+
+    const nonSchoolDays = await this.calendar.getNonSchoolDays(course.school.id, from, to);
 
     const SYMBOL: Record<string, string> = {
       PRESENT: '1',
@@ -509,9 +518,9 @@ export class ReportsService {
         x += DAY_W;
       }
 
-      const tot = p + a + l + j;
-      const rate = tot > 0 ? (p + l + j) / tot : 0;
-      if (tot > 0) {
+      const activeDays = this.countActiveSchoolDays(s, from, to, nonSchoolDays);
+      const rate = activeDays > 0 ? (p + l + j) / activeDays : 0;
+      if (activeDays > 0) {
         totalRate += rate;
         totalStudents++;
       }
@@ -527,7 +536,7 @@ export class ReportsService {
       x += SUM_W;
       const rateColor = rate >= 0.9 ? '#15803d' : rate >= 0.7 ? '#b45309' : '#b91c1c';
       doc.fillColor(rateColor).font('Helvetica-Bold');
-      doc.text(tot > 0 ? `${(rate * 100).toFixed(1)}%` : '—', x, y + 4, {
+      doc.text(activeDays > 0 ? `${(rate * 100).toFixed(1)}%` : '—', x, y + 4, {
         width: PCT_W,
         align: 'center',
       });
@@ -781,6 +790,11 @@ export class ReportsService {
     );
     const ranges = period.ranges;
     const monthRanges = this.schoolConfig.monthsForRanges(ranges);
+    const nonSchoolDays = await this.calendar.getNonSchoolDays(
+      courseHead.schoolId,
+      ranges[0]!.from,
+      ranges[ranges.length - 1]!.to,
+    );
 
     const course = await this.prisma.course.findUniqueOrThrow({
       where: { id: courseId },
@@ -843,13 +857,29 @@ export class ReportsService {
         if (!recordMap.has(r.studentId)) recordMap.set(r.studentId, new Map());
         recordMap.get(r.studentId)!.set(key, SYMBOL[r.status] ?? '-');
       }
-      this.buildMonthSheet(wb, { course, year, month, from, to, records: recordMap });
+      this.buildMonthSheet(wb, {
+        course,
+        year,
+        month,
+        from,
+        to,
+        records: recordMap,
+        nonSchoolDays,
+      });
 
       // Add monthly control subvenciones sheet for each month
       const monthEvents = allEvents.filter((e) =>
         this.schoolConfig.isDateInRanges(e.effectiveDate, [monthRange]),
       );
-      this.buildMovimientosSheet(wb, { course, year, month, from, to, events: monthEvents });
+      this.buildMovimientosSheet(wb, {
+        course,
+        year,
+        month,
+        from,
+        to,
+        events: monthEvents,
+        nonSchoolDays,
+      });
 
       for (const r of records) {
         const e = summary.get(r.studentId);
@@ -895,7 +925,11 @@ export class ReportsService {
       const r = rowIdx + 3;
       const e = summary.get(student.id) ?? { p: 0, a: 0, j: 0 };
       // P2 FIX: denominator = active school days over the whole semester period
-      const activeDays = this.schoolConfig.countActiveSchoolDaysInRanges(student, ranges);
+      const activeDays = this.schoolConfig.countActiveSchoolDaysInRanges(
+        student,
+        ranges,
+        nonSchoolDays,
+      );
       const pct = activeDays > 0 ? (e.p + e.j) / activeDays : 0;
       // P2: use real enrollmentNumber
       ws.getCell(r, 1).value = student.enrollmentNumber;
@@ -952,6 +986,11 @@ export class ReportsService {
     const period = await this.schoolConfig.getAnnualPeriod(courseHead.schoolId, year);
     const ranges = period.ranges;
     const monthRanges = this.schoolConfig.monthsForRanges(ranges);
+    const nonSchoolDays = await this.calendar.getNonSchoolDays(
+      courseHead.schoolId,
+      ranges[0]!.from,
+      ranges[ranges.length - 1]!.to,
+    );
 
     const course = await this.prisma.course.findUniqueOrThrow({
       where: { id: courseId },
@@ -1001,7 +1040,15 @@ export class ReportsService {
         if (!recordMap.has(r.studentId)) recordMap.set(r.studentId, new Map());
         recordMap.get(r.studentId)!.set(key, SYMBOL[r.status] ?? '-');
       }
-      this.buildMonthSheet(wb, { course, year, month, from, to, records: recordMap });
+      this.buildMonthSheet(wb, {
+        course,
+        year,
+        month,
+        from,
+        to,
+        records: recordMap,
+        nonSchoolDays,
+      });
 
       for (const r of records) {
         const e = summary.get(r.studentId);
@@ -1043,7 +1090,11 @@ export class ReportsService {
     course.students.forEach((student, idx) => {
       const r = idx + 3;
       const e = summary.get(student.id) ?? { p: 0, a: 0, j: 0 };
-      const activeDays = this.schoolConfig.countActiveSchoolDaysInRanges(student, ranges);
+      const activeDays = this.schoolConfig.countActiveSchoolDaysInRanges(
+        student,
+        ranges,
+        nonSchoolDays,
+      );
       const pct = activeDays > 0 ? (e.p + e.j) / activeDays : 0;
       ws.getCell(r, 1).value = idx + 1;
       ws.getCell(r, 1).border = borderAll;
@@ -1103,6 +1154,11 @@ export class ReportsService {
       semesterNumber,
     );
     const ranges = period.ranges;
+    const nonSchoolDays = await this.calendar.getNonSchoolDays(
+      courseHead.schoolId,
+      ranges[0]!.from,
+      ranges[ranges.length - 1]!.to,
+    );
     const monthRanges = this.schoolConfig.monthsForRanges(ranges);
     const semLabel = semester === 1 ? '1er Semestre' : '2do Semestre';
 
@@ -1206,7 +1262,7 @@ export class ReportsService {
         y = 60;
       }
       const c = perStudent.get(s.id)!;
-      const activeDays = this.schoolConfig.countActiveSchoolDaysInRanges(s, ranges);
+      const activeDays = this.schoolConfig.countActiveSchoolDaysInRanges(s, ranges, nonSchoolDays);
       const rate = activeDays > 0 ? (c.p + c.l + c.j) / activeDays : 0;
       if (activeDays > 0) {
         totalRate += rate;
@@ -1283,6 +1339,11 @@ export class ReportsService {
     });
     const period = await this.schoolConfig.getAnnualPeriod(courseHead.schoolId, year);
     const ranges = period.ranges;
+    const nonSchoolDays = await this.calendar.getNonSchoolDays(
+      courseHead.schoolId,
+      ranges[0]!.from,
+      ranges[ranges.length - 1]!.to,
+    );
 
     const course = await this.prisma.course.findUniqueOrThrow({
       where: { id: courseId },
@@ -1379,7 +1440,7 @@ export class ReportsService {
         y = 60;
       }
       const c = perStudent.get(s.id)!;
-      const activeDays = this.schoolConfig.countActiveSchoolDaysInRanges(s, ranges);
+      const activeDays = this.schoolConfig.countActiveSchoolDaysInRanges(s, ranges, nonSchoolDays);
       const rate = activeDays > 0 ? (c.p + c.l + c.j) / activeDays : 0;
       if (activeDays > 0) {
         totalRate += rate;
@@ -1488,7 +1549,8 @@ export class ReportsService {
       else if (r.status === 'JUSTIFIED') j++;
     }
 
-    const activeDays = this.countActiveSchoolDays(student, from, to);
+    const nonSchoolDays = await this.calendar.getNonSchoolDays(student.course.school.id, from, to);
+    const activeDays = this.countActiveSchoolDays(student, from, to, nonSchoolDays);
     const rate = activeDays > 0 ? (p + l + j) / activeDays : 0;
 
     const doc = new PDFDocument({ size: 'A4', margin: 48 });
@@ -1704,6 +1766,11 @@ export class ReportsService {
       semesterNumber,
     );
     const ranges = period.ranges;
+    const nonSchoolDays = await this.calendar.getNonSchoolDays(
+      student.course.schoolId,
+      ranges[0]!.from,
+      ranges[ranges.length - 1]!.to,
+    );
     const monthRanges = this.schoolConfig.monthsForRanges(ranges);
 
     const records = await this.prisma.attendanceRecord.findMany({
@@ -1734,7 +1801,11 @@ export class ReportsService {
       totalL += e.l;
       totalJ += e.j;
     }
-    const activeDays = this.schoolConfig.countActiveSchoolDaysInRanges(student, ranges);
+    const activeDays = this.schoolConfig.countActiveSchoolDaysInRanges(
+      student,
+      ranges,
+      nonSchoolDays,
+    );
     const rate = activeDays > 0 ? (totalP + totalL + totalJ) / activeDays : 0;
 
     const doc = new PDFDocument({ size: 'A4', margin: 48 });
@@ -1807,9 +1878,11 @@ export class ReportsService {
     for (const [i, monthRange] of monthRanges.entries()) {
       const m = monthRange.month;
       const e = byMonth.get(m)!;
-      const monthActiveDays = this.schoolConfig.countActiveSchoolDaysInRanges(student, [
-        monthRange,
-      ]);
+      const monthActiveDays = this.schoolConfig.countActiveSchoolDaysInRanges(
+        student,
+        [monthRange],
+        nonSchoolDays,
+      );
       const monthRate = monthActiveDays > 0 ? (e.p + e.l + e.j) / monthActiveDays : 0;
       const band = i % 2 === 0 ? '#F5F8FB' : '#FFFFFF';
       doc.rect(48, y, 499, rowH).fill(band);
@@ -1907,6 +1980,11 @@ export class ReportsService {
     });
     const period = await this.schoolConfig.getAnnualPeriod(student.course.schoolId, year);
     const ranges = period.ranges;
+    const nonSchoolDays = await this.calendar.getNonSchoolDays(
+      student.course.schoolId,
+      ranges[0]!.from,
+      ranges[ranges.length - 1]!.to,
+    );
     const monthRanges = this.schoolConfig.monthsForRanges(ranges);
 
     const records = await this.prisma.attendanceRecord.findMany({
@@ -1937,7 +2015,11 @@ export class ReportsService {
       totalL += e.l;
       totalJ += e.j;
     }
-    const activeDays = this.schoolConfig.countActiveSchoolDaysInRanges(student, ranges);
+    const activeDays = this.schoolConfig.countActiveSchoolDaysInRanges(
+      student,
+      ranges,
+      nonSchoolDays,
+    );
     const rate = activeDays > 0 ? (totalP + totalL + totalJ) / activeDays : 0;
 
     const doc = new PDFDocument({ size: 'A4', margin: 48 });
@@ -2014,9 +2096,11 @@ export class ReportsService {
         y = 60;
       }
       const e = byMonth.get(m)!;
-      const monthActiveDays = this.schoolConfig.countActiveSchoolDaysInRanges(student, [
-        monthRange,
-      ]);
+      const monthActiveDays = this.schoolConfig.countActiveSchoolDaysInRanges(
+        student,
+        [monthRange],
+        nonSchoolDays,
+      );
       const monthRate = monthActiveDays > 0 ? (e.p + e.l + e.j) / monthActiveDays : 0;
       const band = i % 2 === 0 ? '#F5F8FB' : '#FFFFFF';
       doc.rect(48, y, 499, rowH).fill(band);
@@ -2264,7 +2348,8 @@ export class ReportsService {
     ws.getCell(r, 1).alignment = centerMid;
     r++;
 
-    const activeDays = this.countActiveSchoolDays(student, from, to);
+    const nonSchoolDays = await this.calendar.getNonSchoolDays(student.course.school.id, from, to);
+    const activeDays = this.countActiveSchoolDays(student, from, to, nonSchoolDays);
     const rate = activeDays > 0 ? (p + l + j) / activeDays : 0;
 
     ws.getCell(r, 1).value = 'Presentes:';
@@ -2356,6 +2441,11 @@ export class ReportsService {
       semesterNumber,
     );
     const ranges = period.ranges;
+    const nonSchoolDays = await this.calendar.getNonSchoolDays(
+      student.course.schoolId,
+      ranges[0]!.from,
+      ranges[ranges.length - 1]!.to,
+    );
     const monthRanges = this.schoolConfig.monthsForRanges(ranges);
 
     const allRecords = await this.prisma.attendanceRecord.findMany({
@@ -2495,7 +2585,11 @@ export class ReportsService {
       }
 
       r += 2;
-      const activeDays = this.schoolConfig.countActiveSchoolDaysInRanges(student, [monthRange]);
+      const activeDays = this.schoolConfig.countActiveSchoolDaysInRanges(
+        student,
+        [monthRange],
+        nonSchoolDays,
+      );
       const rate = activeDays > 0 ? (p + l + j) / activeDays : 0;
       ws.getCell(r, 1).value = 'P:';
       ws.getCell(r, 1).font = { bold: true };
@@ -2568,7 +2662,11 @@ export class ReportsService {
       totalL += ml;
       totalJ += mj;
 
-      const activeDays = this.schoolConfig.countActiveSchoolDaysInRanges(student, [monthRange]);
+      const activeDays = this.schoolConfig.countActiveSchoolDaysInRanges(
+        student,
+        [monthRange],
+        nonSchoolDays,
+      );
       const rate = activeDays > 0 ? (mp + ml + mj) / activeDays : 0;
 
       const r = i + 3;
@@ -2628,6 +2726,11 @@ export class ReportsService {
     });
     const period = await this.schoolConfig.getAnnualPeriod(student.course.schoolId, year);
     const ranges = period.ranges;
+    const nonSchoolDays = await this.calendar.getNonSchoolDays(
+      student.course.schoolId,
+      ranges[0]!.from,
+      ranges[ranges.length - 1]!.to,
+    );
     const monthRanges = this.schoolConfig.monthsForRanges(ranges);
 
     const allRecords = await this.prisma.attendanceRecord.findMany({
@@ -2767,7 +2870,11 @@ export class ReportsService {
       }
 
       r += 2;
-      const activeDays = this.schoolConfig.countActiveSchoolDaysInRanges(student, [monthRange]);
+      const activeDays = this.schoolConfig.countActiveSchoolDaysInRanges(
+        student,
+        [monthRange],
+        nonSchoolDays,
+      );
       const rate = activeDays > 0 ? (p + l + j) / activeDays : 0;
       ws.getCell(r, 1).value = 'P:';
       ws.getCell(r, 1).font = { bold: true };
@@ -2840,7 +2947,11 @@ export class ReportsService {
       totalL += ml;
       totalJ += mj;
 
-      const activeDays = this.schoolConfig.countActiveSchoolDaysInRanges(student, [monthRange]);
+      const activeDays = this.schoolConfig.countActiveSchoolDaysInRanges(
+        student,
+        [monthRange],
+        nonSchoolDays,
+      );
       const rate = activeDays > 0 ? (mp + ml + mj) / activeDays : 0;
 
       const r = i + 3;
@@ -2897,7 +3008,11 @@ export class ReportsService {
     summary.getCell(totalRow, 5).border = borderAll;
     summary.getCell(totalRow, 5).font = { bold: true };
 
-    const annualActiveDays = this.schoolConfig.countActiveSchoolDaysInRanges(student, ranges);
+    const annualActiveDays = this.schoolConfig.countActiveSchoolDaysInRanges(
+      student,
+      ranges,
+      nonSchoolDays,
+    );
     const annualRate = annualActiveDays > 0 ? (totalP + totalL + totalJ) / annualActiveDays : 0;
     const annualPct = summary.getCell(totalRow, 6);
     annualPct.value = annualRate;
@@ -2946,6 +3061,7 @@ export class ReportsService {
       from?: Date;
       to: Date;
       records: Map<string, Map<string, string>>;
+      nonSchoolDays?: Set<string>;
     },
   ) {
     const { course, year, month, to, records } = ctx;
@@ -3205,7 +3321,12 @@ export class ReportsService {
       }
 
       // P2 FIX: denominator = active school days for this student, not total records
-      const activeDays = this.countActiveSchoolDays(student, periodFrom, periodTo);
+      const activeDays = this.countActiveSchoolDays(
+        student,
+        periodFrom,
+        periodTo,
+        ctx.nonSchoolDays,
+      );
       const pct = activeDays > 0 ? (present + justified) / activeDays : 0;
 
       const a = ws.getCell(r, 36);
@@ -3299,12 +3420,13 @@ export class ReportsService {
    * P2 (Decreto 67): Count active school days for a student.
    * The denominator for % attendance must exclude days before enrolledAt
    * and days after withdrawnAt (i.e., only days the student was enrolled).
-   * Also excludes weekends.
+   * Also excludes weekends and non-school days (holidays/suspended).
    */
   private countActiveSchoolDays(
     student: { enrolledAt: Date; withdrawnAt: Date | null },
     from: Date,
     to: Date,
+    nonSchoolDays: Set<string> = new Set(),
   ): number {
     const start = this.startOfDay(student.enrolledAt > from ? student.enrolledAt : from);
     const end = this.startOfDay(
@@ -3314,7 +3436,8 @@ export class ReportsService {
     const cursor = new Date(start);
     while (cursor <= end) {
       const dow = cursor.getDay();
-      if (dow !== 0 && dow !== 6) days++;
+      const key = `${cursor.getFullYear()}-${String(cursor.getMonth() + 1).padStart(2, '0')}-${String(cursor.getDate()).padStart(2, '0')}`;
+      if (dow !== 0 && dow !== 6 && !nonSchoolDays.has(key)) days++;
       cursor.setDate(cursor.getDate() + 1);
     }
     return days;
@@ -3351,9 +3474,10 @@ export class ReportsService {
         withdrawalReason?: WithdrawalReason | string | null;
         student: { firstName: string; lastName: string; rut: string; enrollmentNumber: number };
       }>;
+      nonSchoolDays?: Set<string>;
     },
   ) {
-    const { course, year, month, from, to, events } = ctx;
+    const { course, year, month, from, to, events, nonSchoolDays } = ctx;
     const BLUE = 'FF1F4E79';
     const LIGHT_BLUE = 'FFDCE6F1';
     const GREEN = 'FFE2EFDA';
@@ -3506,17 +3630,19 @@ export class ReportsService {
     // --- Section 4: asistencia media (P2 denominator fix) ---
     sectionHeader('4. ASISTENCIA MEDIA DEL MES (Decreto 67/2018)');
 
-    // Count working days in the month (Mon-Fri only; calendar not configured)
+    // Count working days in the month (Mon-Fri, excluding holidays/suspended)
     const daysInMonth = to.getDate();
     let schoolDaysMonth = 0;
     for (let d = 1; d <= daysInMonth; d++) {
-      const dow = new Date(to.getFullYear(), to.getMonth(), d).getDay();
-      if (dow !== 0 && dow !== 6) schoolDaysMonth++;
+      const date = new Date(to.getFullYear(), to.getMonth(), d);
+      const dow = date.getDay();
+      const key = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+      if (dow !== 0 && dow !== 6 && !nonSchoolDays?.has(key)) schoolDaysMonth++;
     }
 
     let totalAlumnoDias = 0;
     for (const student of course.students) {
-      const activeDays = this.countActiveSchoolDays(student, from, to);
+      const activeDays = this.countActiveSchoolDays(student, from, to, nonSchoolDays);
       totalAlumnoDias += activeDays;
     }
 

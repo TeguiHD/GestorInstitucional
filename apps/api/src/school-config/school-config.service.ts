@@ -211,8 +211,15 @@ export class SchoolConfigService {
     );
   }
 
-  countActiveSchoolDaysInRanges(student: StudentPeriod, ranges: DateRange[]): number {
-    return ranges.reduce((total, range) => total + this.countActiveSchoolDays(student, range), 0);
+  countActiveSchoolDaysInRanges(
+    student: StudentPeriod,
+    ranges: DateRange[],
+    nonSchoolDays: Set<string> = new Set(),
+  ): number {
+    return ranges.reduce(
+      (total, range) => total + this.countActiveSchoolDays(student, range, nonSchoolDays),
+      0,
+    );
   }
 
   formatDate(date: Date): string {
@@ -377,7 +384,11 @@ export class SchoolConfigService {
     return a >= b ? a : b;
   }
 
-  private countActiveSchoolDays(student: StudentPeriod, range: DateRange): number {
+  private countActiveSchoolDays(
+    student: StudentPeriod,
+    range: DateRange,
+    nonSchoolDays: Set<string> = new Set(),
+  ): number {
     const start = this.startOfDay(
       student.enrolledAt > range.from ? student.enrolledAt : range.from,
     );
@@ -388,7 +399,7 @@ export class SchoolConfigService {
     const cursor = new Date(start);
     while (cursor <= end) {
       const dow = cursor.getDay();
-      if (dow !== 0 && dow !== 6) days++;
+      if (dow !== 0 && dow !== 6 && !nonSchoolDays.has(this.formatDate(cursor))) days++;
       cursor.setDate(cursor.getDate() + 1);
     }
     return days;
