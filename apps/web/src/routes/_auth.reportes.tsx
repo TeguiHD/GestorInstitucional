@@ -13,6 +13,7 @@ import {
   GraduationCap,
   Info,
   LayoutGrid,
+  Printer,
   Users,
   XCircle,
 } from 'lucide-react';
@@ -517,6 +518,7 @@ function ReportsPage() {
           ) : tab === 'planilla' ? (
             <PlanillaTab
               courseId={courseId}
+              courseName={courses?.find((c) => c.id === courseId)?.name ?? ''}
               breakdown={breakdown}
               breakdownLoading={breakdownLoading}
             />
@@ -865,10 +867,12 @@ const MONTH_COLORS = [
 
 function PlanillaTab({
   courseId,
+  courseName,
   breakdown,
   breakdownLoading,
 }: {
   courseId: string;
+  courseName: string;
   breakdown: MonthlyBreakdownData | undefined;
   breakdownLoading: boolean;
 }) {
@@ -933,15 +937,42 @@ function PlanillaTab({
 
   return (
     <div className="space-y-4">
-      <div className="rounded-xl border border-border bg-background overflow-hidden">
-        <div className="px-4 py-3 border-b border-border">
-          <h2 className="text-sm font-semibold flex items-center gap-2">
-            <LayoutGrid className="size-4" />
-            Planilla de asistencia — {breakdown.period.label}
-          </h2>
-          <p className="text-xs text-muted-foreground mt-0.5">
-            Haz clic en un mes para ver el detalle día a día
-          </p>
+      <div className="rounded-xl border border-border bg-background overflow-hidden planilla-print-target">
+        {/* Print-only institutional header */}
+        <div className="print-only print-header">
+          <img src="/logo-cssp.png" alt="" className="print-header-logo" />
+          <div className="print-header-text">
+            <h1>Colegio San Sebastián de la Pintana</h1>
+            <p>Planilla de Asistencia — {breakdown.period.label}</p>
+            <p>Curso: {courseName}</p>
+          </div>
+          <div className="print-header-meta">
+            <strong>{breakdown.period.label}</strong>
+            <span>Emitido: {new Date().toLocaleDateString('es-CL')}</span>
+          </div>
+        </div>
+
+        <div className="px-4 py-3 border-b border-border no-print">
+          <div className="flex items-center justify-between">
+            <div>
+              <h2 className="text-sm font-semibold flex items-center gap-2">
+                <LayoutGrid className="size-4" />
+                Planilla de asistencia — {breakdown.period.label}
+              </h2>
+              <p className="text-xs text-muted-foreground mt-0.5">
+                Haz clic en un mes para ver el detalle día a día
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={() => window.print()}
+              className="flex items-center gap-1.5 rounded-lg border border-border px-3 py-1.5 text-xs font-medium hover:bg-muted transition"
+              title="Imprimir planilla"
+            >
+              <Printer className="size-3.5" />
+              Imprimir
+            </button>
+          </div>
         </div>
 
         <div className="overflow-x-auto">
@@ -1050,12 +1081,35 @@ function PlanillaTab({
           </table>
         </div>
 
-        <div className="px-4 py-2.5 border-t border-border bg-muted/20">
+        <div className="px-4 py-2.5 border-t border-border bg-muted/20 no-print">
           <p className="text-[10px] text-muted-foreground flex items-center gap-1">
             <CheckCircle2 className="size-3 shrink-0" />
             Porcentaje calculado conforme al Decreto 67/2018 MINEDUC. Haz clic en un mes para ver el
             detalle.
           </p>
+        </div>
+
+        {/* Print-only footer */}
+        <div className="print-only print-footer">
+          Porcentaje calculado conforme al Decreto 67/2018 MINEDUC · Asistencia = (Presentes +
+          Atrasos + Justificados) / Días lectivos transcurridos · Documento generado desde
+          plataforma Asistencia CSSP — {new Date().toLocaleDateString('es-CL')}
+        </div>
+
+        {/* Print-only signatures */}
+        <div className="print-only print-signatures" style={{ display: 'none' }}>
+          <div>
+            <hr />
+            Profesor Jefe
+          </div>
+          <div>
+            <hr />
+            Inspectoría
+          </div>
+          <div>
+            <hr />
+            Dirección
+          </div>
         </div>
       </div>
 

@@ -594,3 +594,167 @@ thead .att-grid-sticky-right {
   height: 12px;
   border-radius: 3px;
 }
+
+/* ── Print styles ─────────────────────────────────────────────────── */
+
+.print-only {
+  display: none !important;
+}
+
+@media print {
+  @page {
+    size: landscape;
+    margin: 8mm 10mm;
+  }
+
+  /* Force color printing */
+  * {
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+    color-adjust: exact !important;
+  }
+
+  /* Force light mode for print */
+  :root,
+  :root.dark {
+    --color-background: #ffffff;
+    --color-surface: #f4f4f4;
+    --color-foreground: #1a1a1a;
+    --color-muted: #f4f4f4;
+    --color-muted-foreground: #595959;
+    --color-border: #e5e5e5;
+  }
+
+  /* Hide everything except planilla */
+  body > *:not(#root) {
+    display: none !important;
+  }
+
+  .no-print,
+  nav,
+  aside,
+  header,
+  [data-sidebar],
+  [data-radix-popper-content-wrapper],
+  .sonner-toaster {
+    display: none !important;
+  }
+
+  .print-only {
+    display: block !important;
+  }
+
+  /* Remove shadows, borders from containers */
+  .rounded-xl {
+    border-radius: 0 !important;
+    box-shadow: none !important;
+  }
+
+  /* Compact table for print */
+  .planilla-print-target table {
+    font-size: 9px !important;
+  }
+
+  .planilla-print-target th,
+  .planilla-print-target td {
+    padding: 2px 4px !important;
+  }
+
+  .planilla-print-target th {
+    font-size: 8px !important;
+  }
+
+  /* Keep sticky columns non-sticky in print */
+  .planilla-print-target .sticky {
+    position: static !important;
+  }
+
+  /* Print header */
+  .print-header {
+    display: flex !important;
+    align-items: center;
+    gap: 16px;
+    padding: 0 0 10px;
+    margin-bottom: 8px;
+    border-bottom: 2px solid #1F4E79;
+  }
+
+  .print-header-logo {
+    width: 48px;
+    height: 48px;
+    object-fit: contain;
+  }
+
+  .print-header-text h1 {
+    font-size: 14px;
+    font-weight: 700;
+    color: #1F4E79;
+    margin: 0;
+    text-transform: uppercase;
+  }
+
+  .print-header-text p {
+    font-size: 10px;
+    color: #555;
+    margin: 1px 0 0;
+  }
+
+  .print-header-meta {
+    margin-left: auto;
+    text-align: right;
+    font-size: 9px;
+    color: #666;
+  }
+
+  .print-header-meta strong {
+    display: block;
+    font-size: 11px;
+    color: #1a1a1a;
+  }
+
+  /* Print footer */
+  .print-footer {
+    display: block !important;
+    margin-top: 12px;
+    padding-top: 8px;
+    border-top: 1px solid #e5e5e5;
+    font-size: 7px;
+    color: #999;
+    text-align: center;
+  }
+
+  /* Ensure badges keep color */
+  .planilla-print-target [class*='bg-green'] {
+    background-color: #dcfce7 !important;
+    color: #166534 !important;
+  }
+  .planilla-print-target [class*='bg-amber'] {
+    background-color: #fef3c7 !important;
+    color: #92400e !important;
+  }
+  .planilla-print-target [class*='bg-red'] {
+    background-color: #fecaca !important;
+    color: #991b1b !important;
+  }
+
+  /* Signature block */
+  .print-signatures {
+    display: flex !important;
+    justify-content: space-around;
+    margin-top: 36px;
+    padding-top: 8px;
+  }
+
+  .print-signatures div {
+    text-align: center;
+    font-size: 9px;
+    color: #555;
+  }
+
+  .print-signatures hr {
+    width: 180px;
+    border: none;
+    border-top: 1px solid #1a1a1a;
+    margin: 0 auto 4px;
+  }
+}
