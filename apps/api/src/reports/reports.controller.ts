@@ -100,6 +100,45 @@ export class ReportsController {
     void res.send(buffer);
   }
 
+  @Get('course/:courseId/semester-grid-pdf')
+  @ApiOperation({ summary: 'PDF semestral MINEDUC — landscape A4 con grilla día×alumno por mes' })
+  async getSemesterGridPdf(
+    @Param('courseId') courseId: string,
+    @Query('year', ParseIntPipe) year: number,
+    @Query('semester', ParseIntPipe) semester: number,
+    @CurrentUser() user: JwtPayload,
+    @Res() res: FastifyReply,
+  ) {
+    this.assertYear(year);
+    this.assertSemester(semester);
+    await this.courses.assertAccess(courseId, user);
+    const buffer = await this.reports.generateSemesterGridPdf(courseId, year, semester, user.sub);
+    void res.header('Content-Type', 'application/pdf');
+    void res.header(
+      'Content-Disposition',
+      `attachment; filename="lista-semestral-sem${semester}-${year}.pdf"`,
+    );
+    void res.header('Cache-Control', 'no-store');
+    void res.send(buffer);
+  }
+
+  @Get('course/:courseId/annual-grid-pdf')
+  @ApiOperation({ summary: 'PDF anual MINEDUC — landscape A4 con grilla día×alumno por mes' })
+  async getAnnualGridPdf(
+    @Param('courseId') courseId: string,
+    @Query('year', ParseIntPipe) year: number,
+    @CurrentUser() user: JwtPayload,
+    @Res() res: FastifyReply,
+  ) {
+    this.assertYear(year);
+    await this.courses.assertAccess(courseId, user);
+    const buffer = await this.reports.generateAnnualGridPdf(courseId, year, user.sub);
+    void res.header('Content-Type', 'application/pdf');
+    void res.header('Content-Disposition', `attachment; filename="lista-anual-${year}.pdf"`);
+    void res.header('Cache-Control', 'no-store');
+    void res.send(buffer);
+  }
+
   @Get('course/:courseId/weekly')
   @ApiOperation({ summary: 'Reporte semanal Excel — weekStart en formato YYYY-MM-DD' })
   async getWeeklyExcel(

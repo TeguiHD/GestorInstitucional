@@ -3545,6 +3545,385 @@ export class ReportsService {
   // activeDuringPeriodWhere is defined above (line 1741)
   // Duplicate removed.
 
+  /** Renders one month's MINEDUC grid page(s) into an existing PDFDocument. */
+  private renderMonthGridPage(
+    doc: PDFKit.PDFDocument,
+    course: {
+      school: { name: string };
+      name: string;
+      teachers: Array<{ user: { firstName: string; lastName: string } | null }>;
+      students: Array<{
+        id: string;
+        enrollmentNumber: number;
+        firstName: string;
+        lastName: string;
+        secondLastName: string | null;
+        enrolledAt: Date;
+        withdrawnAt: Date | null;
+      }>;
+    },
+    year: number,
+    month: number,
+    recordMap: Map<string, Map<number, string>>,
+    options?: { isFirstMonth?: boolean },
+  ): void {
+    const daysInMonth = new Date(year, month, 0).getDate();
+    const PAGE_W = 842;
+    const NAV_X = 28;
+    const NUM_W = 22;
+    const NAME_W = 175;
+    const DAY_W = 14.5;
+    const SUM_W = 22;
+    const PCT_W = 38;
+    const TABLE_W = NUM_W + NAME_W + DAY_W * daysInMonth + SUM_W * 4 + PCT_W;
+    const ROW_H = 15;
+    const monthName = MONTH_NAMES_ES[month - 1] ?? '';
+
+    if (!options?.isFirstMonth) doc.addPage();
+
+    const drawHeader = () => {
+      const logoPath =
+        process.env.SCHOOL_LOGO_PATH ?? join(process.cwd(), 'assets', 'logo-cssp.png');
+      if (existsSync(logoPath)) {
+        try {
+          doc.image(logoPath, NAV_X, 22, { fit: [44, 44] });
+        } catch {
+          /* ignore */
+        }
+      }
+      doc
+        .fontSize(13)
+        .fillColor('#1F4E79')
+        .font('Helvetica-Bold')
+        .text(course.school.name.toUpperCase(), NAV_X + 52, 26);
+      doc
+        .fontSize(9)
+        .fillColor('#333')
+        .font('Helvetica')
+        .text('Lista Mensual de Asistencia · Formato MINEDUC', NAV_X + 52, 44);
+      const head = course.teachers[0]?.user;
+      doc
+        .fontSize(8)
+        .fillColor('#666')
+        .text(
+          `Profesor jefe: ${head ? `${head.firstName} ${head.lastName}` : '—'}    ·    Alumnos: ${course.students.length}    ·    Emitido: ${new Date().toLocaleDateString('es-CL')}`,
+          NAV_X + 52,
+          58,
+        );
+      doc
+        .fontSize(11)
+        .fillColor('#000')
+        .font('Helvetica-Bold')
+        .text(`${course.name}  —  ${monthName} ${year}`, PAGE_W - 28 - 220, 30, {
+          width: 220,
+          align: 'right',
+        });
+      doc
+        .moveTo(NAV_X, 76)
+        .lineTo(PAGE_W - NAV_X, 76)
+        .strokeColor('#1F4E79')
+        .lineWidth(1)
+        .stroke();
+    };
+
+    const drawTableHeader = (yPos: number) => {
+      let x = NAV_X;
+      doc.rect(x, yPos, TABLE_W, ROW_H + 12).fill('#1F4E79');
+      doc.fillColor('#fff').font('Helvetica-Bold').fontSize(8);
+      doc.text('Nº', x + 2, yPos + 10, { width: NUM_W - 4, align: 'center' });
+      x += NUM_W;
+      doc.text('Alumno', x + 4, yPos + 10, { width: NAME_W - 6 });
+      x += NAME_W;
+      for (let d = 1; d <= daysInMonth; d++) {
+        const date = new Date(year, month - 1, d);
+        const dow = date.getDay();
+        const isWeekend = dow === 0 || dow === 6;
+        if (isWeekend) doc.rect(x, yPos, DAY_W, ROW_H + 12).fill('#7A8FA0');
+        doc.fillColor('#fff').fontSize(7);
+        doc.text(String(d), x, yPos + 3, { width: DAY_W, align: 'center' });
+        doc.text(DOW_LABELS[dow] ?? '', x, yPos + 14, { width: DAY_W, align: 'center' });
+        x += DAY_W;
+      }
+      doc.fontSize(8);
+      doc.text('P', x, yPos + 10, { width: SUM_W, align: 'center' });
+      x += SUM_W;
+      doc.text('A', x, yPos + 10, { width: SUM_W, align: 'center' });
+      x += SUM_W;
+      doc.text('AT', x, yPos + 10, { width: SUM_W, align: 'center' });
+      x += SUM_W;
+      doc.text('J', x, yPos + 10, { width: SUM_W, align: 'center' });
+      x += SUM_W;
+      doc.text('% Asist.', x, yPos + 10, { width: PCT_W, align: 'center' });
+      return yPos + ROW_H + 12;
+    };
+
+    drawHeader();
+    let y = drawTableHeader(86);
+
+    doc.font('Helvetica').fontSize(7);
+    let totalRate = 0;
+    let totalStudents = 0;
+
+    for (const [i, s] of course.students.entries()) {
+      if (y + ROW_H > 560) {
+        doc.addPage();
+        drawHeader();
+        y = drawTableHeader(86);
+        doc.font('Helvetica').fontSize(7);
+      }
+
+      let x = NAV_X;
+      const band = i % 2 === 0 ? '#F5F8FB' : '#FFFFFF';
+      doc.rect(x, y, TABLE_W, ROW_H).fill(band);
+      doc.fillColor('#000').font('Helvetica').fontSize(7);
+      doc.text(String(s.enrollmentNumber), x + 2, y + 4, { width: NUM_W - 4, align: 'center' });
+      x += NUM_W;
+      const fullName = `${s.lastName}${s.secondLastName ? ' ' + s.secondLastName : ''}, ${s.firstName}`;
+      doc.text(fullName, x + 3, y + 4, { width: NAME_W - 5, ellipsis: true, lineBreak: false });
+      x += NAME_W;
+
+      let p = 0,
+        a = 0,
+        l = 0,
+        j = 0;
+      for (let d = 1; d <= daysInMonth; d++) {
+        const date = new Date(year, month - 1, d);
+        const dow = date.getDay();
+        const isWeekend = dow === 0 || dow === 6;
+        if (isWeekend) {
+          doc.rect(x, y, DAY_W, ROW_H).fill('#E8EDF1');
+        }
+        const sym = this.attendanceSymbolFor(s, date, recordMap.get(s.id)?.get(d));
+        if (sym) {
+          let bg = '#FFFFFF';
+          let fg = '#000';
+          if (sym === '1') {
+            bg = '#16A34A';
+            fg = '#fff';
+            p++;
+          } else if (sym === '0') {
+            bg = '#DC2626';
+            fg = '#fff';
+            a++;
+          } else if (sym === 'AT') {
+            bg = '#EA580C';
+            fg = '#fff';
+            l++;
+          } else if (sym === 'J') {
+            bg = '#FACC15';
+            fg = '#000';
+            j++;
+          }
+          doc.rect(x, y, DAY_W, ROW_H).fill(bg);
+          doc.fillColor(fg).font('Helvetica-Bold').fontSize(6.5);
+          doc.text(sym, x, y + 4.5, { width: DAY_W, align: 'center' });
+          doc.font('Helvetica').fontSize(7);
+        }
+        x += DAY_W;
+      }
+
+      const tot = p + a + l + j;
+      const rate = tot > 0 ? (p + l + j) / tot : 0;
+      if (tot > 0) {
+        totalRate += rate;
+        totalStudents++;
+      }
+
+      doc.fillColor('#000').font('Helvetica');
+      doc.text(String(p), x, y + 4, { width: SUM_W, align: 'center' });
+      x += SUM_W;
+      doc.text(String(a), x, y + 4, { width: SUM_W, align: 'center' });
+      x += SUM_W;
+      doc.text(String(l), x, y + 4, { width: SUM_W, align: 'center' });
+      x += SUM_W;
+      doc.text(String(j), x, y + 4, { width: SUM_W, align: 'center' });
+      x += SUM_W;
+      const rateColor = rate >= 0.9 ? '#15803d' : rate >= 0.7 ? '#b45309' : '#b91c1c';
+      doc.fillColor(rateColor).font('Helvetica-Bold');
+      doc.text(tot > 0 ? `${(rate * 100).toFixed(1)}%` : '—', x, y + 4, {
+        width: PCT_W,
+        align: 'center',
+      });
+      doc.fillColor('#000').font('Helvetica');
+
+      y += ROW_H;
+    }
+
+    const avg = totalStudents > 0 ? totalRate / totalStudents : 0;
+    y += 6;
+    if (y + 60 > 580) {
+      doc.addPage();
+      y = 80;
+    }
+    doc.rect(NAV_X, y, TABLE_W, 22).fill('#DCE6F1');
+    doc.fillColor('#1F4E79').font('Helvetica-Bold').fontSize(10);
+    doc.text(`Asistencia promedio del curso: ${(avg * 100).toFixed(1)}%`, NAV_X + 8, y + 6);
+    y += 36;
+
+    doc.fillColor('#000').font('Helvetica').fontSize(8);
+    doc.text('Leyenda: 1 = Presente  ·  0 = Ausente  ·  AT = Atraso  ·  J = Justificado', NAV_X, y);
+  }
+
+  /** MINEDUC-style semester PDF: one month grid page per month in the semester period. */
+  async generateSemesterGridPdf(
+    courseId: string,
+    year: number,
+    semester: number,
+    requestedById: string,
+  ): Promise<Buffer> {
+    const courseHead = await this.prisma.course.findUniqueOrThrow({
+      where: { id: courseId },
+      select: { schoolId: true },
+    });
+    const semesterNumber = this.toSemesterNumber(semester);
+    const period = await this.schoolConfig.getSemesterPeriod(
+      courseHead.schoolId,
+      year,
+      semesterNumber,
+    );
+    const ranges = period.ranges;
+    const monthRanges = this.schoolConfig.monthsForRanges(ranges);
+
+    const globalFrom = ranges[0]!.from;
+    const globalTo = ranges[ranges.length - 1]!.to;
+
+    const course = await this.prisma.course.findUniqueOrThrow({
+      where: { id: courseId },
+      include: {
+        school: true,
+        teachers: { include: { user: true }, where: { isHead: true }, take: 1 },
+        students: {
+          where: this.schoolConfig.activeDuringRangesWhere(ranges),
+          orderBy: { enrollmentNumber: 'asc' },
+        },
+      },
+    });
+
+    const records = await this.prisma.attendanceRecord.findMany({
+      where: { courseId, date: { gte: globalFrom, lte: globalTo } },
+      select: { studentId: true, date: true, status: true },
+    });
+
+    const SYMBOL: Record<string, string> = {
+      PRESENT: '1',
+      ABSENT: '0',
+      LATE: 'AT',
+      JUSTIFIED: 'J',
+      WITHDRAWN: '-',
+    };
+
+    const doc = new PDFDocument({ size: 'A4', layout: 'landscape', margin: 28 });
+    const chunks: Buffer[] = [];
+    doc.on('data', (c) => chunks.push(c as Buffer));
+    const done = new Promise<void>((resolve) => doc.on('end', () => resolve()));
+
+    for (const [idx, mr] of monthRanges.entries()) {
+      const monthFrom = mr.from;
+      const monthTo = mr.to;
+      const recordMap = new Map<string, Map<number, string>>();
+      for (const r of records) {
+        const rDate = r.date;
+        if (rDate < monthFrom || rDate > monthTo) continue;
+        const day = rDate.getUTCDate();
+        if (!recordMap.has(r.studentId)) recordMap.set(r.studentId, new Map());
+        recordMap.get(r.studentId)!.set(day, SYMBOL[r.status] ?? '-');
+      }
+      this.renderMonthGridPage(doc, course, monthFrom.getFullYear(), mr.month, recordMap, {
+        isFirstMonth: idx === 0,
+      });
+    }
+
+    doc.end();
+    await done;
+
+    await this.audit.log({
+      userId: requestedById,
+      action: 'EXPORT',
+      entity: 'Course',
+      entityId: courseId,
+      meta: { year, semester, format: 'semester_grid_pdf' },
+    });
+
+    return Buffer.concat(chunks);
+  }
+
+  /** MINEDUC-style annual PDF: one month grid page per month in the annual period. */
+  async generateAnnualGridPdf(
+    courseId: string,
+    year: number,
+    requestedById: string,
+  ): Promise<Buffer> {
+    const courseHead = await this.prisma.course.findUniqueOrThrow({
+      where: { id: courseId },
+      select: { schoolId: true },
+    });
+    const period = await this.schoolConfig.getAnnualPeriod(courseHead.schoolId, year);
+    const ranges = period.ranges;
+    const monthRanges = this.schoolConfig.monthsForRanges(ranges);
+
+    const globalFrom = ranges[0]!.from;
+    const globalTo = ranges[ranges.length - 1]!.to;
+
+    const course = await this.prisma.course.findUniqueOrThrow({
+      where: { id: courseId },
+      include: {
+        school: true,
+        teachers: { include: { user: true }, where: { isHead: true }, take: 1 },
+        students: {
+          where: this.schoolConfig.activeDuringRangesWhere(ranges),
+          orderBy: { enrollmentNumber: 'asc' },
+        },
+      },
+    });
+
+    const records = await this.prisma.attendanceRecord.findMany({
+      where: { courseId, date: { gte: globalFrom, lte: globalTo } },
+      select: { studentId: true, date: true, status: true },
+    });
+
+    const SYMBOL: Record<string, string> = {
+      PRESENT: '1',
+      ABSENT: '0',
+      LATE: 'AT',
+      JUSTIFIED: 'J',
+      WITHDRAWN: '-',
+    };
+
+    const doc = new PDFDocument({ size: 'A4', layout: 'landscape', margin: 28 });
+    const chunks: Buffer[] = [];
+    doc.on('data', (c) => chunks.push(c as Buffer));
+    const done = new Promise<void>((resolve) => doc.on('end', () => resolve()));
+
+    for (const [idx, mr] of monthRanges.entries()) {
+      const monthFrom = mr.from;
+      const monthTo = mr.to;
+      const recordMap = new Map<string, Map<number, string>>();
+      for (const r of records) {
+        const rDate = r.date;
+        if (rDate < monthFrom || rDate > monthTo) continue;
+        const day = rDate.getUTCDate();
+        if (!recordMap.has(r.studentId)) recordMap.set(r.studentId, new Map());
+        recordMap.get(r.studentId)!.set(day, SYMBOL[r.status] ?? '-');
+      }
+      this.renderMonthGridPage(doc, course, monthFrom.getFullYear(), mr.month, recordMap, {
+        isFirstMonth: idx === 0,
+      });
+    }
+
+    doc.end();
+    await done;
+
+    await this.audit.log({
+      userId: requestedById,
+      action: 'EXPORT',
+      entity: 'Course',
+      entityId: courseId,
+      meta: { year, format: 'annual_grid_pdf' },
+    });
+
+    return Buffer.concat(chunks);
+  }
+
   private attendanceSymbolFor(
     student: { enrolledAt: Date; withdrawnAt: Date | null },
     date: Date,

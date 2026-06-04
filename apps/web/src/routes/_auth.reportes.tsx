@@ -5,6 +5,7 @@ import {
   CalendarDays,
   CheckCircle2,
   ChevronDown,
+  ChevronLeft,
   ChevronRight,
   Download,
   FileSpreadsheet,
@@ -92,6 +93,29 @@ type AcademicYearConfig = {
 const JUNE_LAST_DAY = 18;
 const CRITICAL_THRESHOLD = 0.85;
 
+function snapToMonday(date: Date): string {
+  const d = new Date(date);
+  const day = d.getDay();
+  const diff = day === 0 ? -6 : 1 - day;
+  d.setDate(d.getDate() + diff);
+  return d.toISOString().split('T')[0]!;
+}
+
+function formatWeekLabel(mondayIso: string): string {
+  const mon = new Date(mondayIso + 'T12:00:00');
+  const fri = new Date(mon);
+  fri.setDate(fri.getDate() + 4);
+  const fmt = (d: Date) =>
+    d.toLocaleDateString('es-CL', { weekday: 'short', day: '2-digit', month: 'short' });
+  return `${fmt(mon)} – ${fmt(fri)} ${fri.getFullYear()}`;
+}
+
+function shiftWeek(mondayIso: string, delta: number): string {
+  const d = new Date(mondayIso + 'T12:00:00');
+  d.setDate(d.getDate() + delta * 7);
+  return d.toISOString().split('T')[0]!;
+}
+
 const MONTH_NAMES = [
   'Enero',
   'Febrero',
@@ -155,11 +179,7 @@ function ReportsPage() {
   const [month, setMonth] = useState(today.getMonth() + 1);
   const [semester, setSemester] = useState(today.getMonth() < 6 ? 1 : 2);
   const [periodType, setPeriodType] = useState<PeriodType>('mensual');
-  const [weekStart, setWeekStart] = useState(() => {
-    const d = new Date();
-    d.setDate(d.getDate() - d.getDay() + 1);
-    return d.toISOString().split('T')[0]!;
-  });
+  const [weekStart, setWeekStart] = useState(() => snapToMonday(new Date()));
   const [loading, setLoading] = useState<string | null>(null);
 
   const { data: courses } = useQuery<Course[]>({
@@ -1273,21 +1293,34 @@ function ExportarTab({
               Semanal
             </h3>
             <div className="space-y-2">
-              <div>
-                <label className="text-[10px] text-muted-foreground block mb-1">
-                  Semana desde (lunes)
-                </label>
-                <input
-                  type="date"
-                  value={weekStart}
-                  onChange={(e) => setWeekStart(e.target.value)}
-                  className="w-full rounded-lg border border-border px-2 py-1.5 text-xs bg-background"
-                />
+              <div className="flex items-center gap-1">
+                <button
+                  type="button"
+                  onClick={() => setWeekStart(shiftWeek(weekStart, -1))}
+                  className="rounded-md border border-border p-1.5 hover:bg-muted transition"
+                  title="Semana anterior"
+                >
+                  <ChevronLeft className="size-3.5" />
+                </button>
+                <span
+                  className="flex-1 text-center text-xs font-medium truncate px-1"
+                  title={formatWeekLabel(weekStart)}
+                >
+                  {formatWeekLabel(weekStart)}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setWeekStart(shiftWeek(weekStart, 1))}
+                  className="rounded-md border border-border p-1.5 hover:bg-muted transition"
+                  title="Semana siguiente"
+                >
+                  <ChevronRight className="size-3.5" />
+                </button>
               </div>
               <ExportButton
                 icon={FileSpreadsheet}
                 label="Excel"
-                sublabel={`Semana ${weekStart}`}
+                sublabel={formatWeekLabel(weekStart)}
                 onClick={() =>
                   download(
                     'weekly',
@@ -1391,6 +1424,19 @@ function ExportarTab({
               }
               loading={loading === 'sem-pdf'}
             />
+            <ExportButton
+              icon={FileText}
+              label="PDF MINEDUC"
+              sublabel="Lista oficial día×alumno"
+              onClick={() =>
+                download(
+                  'sem-grid-pdf',
+                  `/reports/course/${courseId}/semester-grid-pdf?year=${year}&semester=${semester}`,
+                  `lista-semestral-sem${semester}-${year}-${courseLabel}.pdf`,
+                )
+              }
+              loading={loading === 'sem-grid-pdf'}
+            />
           </div>
 
           <div className="space-y-2">
@@ -1428,6 +1474,19 @@ function ExportarTab({
                 )
               }
               loading={loading === 'annual-pdf'}
+            />
+            <ExportButton
+              icon={FileText}
+              label="PDF MINEDUC"
+              sublabel="Lista oficial día×alumno"
+              onClick={() =>
+                download(
+                  'annual-grid-pdf',
+                  `/reports/course/${courseId}/annual-grid-pdf?year=${year}`,
+                  `lista-anual-${year}-${courseLabel}.pdf`,
+                )
+              }
+              loading={loading === 'annual-grid-pdf'}
             />
           </div>
         </div>
