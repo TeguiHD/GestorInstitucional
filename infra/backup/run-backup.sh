@@ -19,23 +19,23 @@ mkdir -p "$BACKUP_DIR"
 DATE=$(date +%Y-%m-%d)
 FILE_NAME="backup_asistencia_${DATE}.sql"
 SQL_PATH="${BACKUP_DIR}/${FILE_NAME}"
-GZ_PATH="${SQL_PATH}.gz"
+ZIP_PATH="${SQL_PATH}.zip"
 
 echo "[$(date)] Iniciando backup de la base de datos..."
 
 # Dump database using docker exec
 docker exec asistencia_db mariadb-dump -u "${DB_USER:-asistencia_app}" -p"${DB_PASSWORD}" "${DB_NAME:-asistencia}" > "$SQL_PATH"
 
-# Compress
-gzip -f "$SQL_PATH"
+# Compress to ZIP and delete original SQL
+zip -j -m "$ZIP_PATH" "$SQL_PATH"
 
-echo "[$(date)] Backup comprimido: $GZ_PATH"
+echo "[$(date)] Backup comprimido: $ZIP_PATH"
 
 # Send email
-node "$DIR/send-backup.js" "$GZ_PATH"
+node "$DIR/send-backup.js" "$ZIP_PATH"
 
 # Purge backups older than 30 days
 echo "[$(date)] Purgando backups de más de 30 días..."
-find "$BACKUP_DIR" -type f -name "backup_asistencia_*.sql.gz" -mtime +30 -delete
+find "$BACKUP_DIR" -type f -name "backup_asistencia_*.sql.zip" -mtime +30 -delete
 
 echo "[$(date)] Proceso de backup finalizado."
