@@ -373,7 +373,7 @@ function ReportsPage() {
 
   return (
     <div className="max-w-5xl space-y-4 overflow-hidden">
-      <div>
+      <div className="no-print">
         <h1 className="text-2xl font-bold tracking-tight">Reportes</h1>
         <p className="text-sm text-muted-foreground">
           Consulta y exporta la asistencia de tus cursos
@@ -388,7 +388,7 @@ function ReportsPage() {
         />
       ) : (
         <>
-          <div className="rounded-xl border border-border bg-background p-4 space-y-3">
+          <div className="rounded-xl border border-border bg-background p-4 space-y-3 no-print">
             <div>
               <label className="text-xs text-muted-foreground block mb-1.5">Curso</label>
               <select
@@ -474,7 +474,7 @@ function ReportsPage() {
             </div>
           </div>
 
-          <div className="flex gap-1 overflow-x-auto border-b border-border">
+          <div className="flex gap-1 overflow-x-auto border-b border-border no-print">
             {tabs.map(({ id, label, Icon, disabled }) => (
               <button
                 key={id}

@@ -614,7 +614,7 @@ thead .att-grid-sticky-right {
     color-adjust: exact !important;
   }
 
-  /* Force light mode for print */
+  /* Force light mode */
   :root,
   :root.dark {
     --color-background: #ffffff;
@@ -622,21 +622,20 @@ thead .att-grid-sticky-right {
     --color-foreground: #1a1a1a;
     --color-muted: #f4f4f4;
     --color-muted-foreground: #595959;
-    --color-border: #e5e5e5;
+    --color-border: #d4d4d4;
   }
 
-  /* Hide everything except planilla */
-  body > *:not(#root) {
-    display: none !important;
-  }
-
-  .no-print,
-  nav,
+  /* ─── Nuclear hide: everything that isn't the planilla ─── */
   aside,
   header,
+  nav,
   [data-sidebar],
   [data-radix-popper-content-wrapper],
   .sonner-toaster {
+    display: none !important;
+  }
+
+  .no-print {
     display: none !important;
   }
 
@@ -644,57 +643,91 @@ thead .att-grid-sticky-right {
     display: block !important;
   }
 
-  /* Remove shadows, borders from containers */
-  .rounded-xl {
+  /* Reset layout: remove flex containers, padding, overflow constraints */
+  html, body, #root {
+    height: auto !important;
+    overflow: visible !important;
+  }
+
+  body {
+    background: white !important;
+  }
+
+  /* The main flex wrapper — make it block, no overflow */
+  #root > div {
+    display: block !important;
+    height: auto !important;
+    overflow: visible !important;
+  }
+
+  /* Main content area — remove padding, scrolling */
+  main {
+    overflow: visible !important;
+    padding: 0 !important;
+    height: auto !important;
+  }
+
+  /* ─── Style the planilla container ─── */
+  .planilla-print-target {
+    border: none !important;
     border-radius: 0 !important;
     box-shadow: none !important;
+    overflow: visible !important;
   }
 
   /* Compact table for print */
   .planilla-print-target table {
-    font-size: 9px !important;
+    font-size: 10px !important;
+    width: 100% !important;
+    min-width: 0 !important;
   }
 
   .planilla-print-target th,
   .planilla-print-target td {
-    padding: 2px 4px !important;
+    padding: 3px 5px !important;
   }
 
   .planilla-print-target th {
-    font-size: 8px !important;
+    font-size: 9px !important;
   }
 
-  /* Keep sticky columns non-sticky in print */
+  /* Un-sticky columns in print (sticky doesn't work in print) */
   .planilla-print-target .sticky {
     position: static !important;
   }
 
-  /* Print header */
+  /* Remove horizontal scroll wrapper */
+  .planilla-print-target .overflow-x-auto {
+    overflow: visible !important;
+  }
+
+  /* ─── Print header ─── */
   .print-header {
     display: flex !important;
     align-items: center;
-    gap: 16px;
+    gap: 14px;
     padding: 0 0 10px;
-    margin-bottom: 8px;
-    border-bottom: 2px solid #1F4E79;
+    margin-bottom: 6px;
+    border-bottom: 2.5px solid #1F4E79;
   }
 
   .print-header-logo {
-    width: 48px;
-    height: 48px;
+    width: 44px;
+    height: 44px;
     object-fit: contain;
   }
 
   .print-header-text h1 {
-    font-size: 14px;
+    font-size: 13px;
     font-weight: 700;
     color: #1F4E79;
     margin: 0;
     text-transform: uppercase;
+    letter-spacing: 0.02em;
   }
 
   .print-header-text p {
-    font-size: 10px;
+    font-size: 9px;
     color: #555;
     margin: 1px 0 0;
   }
@@ -702,28 +735,29 @@ thead .att-grid-sticky-right {
   .print-header-meta {
     margin-left: auto;
     text-align: right;
-    font-size: 9px;
+    font-size: 8px;
     color: #666;
+    line-height: 1.4;
   }
 
   .print-header-meta strong {
     display: block;
-    font-size: 11px;
+    font-size: 10px;
     color: #1a1a1a;
   }
 
-  /* Print footer */
+  /* ─── Print footer ─── */
   .print-footer {
     display: block !important;
-    margin-top: 12px;
-    padding-top: 8px;
-    border-top: 1px solid #e5e5e5;
+    margin-top: 10px;
+    padding-top: 6px;
+    border-top: 1px solid #d4d4d4;
     font-size: 7px;
     color: #999;
     text-align: center;
   }
 
-  /* Ensure badges keep color */
+  /* ─── Badges: force color preservation ─── */
   .planilla-print-target [class*='bg-green'] {
     background-color: #dcfce7 !important;
     color: #166534 !important;
@@ -733,28 +767,63 @@ thead .att-grid-sticky-right {
     color: #92400e !important;
   }
   .planilla-print-target [class*='bg-red'] {
-    background-color: #fecaca !important;
+    background-color: #fee2e2 !important;
     color: #991b1b !important;
   }
+  .planilla-print-target [class*='bg-emerald'] {
+    background-color: #d1fae5 !important;
+    color: #065f46 !important;
+  }
+  .planilla-print-target [class*='bg-violet'] {
+    background-color: #ede9fe !important;
+    color: #5b21b6 !important;
+  }
+  .planilla-print-target [class*='bg-cyan'] {
+    background-color: #cffafe !important;
+    color: #155e75 !important;
+  }
+  .planilla-print-target [class*='bg-rose'] {
+    background-color: #ffe4e6 !important;
+    color: #9f1239 !important;
+  }
+  .planilla-print-target [class*='bg-blue'] {
+    background-color: #dbeafe !important;
+    color: #1e40af !important;
+  }
+  /* Dark mode badge overrides */
+  .planilla-print-target [class*='dark:bg-'] {
+    background-color: transparent !important;
+  }
 
-  /* Signature block */
+  /* ─── Signature block ─── */
   .print-signatures {
     display: flex !important;
     justify-content: space-around;
-    margin-top: 36px;
-    padding-top: 8px;
+    margin-top: 32px;
+    padding-top: 6px;
   }
 
   .print-signatures div {
     text-align: center;
-    font-size: 9px;
+    font-size: 8px;
     color: #555;
   }
 
   .print-signatures hr {
-    width: 180px;
+    width: 160px;
     border: none;
-    border-top: 1px solid #1a1a1a;
-    margin: 0 auto 4px;
+    border-top: 1px solid #333;
+    margin: 0 auto 3px;
+  }
+
+  /* ─── Critical row highlight in print ─── */
+  .planilla-print-target tr[class*='bg-red'] {
+    background-color: #fff1f2 !important;
+  }
+
+  /* ─── Month column headers ─── */
+  .planilla-print-target th[class*='bg-muted'] {
+    background-color: #f5f5f5 !important;
   }
 }
+
