@@ -754,14 +754,16 @@ function StatusReviewModal({
     enabled: !!request && !request.initialMatrix && request.months.length > 0,
   });
 
-  if (!request) return null;
+  const matrices = request
+    ? request.initialMatrix
+      ? [request.initialMatrix]
+      : (fetchedMatrices ?? [])
+    : [];
+  const dates = request ? statusDatesForStudent(matrices, request.studentId, request.status) : [];
+  const cfg = request ? STATUS_REVIEW_LABELS[request.status] : STATUS_REVIEW_LABELS.ABSENT;
 
-  const matrices = request.initialMatrix ? [request.initialMatrix] : (fetchedMatrices ?? []);
-  const dates = statusDatesForStudent(matrices, request.studentId, request.status);
-  const cfg = STATUS_REVIEW_LABELS[request.status];
-
-  // Group dates by month
-  const grouped = useMemo(() => {
+  // Group dates by month (no useMemo — dates ref changes each render)
+  const grouped = (() => {
     const map = new Map<string, string[]>();
     for (const d of dates) {
       const key = d.slice(0, 7); // YYYY-MM
@@ -769,7 +771,9 @@ function StatusReviewModal({
       map.get(key)!.push(d);
     }
     return Array.from(map.entries()).sort(([a], [b]) => a.localeCompare(b));
-  }, [dates]);
+  })();
+
+  if (!request) return null;
 
   const toggleMonth = (key: string) => {
     setCollapsed((prev) => {
@@ -985,16 +989,6 @@ function ResumenTab({
     }
   };
 
-  if (!courseId) {
-    return (
-      <EmptyState
-        icon={Users}
-        title="Selecciona un curso"
-        description="Elige un curso para ver el resumen de asistencia."
-      />
-    );
-  }
-
   const isLoading = isMonthly ? matrixLoading : summaryLoading;
   const rawStudents = isMonthly ? sortedStudents : sortedSummaryStudents;
   const avg = isMonthly ? avgRate : avgSummaryRate;
@@ -1035,6 +1029,16 @@ function ResumenTab({
     });
     return arr;
   }, [filtered, sortKey, sortDir]);
+
+  if (!courseId) {
+    return (
+      <EmptyState
+        icon={Users}
+        title="Selecciona un curso"
+        description="Elige un curso para ver el resumen de asistencia."
+      />
+    );
+  }
 
   if (isLoading) {
     return (
