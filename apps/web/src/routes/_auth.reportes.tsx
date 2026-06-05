@@ -2,6 +2,9 @@ import { createFileRoute } from '@tanstack/react-router';
 import { useQuery } from '@tanstack/react-query';
 import {
   AlertTriangle,
+  ArrowDown,
+  ArrowUp,
+  ArrowUpDown,
   CalendarDays,
   CheckCircle2,
   ChevronDown,
@@ -14,10 +17,11 @@ import {
   Info,
   LayoutGrid,
   Printer,
+  Search,
   Users,
   XCircle,
 } from 'lucide-react';
-import { useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { toast } from 'sonner';
 
 import { api, downloadBlob } from '@/lib/api';
@@ -28,7 +32,6 @@ import { SearchableSelect } from '@/components/ui/SearchableSelect';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { useEffectiveSchoolId } from '@/stores/school.store';
 import {
-  attendedDays,
   manualFormulaText,
   statusDatesForStudent,
   totalClasses,
@@ -670,15 +673,6 @@ function RateBadge({ rate }: { rate: number | null }) {
   );
 }
 
-function formatReviewDate(date: string): string {
-  return new Date(`${date}T12:00:00`).toLocaleDateString('es-CL', {
-    weekday: 'long',
-    day: '2-digit',
-    month: 'long',
-    year: 'numeric',
-  });
-}
-
 function isReviewableStatus(status: string | undefined): status is ReviewableAttendanceStatus {
   return status === 'ABSENT' || status === 'LATE' || status === 'JUSTIFIED';
 }
@@ -721,16 +715,15 @@ function StatusCountButton({
   return (
     <button
       type="button"
-      onDoubleClick={(event) => {
-        event.preventDefault();
-        onOpen();
-      }}
+      onClick={onOpen}
       className={cn(
-        'rounded px-1.5 py-0.5 tabular-nums transition hover:bg-muted focus:outline-none focus:ring-2 focus:ring-primary/40',
+        'rounded px-1.5 py-0.5 tabular-nums transition',
+        'underline decoration-dotted underline-offset-2 cursor-pointer',
+        'hover:bg-muted focus:outline-none focus:ring-2 focus:ring-primary/40',
         STATUS_REVIEW_LABELS[status].text,
         className,
       )}
-      title={`Doble clic para revisar ${STATUS_REVIEW_LABELS[status].label.toLowerCase()}`}
+      title={`Ver ${STATUS_REVIEW_LABELS[status].label.toLowerCase()}`}
       aria-label={`Revisar ${STATUS_REVIEW_LABELS[status].label.toLowerCase()}`}
     >
       {value}
@@ -745,6 +738,7 @@ function StatusReviewModal({
   request: StatusReviewRequest | null;
   onClose: () => void;
 }) {
+  const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
   const { data: fetchedMatrices, isLoading } = useQuery<MatrixData[]>({
     queryKey: ['status-review-matrices', request?.courseId, request?.studentId, request?.months],
     queryFn: async () => {
@@ -765,6 +759,38 @@ function StatusReviewModal({
   const matrices = request.initialMatrix ? [request.initialMatrix] : (fetchedMatrices ?? []);
   const dates = statusDatesForStudent(matrices, request.studentId, request.status);
   const cfg = STATUS_REVIEW_LABELS[request.status];
+
+  // Group dates by month
+  const grouped = useMemo(() => {
+    const map = new Map<string, string[]>();
+    for (const d of dates) {
+      const key = d.slice(0, 7); // YYYY-MM
+      if (!map.has(key)) map.set(key, []);
+      map.get(key)!.push(d);
+    }
+    return Array.from(map.entries()).sort(([a], [b]) => a.localeCompare(b));
+  }, [dates]);
+
+  const toggleMonth = (key: string) => {
+    setCollapsed((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  };
+
+  const formatMonthHeader = (key: string) => {
+    const [y, m] = key.split('-');
+    return `${MONTH_NAMES[Number(m) - 1]} ${y}`;
+  };
+
+  const formatDayCompact = (date: string) => {
+    const d = new Date(`${date}T12:00:00`);
+    const weekday = d.toLocaleDateString('es-CL', { weekday: 'short' });
+    const day = d.getDate().toString().padStart(2, '0');
+    return `${weekday.charAt(0).toUpperCase()}${weekday.slice(1)} ${day}`;
+  };
 
   return (
     <div
@@ -801,21 +827,59 @@ function StatusReviewModal({
               {cfg.short}
             </span>
             <span className="text-xs text-muted-foreground tabular-nums">
-              Total: {isLoading ? '…' : dates.length}
+              Total: {isLoading ? '…' : dates.length} {dates.length === 1 ? 'día' : 'días'}
             </span>
           </div>
-          <div className="mt-4 max-h-72 overflow-y-auto rounded-lg border border-border">
+          <div className="mt-4 max-h-80 overflow-y-auto rounded-lg border border-border">
             {isLoading ? (
               <div className="p-4 text-sm text-muted-foreground">Cargando fechas…</div>
-            ) : dates.length > 0 ? (
-              <ul className="divide-y divide-border">
-                {dates.map((date) => (
-                  <li key={date} className="flex items-center justify-between px-4 py-2 text-sm">
-                    <span>{formatReviewDate(date)}</span>
-                    <span className="text-xs text-muted-foreground">{date}</span>
-                  </li>
-                ))}
-              </ul>
+            ) : grouped.length > 0 ? (
+              <div className="divide-y divide-border">
+                {grouped.map(([monthKey, monthDates]) => {
+                  const isCollapsed = collapsed.has(monthKey);
+                  return (
+                    <div key={monthKey}>
+                      <button
+                        type="button"
+                        onClick={() => toggleMonth(monthKey)}
+                        className="flex w-full items-center justify-between px-4 py-2.5 text-xs font-semibold bg-muted/30 hover:bg-muted/50 transition"
+                      >
+                        <span className="flex items-center gap-1.5">
+                          {isCollapsed ? (
+                            <ChevronRight className="size-3.5" />
+                          ) : (
+                            <ChevronDown className="size-3.5" />
+                          )}
+                          {formatMonthHeader(monthKey)}
+                        </span>
+                        <span
+                          className={cn(
+                            'rounded-full px-1.5 py-0.5 text-[10px] font-semibold tabular-nums',
+                            cfg.badge,
+                          )}
+                        >
+                          {monthDates.length}
+                        </span>
+                      </button>
+                      {!isCollapsed && (
+                        <ul className="divide-y divide-border/50">
+                          {monthDates.map((date) => (
+                            <li
+                              key={date}
+                              className="flex items-center justify-between px-4 pl-8 py-1.5 text-sm"
+                            >
+                              <span className="text-foreground">{formatDayCompact(date)}</span>
+                              <span className="text-[10px] text-muted-foreground tabular-nums">
+                                {date}
+                              </span>
+                            </li>
+                          ))}
+                        </ul>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
             ) : (
               <div className="p-4 text-sm text-muted-foreground">
                 No hay fechas para este estado en el período seleccionado.
@@ -868,6 +932,13 @@ function ResumenTab({
   belowSummaryCritical: number;
 }) {
   const [review, setReview] = useState<StatusReviewRequest | null>(null);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [sortKey, setSortKey] = useState<
+    'num' | 'name' | 'present' | 'absent' | 'late' | 'justified' | 'classes' | 'rate'
+  >('rate');
+  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc');
+  const searchRef = useRef<HTMLInputElement>(null);
+
   const isMonthly = periodType === 'mensual';
   const periodLabel = isMonthly
     ? `${MONTH_NAMES[month - 1]} ${year}`
@@ -893,6 +964,27 @@ function ResumenTab({
     });
   };
 
+  // Keyboard shortcut: Ctrl+F focuses search
+  const handleGlobalKeyDown = useCallback((e: KeyboardEvent) => {
+    if ((e.ctrlKey || e.metaKey) && e.key === 'f' && searchRef.current) {
+      e.preventDefault();
+      searchRef.current.focus();
+    }
+  }, []);
+
+  useEffect(() => {
+    document.addEventListener('keydown', handleGlobalKeyDown);
+    return () => document.removeEventListener('keydown', handleGlobalKeyDown);
+  }, [handleGlobalKeyDown]);
+
+  const toggleSort = (key: typeof sortKey) => {
+    if (sortKey === key) setSortDir((d) => (d === 'asc' ? 'desc' : 'asc'));
+    else {
+      setSortKey(key);
+      setSortDir('asc');
+    }
+  };
+
   if (!courseId) {
     return (
       <EmptyState
@@ -904,9 +996,45 @@ function ResumenTab({
   }
 
   const isLoading = isMonthly ? matrixLoading : summaryLoading;
-  const students = isMonthly ? sortedStudents : sortedSummaryStudents;
+  const rawStudents = isMonthly ? sortedStudents : sortedSummaryStudents;
   const avg = isMonthly ? avgRate : avgSummaryRate;
   const below = isMonthly ? belowCritical : belowSummaryCritical;
+
+  // Filter by search
+  const filtered = useMemo(() => {
+    if (!searchQuery.trim()) return rawStudents;
+    const q = searchQuery.toLowerCase().trim();
+    return rawStudents.filter((s) => formatStudentFullName(s).toLowerCase().includes(q));
+  }, [rawStudents, searchQuery]);
+
+  // Sort
+  const students = useMemo(() => {
+    const arr = [...filtered];
+    const dir = sortDir === 'asc' ? 1 : -1;
+    arr.sort((a, b) => {
+      switch (sortKey) {
+        case 'num':
+          return dir * (a.enrollmentNumber - b.enrollmentNumber);
+        case 'name':
+          return dir * formatStudentFullName(a).localeCompare(formatStudentFullName(b));
+        case 'present':
+          return dir * (a.present - b.present);
+        case 'absent':
+          return dir * (a.absent - b.absent);
+        case 'late':
+          return dir * (a.late - b.late);
+        case 'justified':
+          return dir * (a.justified - b.justified);
+        case 'classes':
+          return dir * (totalClasses(a) - totalClasses(b));
+        case 'rate':
+          return dir * ((a.rate ?? -1) - (b.rate ?? -1));
+        default:
+          return 0;
+      }
+    });
+    return arr;
+  }, [filtered, sortKey, sortDir]);
 
   if (isLoading) {
     return (
@@ -917,7 +1045,7 @@ function ResumenTab({
     );
   }
 
-  if (students.length === 0) {
+  if (rawStudents.length === 0) {
     return (
       <div className="rounded-xl border border-border bg-background p-10 text-center">
         <Users className="size-10 text-muted-foreground/30 mx-auto mb-3" />
@@ -929,9 +1057,6 @@ function ResumenTab({
   }
 
   const showJuneBanner = isMonthly && month === 6;
-  const denominatorLabel = isMonthly
-    ? 'Total clases'
-    : 'Total días lectivos configurados con matrícula activa';
   const showIncompleteBanner =
     !isMonthly &&
     sortedSummaryStudents.length > 0 &&
@@ -939,6 +1064,37 @@ function ResumenTab({
 
   const avgColor =
     avg == null ? 'muted' : avg >= 0.9 ? 'green' : avg >= CRITICAL_THRESHOLD ? 'amber' : 'red';
+
+  const SortHeader = ({
+    col,
+    label,
+    align = 'center',
+  }: {
+    col: typeof sortKey;
+    label: string;
+    align?: 'left' | 'center' | 'right';
+  }) => (
+    <th
+      className={cn(
+        'px-3 py-2.5 cursor-pointer select-none hover:bg-muted/30 transition',
+        align === 'left' ? 'text-left' : align === 'right' ? 'text-right' : 'text-center',
+      )}
+      onClick={() => toggleSort(col)}
+    >
+      <span className="inline-flex items-center gap-0.5">
+        {label}
+        {sortKey === col ? (
+          sortDir === 'asc' ? (
+            <ArrowUp className="size-3" />
+          ) : (
+            <ArrowDown className="size-3" />
+          )
+        ) : (
+          <ArrowUpDown className="size-2.5 opacity-30" />
+        )}
+      </span>
+    </th>
+  );
 
   return (
     <>
@@ -974,41 +1130,61 @@ function ResumenTab({
             color={below > 0 ? 'red' : 'green'}
             sub="alumnos críticos"
           />
-          <KpiCard label="Total alumnos" value={String(students.length)} color="muted" />
+          <KpiCard label="Total alumnos" value={String(rawStudents.length)} color="muted" />
         </div>
 
         <div className="rounded-xl border border-border bg-background overflow-hidden">
           <div className="px-4 py-3 border-b border-border">
-            <h2 className="text-sm font-semibold flex items-center gap-2">
-              <Users className="size-4" />
-              Lista de asistencia — {periodLabel}
-            </h2>
-            <p className="text-xs text-muted-foreground mt-0.5">
-              {periodDetail
-                ? `${periodDetail}. Alumnos bajo ${CRITICAL_THRESHOLD * 100}% destacados en rojo`
-                : `Alumnos bajo ${CRITICAL_THRESHOLD * 100}% destacados en rojo`}
-            </p>
+            <div className="flex items-center justify-between gap-3">
+              <div className="min-w-0">
+                <h2 className="text-sm font-semibold flex items-center gap-2">
+                  <Users className="size-4" />
+                  Lista de asistencia — {periodLabel}
+                </h2>
+                <p className="text-xs text-muted-foreground mt-0.5">
+                  {periodDetail
+                    ? `${periodDetail}. Bajo ${CRITICAL_THRESHOLD * 100}% en rojo`
+                    : `Bajo ${CRITICAL_THRESHOLD * 100}% en rojo`}
+                </p>
+              </div>
+              <div className="relative w-48 shrink-0">
+                <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 size-3.5 text-muted-foreground pointer-events-none" />
+                <input
+                  ref={searchRef}
+                  type="text"
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  placeholder="Buscar alumno…"
+                  className="w-full rounded-lg border border-border bg-background pl-8 pr-3 py-1.5 text-xs placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/30"
+                />
+                {searchQuery && (
+                  <span className="absolute right-2.5 top-1/2 -translate-y-1/2 text-[10px] text-muted-foreground tabular-nums">
+                    {students.length}/{rawStudents.length}
+                  </span>
+                )}
+              </div>
+            </div>
           </div>
 
+          {/* Desktop table */}
           <div className="hidden sm:block overflow-x-auto">
             <table className="w-full text-sm">
               <thead>
                 <tr className="bg-muted/50 text-xs text-muted-foreground uppercase tracking-wide border-b border-border">
-                  <th className="text-left px-4 py-2.5">#</th>
-                  <th className="text-left px-4 py-2.5">Alumno</th>
-                  <th className="text-center px-3 py-2.5">Pres.</th>
-                  <th className="text-center px-3 py-2.5">Aus.</th>
-                  <th className="hidden md:table-cell text-center px-3 py-2.5">Atrasos</th>
-                  <th className="hidden md:table-cell text-center px-3 py-2.5">Justif.</th>
-                  <th className="hidden lg:table-cell text-center px-3 py-2.5">Asist.</th>
-                  <th className="text-center px-3 py-2.5">Total clases</th>
-                  <th className="hidden lg:table-cell text-center px-3 py-2.5">Sin reg.</th>
-                  <th className="text-right px-4 py-2.5">%</th>
+                  <SortHeader col="num" label="#" align="left" />
+                  <SortHeader col="name" label="Alumno" align="left" />
+                  <SortHeader col="present" label="Pres." />
+                  <SortHeader col="absent" label="Aus." />
+                  <SortHeader col="late" label="Atr." />
+                  <SortHeader col="justified" label="Just." />
+                  <SortHeader col="classes" label="Clases" />
+                  <SortHeader col="rate" label="%" align="right" />
                 </tr>
               </thead>
               <tbody>
-                {students.map((s, i) => {
+                {students.map((s) => {
                   const isCritical = s.rate != null && s.rate < CRITICAL_THRESHOLD;
+                  const hasMissing = (s.missing ?? 0) > 0;
                   return (
                     <tr
                       key={s.id}
@@ -1019,8 +1195,10 @@ function ResumenTab({
                           : 'hover:bg-muted/20',
                       )}
                     >
-                      <td className="px-4 py-2 text-muted-foreground text-xs">{i + 1}</td>
-                      <td className="px-4 py-2 font-medium">
+                      <td className="px-3 py-2 text-muted-foreground text-xs tabular-nums">
+                        {s.enrollmentNumber}
+                      </td>
+                      <td className="px-3 py-2 font-medium">
                         <div className="flex items-center gap-1.5">
                           {isCritical && (
                             <AlertTriangle className="size-3.5 text-red-500 shrink-0" />
@@ -1028,6 +1206,12 @@ function ResumenTab({
                           <span className="truncate" title={formatStudentFullName(s)}>
                             {formatStudentFullName(s)}
                           </span>
+                          {hasMissing && (
+                            <span
+                              className="size-2 rounded-full bg-orange-400 shrink-0"
+                              title={`${s.missing} ${s.missing === 1 ? 'día sin registro' : 'días sin registro'}`}
+                            />
+                          )}
                         </div>
                       </td>
                       <td className="px-3 py-2 text-center tabular-nums text-green-600 dark:text-green-400">
@@ -1040,28 +1224,22 @@ function ResumenTab({
                           onOpen={() => openStatusReview(s, 'ABSENT')}
                         />
                       </td>
-                      <td className="hidden md:table-cell px-3 py-2 text-center">
+                      <td className="px-3 py-2 text-center">
                         <StatusCountButton
                           value={s.late}
                           status="LATE"
                           onOpen={() => openStatusReview(s, 'LATE')}
                         />
                       </td>
-                      <td className="hidden md:table-cell px-3 py-2 text-center">
+                      <td className="px-3 py-2 text-center">
                         <StatusCountButton
                           value={s.justified}
                           status="JUSTIFIED"
                           onOpen={() => openStatusReview(s, 'JUSTIFIED')}
                         />
                       </td>
-                      <td className="hidden lg:table-cell px-3 py-2 text-center tabular-nums text-green-700 dark:text-green-400 font-medium">
-                        {attendedDays(s)}
-                      </td>
-                      <td className="px-3 py-2 text-center tabular-nums font-medium">
+                      <td className="px-3 py-2 text-center tabular-nums text-muted-foreground">
                         {totalClasses(s)}
-                      </td>
-                      <td className="hidden lg:table-cell px-3 py-2 text-center tabular-nums text-muted-foreground">
-                        {s.missing ?? 0}
                       </td>
                       <td className="px-4 py-2 text-right">
                         <div className="inline-flex flex-col items-end gap-0.5">
@@ -1078,9 +1256,11 @@ function ResumenTab({
             </table>
           </div>
 
+          {/* Mobile view */}
           <div className="sm:hidden divide-y divide-border">
-            {students.map((s, i) => {
+            {students.map((s) => {
               const isCritical = s.rate != null && s.rate < CRITICAL_THRESHOLD;
+              const hasMissing = (s.missing ?? 0) > 0;
               return (
                 <div
                   key={s.id}
@@ -1088,7 +1268,9 @@ function ResumenTab({
                 >
                   <div className="flex items-center justify-between gap-2">
                     <div className="flex items-center gap-2 min-w-0">
-                      <span className="text-xs text-muted-foreground w-5 shrink-0">{i + 1}</span>
+                      <span className="text-xs text-muted-foreground w-5 shrink-0">
+                        {s.enrollmentNumber}
+                      </span>
                       {isCritical && <AlertTriangle className="size-3.5 text-red-500 shrink-0" />}
                       <span
                         className="text-sm font-medium truncate"
@@ -1096,11 +1278,17 @@ function ResumenTab({
                       >
                         {formatStudentFullName(s)}
                       </span>
+                      {hasMissing && (
+                        <span
+                          className="size-2 rounded-full bg-orange-400 shrink-0"
+                          title={`${s.missing} día(s) sin registro`}
+                        />
+                      )}
                     </div>
                     <RateBadge rate={s.rate} />
                   </div>
                   <div className="mt-1 pl-7 text-[10px] text-muted-foreground tabular-nums">
-                    {manualFormulaText(s)}
+                    {manualFormulaText(s)} · {totalClasses(s)} clases
                   </div>
                   <div className="flex gap-3 mt-2 text-xs pl-7">
                     <span className="text-green-600 dark:text-green-400">
@@ -1133,15 +1321,6 @@ function ResumenTab({
                         className="px-0.5"
                       />
                     </span>
-                    <span className="text-green-700 dark:text-green-400">
-                      <span className="text-muted-foreground">Asist:</span> {attendedDays(s)}
-                    </span>
-                    <span className="text-foreground">
-                      <span className="text-muted-foreground">Total:</span> {totalClasses(s)}
-                    </span>
-                    <span className="text-muted-foreground">
-                      <span>SR:</span> {s.missing ?? 0}
-                    </span>
                   </div>
                 </div>
               );
@@ -1150,8 +1329,8 @@ function ResumenTab({
 
           <div className="px-4 py-2.5 border-t border-border bg-muted/20 space-y-1">
             <p className="text-[10px] text-muted-foreground flex items-center gap-1">
-              <CheckCircle2 className="size-3 shrink-0" />% = (Presentes + Atrasos) * 100 /{' '}
-              {denominatorLabel}. Justificados y sin registro no suman asistencia.
+              <CheckCircle2 className="size-3 shrink-0" />% = (Presentes + Atrasos) × 100 / Clases.
+              Justificados y sin registro no suman.
             </p>
             {showJuneBanner && (
               <p className="text-[10px] text-muted-foreground flex items-center gap-1">
@@ -1163,7 +1342,7 @@ function ResumenTab({
               <p className="text-[10px] text-red-600 dark:text-red-400 flex items-center gap-1 font-medium">
                 <XCircle className="size-3 shrink-0" />
                 {below} {below === 1 ? 'alumno bajo' : 'alumnos bajo'} {CRITICAL_THRESHOLD * 100}% —
-                requiere atención prioritaria según normativa MINEDUC.
+                atención prioritaria MINEDUC.
               </p>
             )}
           </div>
@@ -1530,19 +1709,18 @@ function MonthDetail({
                     return (
                       <td key={date} className="px-1 py-1.5 text-center">
                         <span
-                          onDoubleClick={(event) => {
+                          onClick={() => {
                             if (!reviewable) return;
-                            event.preventDefault();
                             openCellReview(student, status);
                           }}
                           title={
                             reviewable
-                              ? `Doble clic para revisar ${STATUS_REVIEW_LABELS[status].label.toLowerCase()}`
+                              ? `Ver ${STATUS_REVIEW_LABELS[status].label.toLowerCase()}`
                               : undefined
                           }
                           className={cn(
                             'inline-block size-5 rounded text-[10px] leading-5 font-medium',
-                            reviewable && 'cursor-zoom-in hover:ring-2 hover:ring-primary/30',
+                            reviewable && 'cursor-pointer hover:ring-2 hover:ring-primary/30',
                             status === 'PRESENT' &&
                               'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400',
                             status === 'ABSENT' &&
