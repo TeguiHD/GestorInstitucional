@@ -384,6 +384,12 @@ export class SchoolConfigService {
     return a >= b ? a : b;
   }
 
+  private previousCalendarDay(date: Date): Date {
+    const d = this.startOfDay(date);
+    d.setDate(d.getDate() - 1);
+    return d;
+  }
+
   private countActiveSchoolDays(
     student: StudentPeriod,
     range: DateRange,
@@ -392,9 +398,11 @@ export class SchoolConfigService {
     const start = this.startOfDay(
       student.enrolledAt > range.from ? student.enrolledAt : range.from,
     );
-    const end = this.startOfDay(
-      student.withdrawnAt && student.withdrawnAt < range.to ? student.withdrawnAt : range.to,
-    );
+    const withdrawnEnd =
+      student.withdrawnAt && student.withdrawnAt <= range.to
+        ? this.previousCalendarDay(student.withdrawnAt)
+        : range.to;
+    const end = this.startOfDay(withdrawnEnd);
     let days = 0;
     const cursor = new Date(start);
     while (cursor <= end) {

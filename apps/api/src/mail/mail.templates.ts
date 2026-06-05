@@ -280,7 +280,15 @@ export function weeklyDigest(p: {
   courseName: string;
   weekStart: Date | string;
   weekEnd: Date | string;
-  stats: { present: number; absent: number; late: number; justified: number; rate: number };
+  stats: {
+    present: number;
+    absent: number;
+    late: number;
+    justified: number;
+    missing?: number;
+    total?: number;
+    rate: number;
+  };
   absentDates: string[];
   portalUrl: string;
 }): { subject: string; html: string; text: string } {
@@ -307,8 +315,13 @@ export function weeklyDigest(p: {
         ${kpi('Ausente', String(p.stats.absent), '#dc2626')}
         ${kpi('Atrasos', String(p.stats.late), '#f97316')}
         ${kpi('Justif.', String(p.stats.justified), '#eab308')}
+        ${kpi('Total clases', String(p.stats.total ?? '—'), '#334155')}
       </tr>
     </table>
+    <p style="margin:8px 0 0;font-size:12px;color:#64748b">
+      Fórmula: (Presentes + Atrasos) / Total clases. Justificados y sin registro no suman asistencia.
+      ${p.stats.missing ? `Sin registro: ${p.stats.missing}.` : ''}
+    </p>
     ${
       p.absentDates.length
         ? `
@@ -323,7 +336,7 @@ export function weeklyDigest(p: {
     </div>
     <p style="margin:16px 0 0;font-size:13px;color:#475569">Atentamente,<br/>${BRAND.name}</p>`;
 
-  const text = `${subject}\n\n${p.studentName} ${p.courseName}\nAsistencia: ${pct}%\nPresente ${p.stats.present} · Ausente ${p.stats.absent} · Atrasos ${p.stats.late} · Justif ${p.stats.justified}${p.absentDates.length ? `\nAusencias: ${p.absentDates.join(', ')}` : ''}\n\n${p.portalUrl}/my-children`;
+  const text = `${subject}\n\n${p.studentName} ${p.courseName}\nAsistencia: ${pct}%\nFórmula: (Presentes + Atrasos) / Total clases\nPresente ${p.stats.present} · Ausente ${p.stats.absent} · Atrasos ${p.stats.late} · Justif ${p.stats.justified} · Total clases ${p.stats.total ?? '—'}${p.stats.missing ? ` · Sin registro ${p.stats.missing}` : ''}${p.absentDates.length ? `\nAusencias: ${p.absentDates.join(', ')}` : ''}\n\n${p.portalUrl}/my-children`;
 
   return { subject, html: shell(subject, body), text };
 }

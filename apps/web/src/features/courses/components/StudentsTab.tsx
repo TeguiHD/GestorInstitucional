@@ -20,6 +20,9 @@ type StudentStat = {
   late: number;
   justified: number;
   rate: number | null;
+  totalClasses?: number;
+  missing?: number;
+  attended?: number;
 };
 
 type MatrixData = {
@@ -81,6 +84,17 @@ function RateBar({ rate }: { rate: number | null }) {
       </span>
     </div>
   );
+}
+
+export function attendanceFractionLabel(student: {
+  present?: number | null;
+  late?: number | null;
+  total?: number | null;
+  totalClasses?: number | null;
+}): string {
+  const attended = (student.present ?? 0) + (student.late ?? 0);
+  const totalClasses = student.totalClasses ?? student.total ?? 0;
+  return `${attended}/${totalClasses} clases`;
 }
 
 type SortKey = 'enrollmentNumber' | 'lastName' | 'rate';
@@ -248,6 +262,7 @@ export function StudentsTab({ courseId }: { courseId: string }) {
                 const guardians = guardianMap?.[student.id] ?? [];
                 const primaryGuardian = guardians.find((g) => g.isPrimary) ?? guardians[0];
                 const studentName = formatStudentFullName(student);
+                const totalClasses = student.totalClasses ?? student.total;
                 return (
                   <tr
                     key={student.id}
@@ -287,18 +302,15 @@ export function StudentsTab({ courseId }: { courseId: string }) {
                       <span className="font-mono text-xs text-muted-foreground">{student.rut}</span>
                     </td>
                     <td className="px-4 py-3">
-                      {student.total > 0 ? (
+                      {totalClasses > 0 ? (
                         <div className="space-y-1">
                           <RateBar rate={student.rate} />
                           <p className="text-xs text-muted-foreground">
-                            {(student.present ?? 0) +
-                              (student.late ?? 0) +
-                              (student.justified ?? 0)}
-                            /{student.total} días
+                            {attendanceFractionLabel(student)}
                           </p>
                         </div>
                       ) : (
-                        <span className="text-xs text-muted-foreground">Sin registros</span>
+                        <span className="text-xs text-muted-foreground">Sin clases</span>
                       )}
                     </td>
                     <td className="px-4 py-3 text-center hidden md:table-cell">

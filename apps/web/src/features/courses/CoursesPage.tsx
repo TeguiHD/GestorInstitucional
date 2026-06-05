@@ -17,6 +17,7 @@ import { useEffectiveSchoolId } from '@/stores/school.store';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { ErrorState } from '@/components/ui/ErrorState';
 import { cn } from '@/lib/cn';
+import { formatDateLocal } from '@/lib/date';
 import { AttendanceOverviewModal } from './components/AttendanceOverviewModal';
 
 type MissingAttendance = {
@@ -62,7 +63,7 @@ export function CoursesPage() {
       const from = new Date(today);
       from.setDate(from.getDate() - 30);
       return api.get(
-        `/attendance/school/${schoolId}/missing?from=${from.toISOString().split('T')[0]}&to=${today.toISOString().split('T')[0]}`,
+        `/attendance/school/${schoolId}/missing?from=${formatDateLocal(from)}&to=${formatDateLocal(today)}`,
       );
     },
     enabled: !!schoolId,

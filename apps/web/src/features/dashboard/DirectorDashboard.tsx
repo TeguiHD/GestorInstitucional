@@ -17,7 +17,7 @@ import {
 } from 'recharts';
 
 import { api } from '@/lib/api';
-import { parseDayLocal } from '@/lib/date';
+import { formatDateLocal, parseDayLocal } from '@/lib/date';
 import { useEffectiveSchoolId } from '@/stores/school.store';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { ATTENDANCE_THRESHOLDS } from '@asistencia/shared';
@@ -30,7 +30,10 @@ type CourseStats = {
   name: string;
   attendanceRate: number;
   total: number;
+  totalClasses?: number;
   present: number;
+  late?: number;
+  attended?: number;
 };
 
 type Insight = {
@@ -63,8 +66,8 @@ function periodRange(p: Period): { from: string; to: string; label: string } {
 
   if (p === 'this_month') {
     return {
-      from: new Date(y, m, 1).toISOString().split('T')[0]!,
-      to: today.toISOString().split('T')[0]!,
+      from: formatDateLocal(new Date(y, m, 1)),
+      to: formatDateLocal(today),
       label: today.toLocaleString('es-CL', { month: 'long', year: 'numeric' }),
     };
   }
@@ -73,16 +76,16 @@ function periodRange(p: Period): { from: string; to: string; label: string } {
     const py = m === 0 ? y - 1 : y;
     const last = new Date(y, m, 0);
     return {
-      from: new Date(py, pm, 1).toISOString().split('T')[0]!,
-      to: last.toISOString().split('T')[0]!,
+      from: formatDateLocal(new Date(py, pm, 1)),
+      to: formatDateLocal(last),
       label: last.toLocaleString('es-CL', { month: 'long', year: 'numeric' }),
     };
   }
   // last 3 months
   const start = new Date(y, m - 2, 1);
   return {
-    from: start.toISOString().split('T')[0]!,
-    to: today.toISOString().split('T')[0]!,
+    from: formatDateLocal(start),
+    to: formatDateLocal(today),
     label: 'Últimos 3 meses',
   };
 }
@@ -118,6 +121,22 @@ function DeltaBadge({ delta }: { delta: number | null }) {
       {pct}%
     </span>
   );
+}
+
+function weightedAttendanceRate(stats: CourseStats[] | undefined): number | null {
+  if (!stats?.length) return null;
+  const totals = stats.reduce(
+    (acc, course) => {
+      const totalClasses = course.totalClasses ?? course.total;
+      const attended = course.attended ?? course.present + (course.late ?? 0);
+      return {
+        attended: acc.attended + attended,
+        totalClasses: acc.totalClasses + totalClasses,
+      };
+    },
+    { attended: 0, totalClasses: 0 },
+  );
+  return totals.totalClasses > 0 ? totals.attended / totals.totalClasses : null;
 }
 
 function CourseDrillDown({
@@ -263,12 +282,8 @@ export function DirectorDashboard() {
     enabled: !!schoolId,
   });
 
-  const avgRate = stats?.length
-    ? stats.reduce((s, c) => s + c.attendanceRate, 0) / stats.length
-    : 0;
-  const prevAvgRate = prevStats?.length
-    ? prevStats.reduce((s, c) => s + c.attendanceRate, 0) / prevStats.length
-    : null;
+  const avgRate = weightedAttendanceRate(stats) ?? 0;
+  const prevAvgRate = weightedAttendanceRate(prevStats);
 
   const worst = stats?.at(-1);
   const criticalCourses = stats?.filter((c) => c.attendanceRate < ATTENDANCE_THRESHOLDS.WARN) ?? [];

@@ -22,10 +22,18 @@ import { toast } from 'sonner';
 
 import { api, downloadBlob } from '@/lib/api';
 import { cn } from '@/lib/cn';
+import { formatDateLocal } from '@/lib/date';
 import { formatStudentFullName } from '@/lib/student-name';
 import { SearchableSelect } from '@/components/ui/SearchableSelect';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { useEffectiveSchoolId } from '@/stores/school.store';
+import {
+  attendedDays,
+  manualFormulaText,
+  statusDatesForStudent,
+  totalClasses,
+  type ReviewableAttendanceStatus,
+} from '@/features/reports/attendance-report.logic';
 
 export const Route = createFileRoute('/_auth/reportes')({
   component: ReportsPage,
@@ -46,10 +54,18 @@ type MatrixStudent = {
   lastName: string;
   secondLastName?: string | null;
   enrollmentNumber: number;
+  enrolledAt?: string;
+  withdrawnAt?: string | null;
   total: number;
   present: number;
   absent: number;
+  late?: number;
   justified: number;
+  missing?: number;
+  attended?: number;
+  totalClasses?: number;
+  attendanceRate?: number | null;
+  formulaVersion?: string;
   rate: number | null;
 };
 
@@ -64,6 +80,11 @@ type SummaryStudent = {
   absent: number;
   late: number;
   justified: number;
+  missing?: number;
+  attended?: number;
+  totalClasses?: number;
+  attendanceRate?: number | null;
+  formulaVersion?: string;
   rate: number | null;
 };
 
@@ -82,6 +103,22 @@ type MatrixData = {
   students: MatrixStudent[];
   dates: string[];
   matrix: Record<string, Record<string, string>>;
+  nonSchoolDays?: Record<string, { type: string; description: string }>;
+  schoolDays?: string[];
+  today?: string;
+};
+
+type ReviewMonth = { year: number; month: number };
+
+type StatusReviewRequest = {
+  courseId: string;
+  studentId: string;
+  studentName: string;
+  status: ReviewableAttendanceStatus;
+  periodLabel: string;
+  courseName: string;
+  months: ReviewMonth[];
+  initialMatrix?: MatrixData;
 };
 
 type AcademicYearConfig = {
@@ -132,6 +169,14 @@ const MONTH_NAMES = [
   'Diciembre',
 ];
 
+function isStudentActiveForDate(student: MatrixStudent, dateKey: string): boolean {
+  const enrolledAt = student.enrolledAt?.slice(0, 10);
+  const withdrawnAt = student.withdrawnAt?.slice(0, 10);
+  if (enrolledAt && dateKey < enrolledAt) return false;
+  if (withdrawnAt && dateKey > withdrawnAt) return false;
+  return true;
+}
+
 type MonthlyBreakdownData = {
   students: {
     id: string;
@@ -153,6 +198,11 @@ type MonthlyBreakdownData = {
         absent: number;
         late: number;
         justified: number;
+        missing?: number;
+        attended?: number;
+        totalClasses?: number;
+        attendanceRate?: number | null;
+        formulaVersion?: string;
         rate: number | null;
       }
     >;
@@ -253,31 +303,53 @@ function ReportsPage() {
   const recalculatedStudents = useMemo(() => {
     if (!matrix?.students || !matrix.matrix || filteredDates.length === 0) return [];
     const dateSet = new Set(filteredDates);
+    const todayKey = matrix.today ?? formatDateLocal(new Date());
+    const denominatorDates = (matrix.schoolDays ?? filteredDates).filter(
+      (dateKey) => dateSet.has(dateKey) && dateKey <= todayKey && !matrix.nonSchoolDays?.[dateKey],
+    );
     return matrix.students.map((s) => {
       const records = matrix.matrix[s.id];
-      if (!records)
-        return { ...s, total: 0, present: 0, absent: 0, justified: 0, late: 0, rate: null };
+      const activeDates = denominatorDates.filter((dateKey) => isStudentActiveForDate(s, dateKey));
+      const totalClasses = activeDates.length;
       let total = 0;
       let present = 0;
       let absent = 0;
       let late = 0;
       let justified = 0;
-      for (const [dateKey, status] of Object.entries(records)) {
-        if (!dateSet.has(dateKey)) continue;
+      for (const dateKey of activeDates) {
+        const status = records?.[dateKey];
         if (status === 'WITHDRAWN') continue;
-        total++;
-        if (status === 'PRESENT') present++;
-        else if (status === 'ABSENT') absent++;
-        else if (status === 'LATE') {
+        if (status === 'PRESENT') {
+          total++;
+          present++;
+        } else if (status === 'ABSENT') {
+          total++;
+          absent++;
+        } else if (status === 'LATE') {
+          total++;
           late++;
-          present++;
         } else if (status === 'JUSTIFIED') {
+          total++;
           justified++;
-          present++;
         }
       }
-      const rate = total > 0 ? present / total : null;
-      return { ...s, total, present, absent, justified, late, rate };
+      const missing = Math.max(0, totalClasses - total);
+      const attended = present + late;
+      const rate = totalClasses > 0 ? attended / totalClasses : null;
+      return {
+        ...s,
+        total: totalClasses,
+        present,
+        absent,
+        justified,
+        late,
+        missing,
+        attended,
+        totalClasses,
+        attendanceRate: rate,
+        formulaVersion: 'PRESENT_LATE_OVER_TOTAL_CLASSES_V1',
+        rate,
+      };
     });
   }, [matrix, filteredDates]);
 
@@ -500,10 +572,13 @@ function ReportsPage() {
           {tab === 'resumen' ? (
             <ResumenTab
               courseId={courseId}
+              courseName={courses?.find((c) => c.id === courseId)?.name ?? ''}
               periodType={periodType}
               month={month}
               year={year}
               semester={semester}
+              matrix={matrix}
+              breakdown={breakdown}
               juneLastDay={juneLastDay}
               periodDetail={selectedPeriodDetail}
               matrixLoading={matrixLoading}
@@ -595,12 +670,173 @@ function RateBadge({ rate }: { rate: number | null }) {
   );
 }
 
+function formatReviewDate(date: string): string {
+  return new Date(`${date}T12:00:00`).toLocaleDateString('es-CL', {
+    weekday: 'long',
+    day: '2-digit',
+    month: 'long',
+    year: 'numeric',
+  });
+}
+
+function isReviewableStatus(status: string | undefined): status is ReviewableAttendanceStatus {
+  return status === 'ABSENT' || status === 'LATE' || status === 'JUSTIFIED';
+}
+
+const STATUS_REVIEW_LABELS: Record<
+  ReviewableAttendanceStatus,
+  { label: string; short: string; text: string; badge: string }
+> = {
+  ABSENT: {
+    label: 'Ausentes',
+    short: 'A',
+    text: 'text-red-600 dark:text-red-400',
+    badge: 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400',
+  },
+  LATE: {
+    label: 'Atrasos',
+    short: 'AT',
+    text: 'text-orange-600 dark:text-orange-400',
+    badge: 'bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-400',
+  },
+  JUSTIFIED: {
+    label: 'Justificados',
+    short: 'J',
+    text: 'text-yellow-600 dark:text-yellow-400',
+    badge: 'bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-400',
+  },
+};
+
+function StatusCountButton({
+  value,
+  status,
+  onOpen,
+  className,
+}: {
+  value: number;
+  status: ReviewableAttendanceStatus;
+  onOpen: () => void;
+  className?: string;
+}) {
+  return (
+    <button
+      type="button"
+      onDoubleClick={(event) => {
+        event.preventDefault();
+        onOpen();
+      }}
+      className={cn(
+        'rounded px-1.5 py-0.5 tabular-nums transition hover:bg-muted focus:outline-none focus:ring-2 focus:ring-primary/40',
+        STATUS_REVIEW_LABELS[status].text,
+        className,
+      )}
+      title={`Doble clic para revisar ${STATUS_REVIEW_LABELS[status].label.toLowerCase()}`}
+      aria-label={`Revisar ${STATUS_REVIEW_LABELS[status].label.toLowerCase()}`}
+    >
+      {value}
+    </button>
+  );
+}
+
+function StatusReviewModal({
+  request,
+  onClose,
+}: {
+  request: StatusReviewRequest | null;
+  onClose: () => void;
+}) {
+  const { data: fetchedMatrices, isLoading } = useQuery<MatrixData[]>({
+    queryKey: ['status-review-matrices', request?.courseId, request?.studentId, request?.months],
+    queryFn: async () => {
+      if (!request) return [];
+      return Promise.all(
+        request.months.map((entry) =>
+          api.get<MatrixData>(
+            `/attendance/course/${request.courseId}/matrix?year=${entry.year}&month=${entry.month}`,
+          ),
+        ),
+      );
+    },
+    enabled: !!request && !request.initialMatrix && request.months.length > 0,
+  });
+
+  if (!request) return null;
+
+  const matrices = request.initialMatrix ? [request.initialMatrix] : (fetchedMatrices ?? []);
+  const dates = statusDatesForStudent(matrices, request.studentId, request.status);
+  const cfg = STATUS_REVIEW_LABELS[request.status];
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="status-review-title"
+      onMouseDown={(event) => {
+        if (event.target === event.currentTarget) onClose();
+      }}
+    >
+      <div className="w-full max-w-lg rounded-xl border border-border bg-background shadow-xl">
+        <div className="flex items-start justify-between gap-4 border-b border-border px-5 py-4">
+          <div className="min-w-0">
+            <h3 id="status-review-title" className="text-sm font-semibold">
+              {cfg.label} de {request.studentName}
+            </h3>
+            <p className="text-xs text-muted-foreground mt-0.5">
+              {request.courseName} · {request.periodLabel}
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="size-8 rounded-lg text-muted-foreground hover:bg-muted hover:text-foreground transition"
+            aria-label="Cerrar"
+          >
+            <XCircle className="size-4 mx-auto" />
+          </button>
+        </div>
+        <div className="px-5 py-4">
+          <div className="flex items-center justify-between gap-3">
+            <span className={cn('rounded-full px-2 py-0.5 text-xs font-semibold', cfg.badge)}>
+              {cfg.short}
+            </span>
+            <span className="text-xs text-muted-foreground tabular-nums">
+              Total: {isLoading ? '…' : dates.length}
+            </span>
+          </div>
+          <div className="mt-4 max-h-72 overflow-y-auto rounded-lg border border-border">
+            {isLoading ? (
+              <div className="p-4 text-sm text-muted-foreground">Cargando fechas…</div>
+            ) : dates.length > 0 ? (
+              <ul className="divide-y divide-border">
+                {dates.map((date) => (
+                  <li key={date} className="flex items-center justify-between px-4 py-2 text-sm">
+                    <span>{formatReviewDate(date)}</span>
+                    <span className="text-xs text-muted-foreground">{date}</span>
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <div className="p-4 text-sm text-muted-foreground">
+                No hay fechas para este estado en el período seleccionado.
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function ResumenTab({
   courseId,
+  courseName,
   periodType,
   month,
   year,
   semester,
+  matrix,
+  breakdown,
   juneLastDay,
   periodDetail,
   matrixLoading,
@@ -613,10 +849,13 @@ function ResumenTab({
   belowSummaryCritical,
 }: {
   courseId: string;
+  courseName: string;
   periodType: PeriodType;
   month: number;
   year: number;
   semester: number;
+  matrix: MatrixData | undefined;
+  breakdown: MonthlyBreakdownData | undefined;
   juneLastDay: number;
   periodDetail: string;
   matrixLoading: boolean;
@@ -628,6 +867,32 @@ function ResumenTab({
   belowCritical: number;
   belowSummaryCritical: number;
 }) {
+  const [review, setReview] = useState<StatusReviewRequest | null>(null);
+  const isMonthly = periodType === 'mensual';
+  const periodLabel = isMonthly
+    ? `${MONTH_NAMES[month - 1]} ${year}`
+    : periodType === 'semestral'
+      ? `${semester === 1 ? '1er' : '2do'} Semestre ${year}`
+      : `Año ${year}`;
+  const reviewMonths = isMonthly
+    ? [{ year, month }]
+    : (breakdown?.months.map((entry) => ({ year: entry.year, month: entry.month })) ?? []);
+  const openStatusReview = (
+    student: Pick<SummaryStudent, 'id' | 'firstName' | 'lastName' | 'secondLastName'>,
+    status: ReviewableAttendanceStatus,
+  ) => {
+    setReview({
+      courseId,
+      studentId: student.id,
+      studentName: formatStudentFullName(student),
+      status,
+      periodLabel,
+      courseName,
+      months: reviewMonths,
+      ...(isMonthly && matrix ? { initialMatrix: matrix } : {}),
+    });
+  };
+
   if (!courseId) {
     return (
       <EmptyState
@@ -638,7 +903,6 @@ function ResumenTab({
     );
   }
 
-  const isMonthly = periodType === 'mensual';
   const isLoading = isMonthly ? matrixLoading : summaryLoading;
   const students = isMonthly ? sortedStudents : sortedSummaryStudents;
   const avg = isMonthly ? avgRate : avgSummaryRate;
@@ -654,11 +918,6 @@ function ResumenTab({
   }
 
   if (students.length === 0) {
-    const periodLabel = isMonthly
-      ? `${MONTH_NAMES[month - 1]} ${year}`
-      : periodType === 'semestral'
-        ? `${semester === 1 ? '1er' : '2do'} Semestre ${year}`
-        : `Año ${year}`;
     return (
       <div className="rounded-xl border border-border bg-background p-10 text-center">
         <Users className="size-10 text-muted-foreground/30 mx-auto mb-3" />
@@ -669,15 +928,9 @@ function ResumenTab({
     );
   }
 
-  const periodLabel = isMonthly
-    ? `${MONTH_NAMES[month - 1]} ${year}`
-    : periodType === 'semestral'
-      ? `${semester === 1 ? '1er' : '2do'} Semestre ${year}`
-      : `Año ${year}`;
-
   const showJuneBanner = isMonthly && month === 6;
   const denominatorLabel = isMonthly
-    ? 'Total días registrados'
+    ? 'Total clases'
     : 'Total días lectivos configurados con matrícula activa';
   const showIncompleteBanner =
     !isMonthly &&
@@ -688,171 +941,236 @@ function ResumenTab({
     avg == null ? 'muted' : avg >= 0.9 ? 'green' : avg >= CRITICAL_THRESHOLD ? 'amber' : 'red';
 
   return (
-    <div className="space-y-4">
-      {showJuneBanner && (
-        <div className="flex items-center gap-2 rounded-lg border border-amber-300 dark:border-amber-700/50 bg-amber-50 dark:bg-amber-950/30 px-3 py-2">
-          <AlertTriangle className="size-4 text-amber-600 dark:text-amber-400 shrink-0" />
-          <p className="text-xs text-amber-800 dark:text-amber-200">
-            <span className="font-semibold">Junio:</span> período evaluado hasta el día{' '}
-            {juneLastDay} (último día de clases)
-          </p>
-        </div>
-      )}
+    <>
+      <div className="space-y-4">
+        {showJuneBanner && (
+          <div className="flex items-center gap-2 rounded-lg border border-amber-300 dark:border-amber-700/50 bg-amber-50 dark:bg-amber-950/30 px-3 py-2">
+            <AlertTriangle className="size-4 text-amber-600 dark:text-amber-400 shrink-0" />
+            <p className="text-xs text-amber-800 dark:text-amber-200">
+              <span className="font-semibold">Junio:</span> período evaluado hasta el día{' '}
+              {juneLastDay} (último día de clases)
+            </p>
+          </div>
+        )}
 
-      {showIncompleteBanner && (
-        <div className="flex items-center gap-2 rounded-lg border border-blue-300 dark:border-blue-700/50 bg-blue-50 dark:bg-blue-950/30 px-3 py-2">
-          <Info className="size-4 text-blue-600 dark:text-blue-400 shrink-0" />
-          <p className="text-xs text-blue-800 dark:text-blue-200">
-            <span className="font-semibold">Período en curso:</span> datos hasta la última fecha con
-            registro
-          </p>
-        </div>
-      )}
+        {showIncompleteBanner && (
+          <div className="flex items-center gap-2 rounded-lg border border-blue-300 dark:border-blue-700/50 bg-blue-50 dark:bg-blue-950/30 px-3 py-2">
+            <Info className="size-4 text-blue-600 dark:text-blue-400 shrink-0" />
+            <p className="text-xs text-blue-800 dark:text-blue-200">
+              <span className="font-semibold">Período en curso:</span> denominador cortado hasta hoy
+            </p>
+          </div>
+        )}
 
-      <div className="grid grid-cols-3 gap-3">
-        <KpiCard
-          label="Asistencia promedio"
-          value={avg != null ? `${(avg * 100).toFixed(1)}%` : '—'}
-          color={avgColor}
-        />
-        <KpiCard
-          label={`Bajo ${CRITICAL_THRESHOLD * 100}%`}
-          value={String(below)}
-          color={below > 0 ? 'red' : 'green'}
-          sub="alumnos críticos"
-        />
-        <KpiCard label="Total alumnos" value={String(students.length)} color="muted" />
-      </div>
-
-      <div className="rounded-xl border border-border bg-background overflow-hidden">
-        <div className="px-4 py-3 border-b border-border">
-          <h2 className="text-sm font-semibold flex items-center gap-2">
-            <Users className="size-4" />
-            Lista de asistencia — {periodLabel}
-          </h2>
-          <p className="text-xs text-muted-foreground mt-0.5">
-            {periodDetail
-              ? `${periodDetail}. Alumnos bajo ${CRITICAL_THRESHOLD * 100}% destacados en rojo`
-              : `Alumnos bajo ${CRITICAL_THRESHOLD * 100}% destacados en rojo`}
-          </p>
+        <div className="grid grid-cols-3 gap-3">
+          <KpiCard
+            label="Asistencia promedio"
+            value={avg != null ? `${(avg * 100).toFixed(1)}%` : '—'}
+            color={avgColor}
+          />
+          <KpiCard
+            label={`Bajo ${CRITICAL_THRESHOLD * 100}%`}
+            value={String(below)}
+            color={below > 0 ? 'red' : 'green'}
+            sub="alumnos críticos"
+          />
+          <KpiCard label="Total alumnos" value={String(students.length)} color="muted" />
         </div>
 
-        <div className="hidden sm:block overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="bg-muted/50 text-xs text-muted-foreground uppercase tracking-wide border-b border-border">
-                <th className="text-left px-4 py-2.5">#</th>
-                <th className="text-left px-4 py-2.5">Alumno</th>
-                <th className="text-center px-3 py-2.5">Pres.</th>
-                <th className="text-center px-3 py-2.5">Aus.</th>
-                <th className="hidden md:table-cell text-center px-3 py-2.5">Atrasos</th>
-                <th className="hidden md:table-cell text-center px-3 py-2.5">Justif.</th>
-                <th className="text-right px-4 py-2.5">%</th>
-              </tr>
-            </thead>
-            <tbody>
-              {students.map((s, i) => {
-                const isCritical = s.rate != null && s.rate < CRITICAL_THRESHOLD;
-                return (
-                  <tr
-                    key={s.id}
-                    className={cn(
-                      'border-t border-border transition',
-                      isCritical
-                        ? 'bg-red-50 dark:bg-red-950/20 hover:bg-red-100 dark:hover:bg-red-950/30'
-                        : 'hover:bg-muted/20',
-                    )}
-                  >
-                    <td className="px-4 py-2 text-muted-foreground text-xs">{i + 1}</td>
-                    <td className="px-4 py-2 font-medium">
-                      <div className="flex items-center gap-1.5">
-                        {isCritical && <AlertTriangle className="size-3.5 text-red-500 shrink-0" />}
-                        <span className="truncate" title={formatStudentFullName(s)}>
-                          {formatStudentFullName(s)}
-                        </span>
-                      </div>
-                    </td>
-                    <td className="px-3 py-2 text-center tabular-nums text-green-600 dark:text-green-400">
-                      {s.present}
-                    </td>
-                    <td className="px-3 py-2 text-center tabular-nums text-red-600 dark:text-red-400">
-                      {s.absent}
-                    </td>
-                    <td className="hidden md:table-cell px-3 py-2 text-center tabular-nums text-orange-600 dark:text-orange-400">
-                      {s.late}
-                    </td>
-                    <td className="hidden md:table-cell px-3 py-2 text-center tabular-nums text-yellow-600 dark:text-yellow-400">
-                      {s.justified}
-                    </td>
-                    <td className="px-4 py-2 text-right">
-                      <RateBadge rate={s.rate} />
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
+        <div className="rounded-xl border border-border bg-background overflow-hidden">
+          <div className="px-4 py-3 border-b border-border">
+            <h2 className="text-sm font-semibold flex items-center gap-2">
+              <Users className="size-4" />
+              Lista de asistencia — {periodLabel}
+            </h2>
+            <p className="text-xs text-muted-foreground mt-0.5">
+              {periodDetail
+                ? `${periodDetail}. Alumnos bajo ${CRITICAL_THRESHOLD * 100}% destacados en rojo`
+                : `Alumnos bajo ${CRITICAL_THRESHOLD * 100}% destacados en rojo`}
+            </p>
+          </div>
 
-        <div className="sm:hidden divide-y divide-border">
-          {students.map((s, i) => {
-            const isCritical = s.rate != null && s.rate < CRITICAL_THRESHOLD;
-            return (
-              <div
-                key={s.id}
-                className={cn('px-4 py-3', isCritical && 'bg-red-50 dark:bg-red-950/20')}
-              >
-                <div className="flex items-center justify-between gap-2">
-                  <div className="flex items-center gap-2 min-w-0">
-                    <span className="text-xs text-muted-foreground w-5 shrink-0">{i + 1}</span>
-                    {isCritical && <AlertTriangle className="size-3.5 text-red-500 shrink-0" />}
-                    <span className="text-sm font-medium truncate" title={formatStudentFullName(s)}>
-                      {formatStudentFullName(s)}
+          <div className="hidden sm:block overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="bg-muted/50 text-xs text-muted-foreground uppercase tracking-wide border-b border-border">
+                  <th className="text-left px-4 py-2.5">#</th>
+                  <th className="text-left px-4 py-2.5">Alumno</th>
+                  <th className="text-center px-3 py-2.5">Pres.</th>
+                  <th className="text-center px-3 py-2.5">Aus.</th>
+                  <th className="hidden md:table-cell text-center px-3 py-2.5">Atrasos</th>
+                  <th className="hidden md:table-cell text-center px-3 py-2.5">Justif.</th>
+                  <th className="hidden lg:table-cell text-center px-3 py-2.5">Asist.</th>
+                  <th className="text-center px-3 py-2.5">Total clases</th>
+                  <th className="hidden lg:table-cell text-center px-3 py-2.5">Sin reg.</th>
+                  <th className="text-right px-4 py-2.5">%</th>
+                </tr>
+              </thead>
+              <tbody>
+                {students.map((s, i) => {
+                  const isCritical = s.rate != null && s.rate < CRITICAL_THRESHOLD;
+                  return (
+                    <tr
+                      key={s.id}
+                      className={cn(
+                        'border-t border-border transition',
+                        isCritical
+                          ? 'bg-red-50 dark:bg-red-950/20 hover:bg-red-100 dark:hover:bg-red-950/30'
+                          : 'hover:bg-muted/20',
+                      )}
+                    >
+                      <td className="px-4 py-2 text-muted-foreground text-xs">{i + 1}</td>
+                      <td className="px-4 py-2 font-medium">
+                        <div className="flex items-center gap-1.5">
+                          {isCritical && (
+                            <AlertTriangle className="size-3.5 text-red-500 shrink-0" />
+                          )}
+                          <span className="truncate" title={formatStudentFullName(s)}>
+                            {formatStudentFullName(s)}
+                          </span>
+                        </div>
+                      </td>
+                      <td className="px-3 py-2 text-center tabular-nums text-green-600 dark:text-green-400">
+                        {s.present}
+                      </td>
+                      <td className="px-3 py-2 text-center">
+                        <StatusCountButton
+                          value={s.absent}
+                          status="ABSENT"
+                          onOpen={() => openStatusReview(s, 'ABSENT')}
+                        />
+                      </td>
+                      <td className="hidden md:table-cell px-3 py-2 text-center">
+                        <StatusCountButton
+                          value={s.late}
+                          status="LATE"
+                          onOpen={() => openStatusReview(s, 'LATE')}
+                        />
+                      </td>
+                      <td className="hidden md:table-cell px-3 py-2 text-center">
+                        <StatusCountButton
+                          value={s.justified}
+                          status="JUSTIFIED"
+                          onOpen={() => openStatusReview(s, 'JUSTIFIED')}
+                        />
+                      </td>
+                      <td className="hidden lg:table-cell px-3 py-2 text-center tabular-nums text-green-700 dark:text-green-400 font-medium">
+                        {attendedDays(s)}
+                      </td>
+                      <td className="px-3 py-2 text-center tabular-nums font-medium">
+                        {totalClasses(s)}
+                      </td>
+                      <td className="hidden lg:table-cell px-3 py-2 text-center tabular-nums text-muted-foreground">
+                        {s.missing ?? 0}
+                      </td>
+                      <td className="px-4 py-2 text-right">
+                        <div className="inline-flex flex-col items-end gap-0.5">
+                          <RateBadge rate={s.rate} />
+                          <span className="text-[10px] text-muted-foreground tabular-nums">
+                            {manualFormulaText(s)}
+                          </span>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+
+          <div className="sm:hidden divide-y divide-border">
+            {students.map((s, i) => {
+              const isCritical = s.rate != null && s.rate < CRITICAL_THRESHOLD;
+              return (
+                <div
+                  key={s.id}
+                  className={cn('px-4 py-3', isCritical && 'bg-red-50 dark:bg-red-950/20')}
+                >
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="flex items-center gap-2 min-w-0">
+                      <span className="text-xs text-muted-foreground w-5 shrink-0">{i + 1}</span>
+                      {isCritical && <AlertTriangle className="size-3.5 text-red-500 shrink-0" />}
+                      <span
+                        className="text-sm font-medium truncate"
+                        title={formatStudentFullName(s)}
+                      >
+                        {formatStudentFullName(s)}
+                      </span>
+                    </div>
+                    <RateBadge rate={s.rate} />
+                  </div>
+                  <div className="mt-1 pl-7 text-[10px] text-muted-foreground tabular-nums">
+                    {manualFormulaText(s)}
+                  </div>
+                  <div className="flex gap-3 mt-2 text-xs pl-7">
+                    <span className="text-green-600 dark:text-green-400">
+                      <span className="text-muted-foreground">P:</span> {s.present}
+                    </span>
+                    <span className="text-red-600 dark:text-red-400">
+                      <span className="text-muted-foreground">A:</span>{' '}
+                      <StatusCountButton
+                        value={s.absent}
+                        status="ABSENT"
+                        onOpen={() => openStatusReview(s, 'ABSENT')}
+                        className="px-0.5"
+                      />
+                    </span>
+                    <span className="text-orange-600 dark:text-orange-400">
+                      <span className="text-muted-foreground">AT:</span>{' '}
+                      <StatusCountButton
+                        value={s.late}
+                        status="LATE"
+                        onOpen={() => openStatusReview(s, 'LATE')}
+                        className="px-0.5"
+                      />
+                    </span>
+                    <span className="text-yellow-600 dark:text-yellow-400">
+                      <span className="text-muted-foreground">J:</span>{' '}
+                      <StatusCountButton
+                        value={s.justified}
+                        status="JUSTIFIED"
+                        onOpen={() => openStatusReview(s, 'JUSTIFIED')}
+                        className="px-0.5"
+                      />
+                    </span>
+                    <span className="text-green-700 dark:text-green-400">
+                      <span className="text-muted-foreground">Asist:</span> {attendedDays(s)}
+                    </span>
+                    <span className="text-foreground">
+                      <span className="text-muted-foreground">Total:</span> {totalClasses(s)}
+                    </span>
+                    <span className="text-muted-foreground">
+                      <span>SR:</span> {s.missing ?? 0}
                     </span>
                   </div>
-                  <RateBadge rate={s.rate} />
                 </div>
-                <div className="flex gap-3 mt-2 text-xs pl-7">
-                  <span className="text-green-600 dark:text-green-400">
-                    <span className="text-muted-foreground">P:</span> {s.present}
-                  </span>
-                  <span className="text-red-600 dark:text-red-400">
-                    <span className="text-muted-foreground">A:</span> {s.absent}
-                  </span>
-                  <span className="text-orange-600 dark:text-orange-400">
-                    <span className="text-muted-foreground">AT:</span> {s.late}
-                  </span>
-                  <span className="text-yellow-600 dark:text-yellow-400">
-                    <span className="text-muted-foreground">J:</span> {s.justified}
-                  </span>
-                </div>
-              </div>
-            );
-          })}
-        </div>
+              );
+            })}
+          </div>
 
-        <div className="px-4 py-2.5 border-t border-border bg-muted/20 space-y-1">
-          <p className="text-[10px] text-muted-foreground flex items-center gap-1">
-            <CheckCircle2 className="size-3 shrink-0" />
-            Porcentaje calculado conforme al Decreto 67/2018 MINEDUC. Asistencia = (Presentes +
-            Atrasos + Justificados) / {denominatorLabel}.
-          </p>
-          {showJuneBanner && (
+          <div className="px-4 py-2.5 border-t border-border bg-muted/20 space-y-1">
             <p className="text-[10px] text-muted-foreground flex items-center gap-1">
-              <AlertTriangle className="size-3 shrink-0" />
-              Período evaluado: 1 al {juneLastDay} de junio (último día de clases).
+              <CheckCircle2 className="size-3 shrink-0" />% = (Presentes + Atrasos) * 100 /{' '}
+              {denominatorLabel}. Justificados y sin registro no suman asistencia.
             </p>
-          )}
-          {below > 0 && (
-            <p className="text-[10px] text-red-600 dark:text-red-400 flex items-center gap-1 font-medium">
-              <XCircle className="size-3 shrink-0" />
-              {below} {below === 1 ? 'alumno bajo' : 'alumnos bajo'} {CRITICAL_THRESHOLD * 100}% —
-              requiere atención prioritaria según normativa MINEDUC.
-            </p>
-          )}
+            {showJuneBanner && (
+              <p className="text-[10px] text-muted-foreground flex items-center gap-1">
+                <AlertTriangle className="size-3 shrink-0" />
+                Período evaluado: 1 al {juneLastDay} de junio (último día de clases).
+              </p>
+            )}
+            {below > 0 && (
+              <p className="text-[10px] text-red-600 dark:text-red-400 flex items-center gap-1 font-medium">
+                <XCircle className="size-3 shrink-0" />
+                {below} {below === 1 ? 'alumno bajo' : 'alumnos bajo'} {CRITICAL_THRESHOLD * 100}% —
+                requiere atención prioritaria según normativa MINEDUC.
+              </p>
+            )}
+          </div>
         </div>
       </div>
-    </div>
+      <StatusReviewModal request={review} onClose={() => setReview(null)} />
+    </>
   );
 }
 
@@ -914,8 +1232,8 @@ function PlanillaTab({
     for (const month of months) {
       const stats = month.stats[student.id];
       if (stats) {
-        totalDays += stats.total;
-        totalPresent += stats.present;
+        totalDays += stats.totalClasses ?? stats.total;
+        totalPresent += stats.attended ?? stats.present + stats.late;
       }
     }
     const rate = totalDays > 0 ? totalPresent / totalDays : null;
@@ -1083,17 +1401,15 @@ function PlanillaTab({
 
         <div className="px-4 py-2.5 border-t border-border bg-muted/20 no-print">
           <p className="text-[10px] text-muted-foreground flex items-center gap-1">
-            <CheckCircle2 className="size-3 shrink-0" />
-            Porcentaje calculado conforme al Decreto 67/2018 MINEDUC. Haz clic en un mes para ver el
-            detalle.
+            <CheckCircle2 className="size-3 shrink-0" />% = (Presentes + Atrasos) * 100 / Total
+            clases. Haz clic en un mes para ver el detalle.
           </p>
         </div>
 
         {/* Print-only footer */}
         <div className="print-only print-footer">
-          Porcentaje calculado conforme al Decreto 67/2018 MINEDUC · Asistencia = (Presentes +
-          Atrasos + Justificados) / Días lectivos transcurridos · Documento generado desde
-          plataforma Asistencia CSSP — {new Date().toLocaleDateString('es-CL')}
+          % = (Presentes + Atrasos) * 100 / Total clases · Documento generado desde plataforma
+          Asistencia CSSP — {new Date().toLocaleDateString('es-CL')}
         </div>
 
         {/* Print-only signatures */}
@@ -1116,6 +1432,7 @@ function PlanillaTab({
       {expandedMonth !== null && (
         <MonthDetail
           courseId={courseId}
+          courseName={courseName}
           month={expandedMonth}
           year={months.find((m) => m.month === expandedMonth)?.year ?? new Date().getFullYear()}
           monthName={MONTH_NAMES[expandedMonth - 1] ?? ''}
@@ -1127,15 +1444,18 @@ function PlanillaTab({
 
 function MonthDetail({
   courseId,
+  courseName,
   month,
   year,
   monthName,
 }: {
   courseId: string;
+  courseName: string;
   month: number;
   year: number;
   monthName: string;
 }) {
+  const [review, setReview] = useState<StatusReviewRequest | null>(null);
   const { data: matrix, isLoading } = useQuery<MatrixData>({
     queryKey: ['course-matrix-report', courseId, year, month],
     queryFn: () => api.get(`/attendance/course/${courseId}/matrix?year=${year}&month=${month}`),
@@ -1159,94 +1479,121 @@ function MonthDetail({
   }
 
   const { students, dates, matrix: matrixData } = matrix;
+  const openCellReview = (student: MatrixStudent, status: ReviewableAttendanceStatus) => {
+    setReview({
+      courseId,
+      courseName,
+      studentId: student.id,
+      studentName: formatStudentFullName(student),
+      status,
+      periodLabel: `${monthName} ${year}`,
+      months: [{ year, month }],
+      initialMatrix: matrix,
+    });
+  };
 
   return (
-    <div className="rounded-xl border border-border bg-background overflow-hidden">
-      <div className="px-4 py-2.5 border-b border-border bg-primary/5">
-        <h3 className="text-sm font-semibold flex items-center gap-2">
-          <CalendarDays className="size-4" />
-          Detalle de {monthName} {year}
-        </h3>
-      </div>
-      <div className="overflow-x-auto">
-        <table className="w-full text-xs">
-          <thead>
-            <tr className="bg-muted/30 border-b border-border">
-              <th className="text-left px-3 py-2 sticky left-0 bg-muted/30 z-10 min-w-[140px]">
-                Alumno
-              </th>
-              {dates.map((date) => {
-                const day = new Date(date + 'T12:00').getDate();
-                return (
-                  <th key={date} className="px-1 py-2 text-center min-w-[26px]">
-                    {day}
-                  </th>
-                );
-              })}
-            </tr>
-          </thead>
-          <tbody>
-            {students.map((student) => (
-              <tr key={student.id} className="border-t border-border/50">
-                <td className="px-3 py-1.5 sticky left-0 bg-background z-10 truncate max-w-[140px]">
-                  {formatStudentFullName(student)}
-                </td>
+    <>
+      <div className="rounded-xl border border-border bg-background overflow-hidden">
+        <div className="px-4 py-2.5 border-b border-border bg-primary/5">
+          <h3 className="text-sm font-semibold flex items-center gap-2">
+            <CalendarDays className="size-4" />
+            Detalle de {monthName} {year}
+          </h3>
+        </div>
+        <div className="overflow-x-auto">
+          <table className="w-full text-xs">
+            <thead>
+              <tr className="bg-muted/30 border-b border-border">
+                <th className="text-left px-3 py-2 sticky left-0 bg-muted/30 z-10 min-w-[140px]">
+                  Alumno
+                </th>
                 {dates.map((date) => {
-                  const status = matrixData[student.id]?.[date];
+                  const day = new Date(date + 'T12:00').getDate();
                   return (
-                    <td key={date} className="px-1 py-1.5 text-center">
-                      <span
-                        className={cn(
-                          'inline-block size-5 rounded text-[10px] leading-5 font-medium',
-                          status === 'PRESENT' &&
-                            'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400',
-                          status === 'ABSENT' &&
-                            'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400',
-                          status === 'LATE' &&
-                            'bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-400',
-                          status === 'JUSTIFIED' &&
-                            'bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-400',
-                          status === 'WITHDRAWN' &&
-                            'bg-gray-100 text-gray-500 dark:bg-gray-800 dark:text-gray-400',
-                          !status && 'text-muted-foreground/30',
-                        )}
-                      >
-                        {status === 'PRESENT'
-                          ? 'P'
-                          : status === 'ABSENT'
-                            ? 'A'
-                            : status === 'LATE'
-                              ? 'AT'
-                              : status === 'JUSTIFIED'
-                                ? 'J'
-                                : status === 'WITHDRAWN'
-                                  ? 'R'
-                                  : '·'}
-                      </span>
-                    </td>
+                    <th key={date} className="px-1 py-2 text-center min-w-[26px]">
+                      {day}
+                    </th>
                   );
                 })}
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {students.map((student) => (
+                <tr key={student.id} className="border-t border-border/50">
+                  <td className="px-3 py-1.5 sticky left-0 bg-background z-10 truncate max-w-[140px]">
+                    {formatStudentFullName(student)}
+                  </td>
+                  {dates.map((date) => {
+                    const status = matrixData[student.id]?.[date];
+                    const reviewable = isReviewableStatus(status);
+                    return (
+                      <td key={date} className="px-1 py-1.5 text-center">
+                        <span
+                          onDoubleClick={(event) => {
+                            if (!reviewable) return;
+                            event.preventDefault();
+                            openCellReview(student, status);
+                          }}
+                          title={
+                            reviewable
+                              ? `Doble clic para revisar ${STATUS_REVIEW_LABELS[status].label.toLowerCase()}`
+                              : undefined
+                          }
+                          className={cn(
+                            'inline-block size-5 rounded text-[10px] leading-5 font-medium',
+                            reviewable && 'cursor-zoom-in hover:ring-2 hover:ring-primary/30',
+                            status === 'PRESENT' &&
+                              'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400',
+                            status === 'ABSENT' &&
+                              'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400',
+                            status === 'LATE' &&
+                              'bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-400',
+                            status === 'JUSTIFIED' &&
+                              'bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-400',
+                            status === 'WITHDRAWN' &&
+                              'bg-gray-100 text-gray-500 dark:bg-gray-800 dark:text-gray-400',
+                            !status && 'text-muted-foreground/30',
+                          )}
+                        >
+                          {status === 'PRESENT'
+                            ? 'P'
+                            : status === 'ABSENT'
+                              ? 'A'
+                              : status === 'LATE'
+                                ? 'AT'
+                                : status === 'JUSTIFIED'
+                                  ? 'J'
+                                  : status === 'WITHDRAWN'
+                                    ? 'R'
+                                    : '·'}
+                        </span>
+                      </td>
+                    );
+                  })}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        <div className="px-4 py-2 border-t border-border bg-muted/10 flex gap-3 text-[10px]">
+          <span className="flex items-center gap-1">
+            <span className="inline-block size-3 rounded bg-green-100 dark:bg-green-900/30" />P
+          </span>
+          <span className="flex items-center gap-1">
+            <span className="inline-block size-3 rounded bg-red-100 dark:bg-red-900/30" />A
+          </span>
+          <span className="flex items-center gap-1">
+            <span className="inline-block size-3 rounded bg-orange-100 dark:bg-orange-900/30" />
+            AT
+          </span>
+          <span className="flex items-center gap-1">
+            <span className="inline-block size-3 rounded bg-yellow-100 dark:bg-yellow-900/30" />J
+          </span>
+        </div>
       </div>
-      <div className="px-4 py-2 border-t border-border bg-muted/10 flex gap-3 text-[10px]">
-        <span className="flex items-center gap-1">
-          <span className="inline-block size-3 rounded bg-green-100 dark:bg-green-900/30" />P
-        </span>
-        <span className="flex items-center gap-1">
-          <span className="inline-block size-3 rounded bg-red-100 dark:bg-red-900/30" />A
-        </span>
-        <span className="flex items-center gap-1">
-          <span className="inline-block size-3 rounded bg-orange-100 dark:bg-orange-900/30" />
-          AT
-        </span>
-        <span className="flex items-center gap-1">
-          <span className="inline-block size-3 rounded bg-yellow-100 dark:bg-yellow-900/30" />J
-        </span>
-      </div>
-    </div>
+      <StatusReviewModal request={review} onClose={() => setReview(null)} />
+    </>
   );
 }
 

@@ -15,11 +15,19 @@ export function parseDayLocal(input: string | Date | null | undefined): Date | n
   return Number.isNaN(d.getTime()) ? null : d;
 }
 
+export function formatDateLocal(input: Date): string {
+  if (Number.isNaN(input.getTime())) return '';
+  const year = input.getFullYear();
+  const month = String(input.getMonth() + 1).padStart(2, '0');
+  const day = String(input.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
 export function dateInputValue(input: string | Date | null | undefined): string {
   if (!input) return '';
   if (input instanceof Date) {
     if (Number.isNaN(input.getTime())) return '';
-    return input.toISOString().slice(0, 10);
+    return formatDateLocal(input);
   }
   const iso = /^(\d{4}-\d{2}-\d{2})/.exec(input);
   if (iso) return iso[1]!;

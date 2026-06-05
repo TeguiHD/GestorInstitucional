@@ -1,10 +1,17 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import type { AttendanceStatus } from '@prisma/client';
 
+import {
+  addAttendanceStatus,
+  buildAttendanceSummary,
+  countsAsAttendance,
+  emptyAttendanceCounts,
+  type AttendanceCounts,
+} from '../attendance/attendance-calculation.js';
 import { CalendarService } from '../calendar/calendar.service.js';
 import { PrismaService } from '../prisma/prisma.service.js';
+import { SchoolConfigService, type DateRange } from '../school-config/school-config.service.js';
 
-const PRESENT_STATUSES: AttendanceStatus[] = ['PRESENT', 'LATE', 'JUSTIFIED'];
 const DOW_NAMES = ['Domingo', 'Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado'];
 const MONTH_NAMES = [
   'enero',
@@ -34,6 +41,7 @@ export class InsightsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly calendar: CalendarService,
+    private readonly schoolConfig: SchoolConfigService,
   ) {}
 
   async getCourseInsights(
@@ -48,75 +56,119 @@ export class InsightsService {
   }> {
     const course = await this.prisma.course.findUnique({
       where: { id: courseId },
-      select: { id: true, code: true, name: true },
+      select: { id: true, code: true, name: true, schoolId: true },
     });
     if (!course) throw new NotFoundException('Curso no encontrado');
 
-    const from = new Date(year, month - 1, 1);
-    const to = new Date(year, month, 0, 23, 59, 59);
-    const prevFrom = new Date(year, month - 2, 1);
-    const prevTo = new Date(year, month - 1, 0, 23, 59, 59);
-
-    const courseSchool = await this.prisma.course.findUnique({
-      where: { id: courseId },
-      select: { schoolId: true },
+    const periodRange = this.limitRangeToToday({
+      from: new Date(year, month - 1, 1),
+      to: new Date(year, month, 0, 23, 59, 59, 999),
     });
-    const schoolId = courseSchool?.schoolId ?? '';
+    const previousRange = this.limitRangeToToday({
+      from: new Date(year, month - 2, 1),
+      to: new Date(year, month - 1, 0, 23, 59, 59, 999),
+    });
 
-    const [currentRaw, previousRaw, nonSchool, nonSchoolPrev] = await Promise.all([
-      this.prisma.attendanceRecord.findMany({
-        where: { courseId, date: { gte: from, lte: to } },
-        select: {
-          date: true,
-          status: true,
-          studentId: true,
-          student: { select: { firstName: true, lastName: true } },
-        },
-      }),
-      this.prisma.attendanceRecord.findMany({
-        where: { courseId, date: { gte: prevFrom, lte: prevTo } },
-        select: { status: true, date: true },
-      }),
-      schoolId ? this.calendar.getNonSchoolDays(schoolId, from, to) : new Set<string>(),
-      schoolId ? this.calendar.getNonSchoolDays(schoolId, prevFrom, prevTo) : new Set<string>(),
+    const [currentStudents, previousStudents, nonSchool, nonSchoolPrev] = await Promise.all([
+      periodRange
+        ? this.prisma.student.findMany({
+            where: {
+              courseId,
+              ...this.schoolConfig.activeDuringRangesWhere([periodRange]),
+            },
+            select: this.studentPeriodSelect(),
+          })
+        : Promise.resolve([]),
+      previousRange
+        ? this.prisma.student.findMany({
+            where: {
+              courseId,
+              ...this.schoolConfig.activeDuringRangesWhere([previousRange]),
+            },
+            select: this.studentPeriodSelect(),
+          })
+        : Promise.resolve([]),
+      periodRange
+        ? this.calendar.getNonSchoolDays(course.schoolId, periodRange.from, periodRange.to)
+        : Promise.resolve(new Set<string>()),
+      previousRange
+        ? this.calendar.getNonSchoolDays(course.schoolId, previousRange.from, previousRange.to)
+        : Promise.resolve(new Set<string>()),
     ]);
 
-    const current = currentRaw.filter((r) => !nonSchool.has(r.date.toISOString().split('T')[0]!));
-    const previous = previousRaw.filter(
-      (r) => !nonSchoolPrev.has(r.date.toISOString().split('T')[0]!),
+    const [currentRaw, previousRaw] = await Promise.all([
+      periodRange
+        ? this.prisma.attendanceRecord.findMany({
+            where: {
+              courseId,
+              date: { gte: periodRange.from, lte: periodRange.to },
+              studentId: { in: currentStudents.map((s) => s.id) },
+            },
+            select: {
+              date: true,
+              status: true,
+              studentId: true,
+              student: { select: { firstName: true, lastName: true } },
+            },
+          })
+        : Promise.resolve([]),
+      previousRange
+        ? this.prisma.attendanceRecord.findMany({
+            where: {
+              courseId,
+              date: { gte: previousRange.from, lte: previousRange.to },
+              studentId: { in: previousStudents.map((s) => s.id) },
+            },
+            select: { status: true, date: true },
+          })
+        : Promise.resolve([]),
+    ]);
+
+    const current = this.filterSchoolRecords(currentRaw, nonSchool);
+    const previous = this.filterSchoolRecords(previousRaw, nonSchoolPrev);
+    const currentRanges = periodRange ? [periodRange] : [];
+    const previousRanges = previousRange ? [previousRange] : [];
+    const currentSummary = this.summaryForRecords(
+      current,
+      currentStudents,
+      currentRanges,
+      nonSchool,
+    );
+    const previousSummary = this.summaryForRecords(
+      previous,
+      previousStudents,
+      previousRanges,
+      nonSchoolPrev,
     );
 
     const insights: Insight[] = [];
-    const totalCurrent = current.length;
-    const presentCurrent = current.filter((r) => PRESENT_STATUSES.includes(r.status)).length;
-    const rateCurrent = totalCurrent > 0 ? presentCurrent / totalCurrent : 0;
+    const rateCurrent = currentSummary.attendanceRate ?? 0;
 
-    if (previous.length > 0) {
-      const ratePrev =
-        previous.filter((r) => PRESENT_STATUSES.includes(r.status)).length / previous.length;
+    if (previousSummary.totalClasses > 0 && currentSummary.totalClasses > 0) {
+      const ratePrev = previousSummary.attendanceRate ?? 0;
       const delta = rateCurrent - ratePrev;
       if (Math.abs(delta) >= 0.03) {
         insights.push({
           type: 'trend',
           severity: delta < -0.05 ? 'warn' : 'info',
           title: delta > 0 ? 'Asistencia al alza' : 'Asistencia a la baja',
-          detail: `${(Math.abs(delta) * 100).toFixed(1)}% vs ${MONTH_NAMES[prevFrom.getMonth()]} (${(ratePrev * 100).toFixed(1)}% → ${(rateCurrent * 100).toFixed(1)}%).`,
+          detail: `${(Math.abs(delta) * 100).toFixed(1)}% vs ${MONTH_NAMES[new Date(year, month - 2, 1).getMonth()]} (${(ratePrev * 100).toFixed(1)}% → ${(rateCurrent * 100).toFixed(1)}%).`,
           meta: { delta, ratePrev, rateCurrent },
         });
       }
     }
 
-    const byDow = new Map<number, { total: number; absent: number }>();
+    const byDow = this.activeDayCountsByDow(currentStudents, currentRanges, nonSchool);
     for (const r of current) {
       const dow = r.date.getDay();
-      const e = byDow.get(dow) ?? { total: 0, absent: 0 };
-      e.total++;
-      if (!PRESENT_STATUSES.includes(r.status)) e.absent++;
+      const e = byDow.get(dow);
+      if (!e) continue;
+      if (countsAsAttendance(r.status)) e.attended++;
       byDow.set(dow, e);
     }
     const dowRates = Array.from(byDow.entries())
       .filter(([, v]) => v.total >= 3)
-      .map(([dow, v]) => ({ dow, rate: v.absent / v.total, total: v.total }));
+      .map(([dow, v]) => ({ dow, rate: 1 - v.attended / v.total, total: v.total }));
     if (dowRates.length > 0) {
       const worst = dowRates.sort((a, b) => b.rate - a.rate)[0]!;
       const avgRate = 1 - rateCurrent;
@@ -131,17 +183,44 @@ export class InsightsService {
       }
     }
 
-    const byStudent = new Map<string, { name: string; total: number; absent: number }>();
+    const byStudent = new Map<
+      string,
+      {
+        name: string;
+        student: (typeof currentStudents)[number];
+        counts: AttendanceCounts;
+      }
+    >();
+    for (const student of currentStudents) {
+      byStudent.set(student.id, {
+        name: `${student.firstName} ${student.lastName}`,
+        student,
+        counts: emptyAttendanceCounts(),
+      });
+    }
     for (const r of current) {
-      const name = `${r.student.firstName} ${r.student.lastName}`;
-      const e = byStudent.get(r.studentId) ?? { name, total: 0, absent: 0 };
-      e.total++;
-      if (!PRESENT_STATUSES.includes(r.status)) e.absent++;
-      byStudent.set(r.studentId, e);
+      const e = byStudent.get(r.studentId);
+      if (!e) continue;
+      addAttendanceStatus(e.counts, r.status);
     }
     const atRisk = Array.from(byStudent.entries())
-      .map(([id, v]) => ({ id, name: v.name, rate: 1 - v.absent / v.total, total: v.total }))
-      .filter((s) => s.total >= 5 && s.rate < 0.7)
+      .map(([id, v]) => {
+        const totalClasses = this.schoolConfig.countActiveSchoolDaysInRanges(
+          v.student,
+          currentRanges,
+          nonSchool,
+        );
+        const summary = buildAttendanceSummary(v.counts, totalClasses);
+        return {
+          id,
+          name: v.name,
+          rate: summary.attendanceRate ?? 0,
+          total: summary.totalClasses,
+          totalClasses: summary.totalClasses,
+          missing: summary.missing,
+        };
+      })
+      .filter((s) => s.totalClasses >= 5 && s.rate < 0.7)
       .sort((a, b) => a.rate - b.rate);
     if (atRisk.length > 0) {
       const top = atRisk.slice(0, 5);
@@ -156,7 +235,9 @@ export class InsightsService {
       });
     }
 
-    const streaks = await this.detectStreaks(courseId, from, to);
+    const streaks = periodRange
+      ? await this.detectStreaks(courseId, periodRange.from, periodRange.to)
+      : [];
     if (streaks.length > 0) {
       const top = streaks.slice(0, 3);
       insights.push({
@@ -169,8 +250,8 @@ export class InsightsService {
     }
 
     return {
-      course,
-      period: `${MONTH_NAMES[from.getMonth()]} ${year}`,
+      course: { id: course.id, code: course.code, name: course.name },
+      period: `${MONTH_NAMES[month - 1]} ${year}`,
       attendanceRate: rateCurrent,
       insights: insights.sort((a, b) => this.sevRank(b.severity) - this.sevRank(a.severity)),
     };
@@ -185,31 +266,69 @@ export class InsightsService {
     overallRate: number;
     insights: Insight[];
   }> {
-    const from = new Date(year, month - 1, 1);
-    const to = new Date(year, month, 0, 23, 59, 59);
+    const monthStart = new Date(year, month - 1, 1);
+    const range = this.limitRangeToToday({
+      from: monthStart,
+      to: new Date(year, month, 0, 23, 59, 59, 999),
+    });
 
     const courses = await this.prisma.course.findMany({
       where: { schoolId, active: true },
-      select: { id: true, code: true, name: true },
+      select: {
+        id: true,
+        code: true,
+        name: true,
+        students: range
+          ? {
+              where: this.schoolConfig.activeDuringRangesWhere([range]),
+              select: this.studentPeriodSelect(),
+            }
+          : { where: { id: { in: [] } }, select: this.studentPeriodSelect() },
+      },
     });
 
-    const nonSchool = await this.calendar.getNonSchoolDays(schoolId, from, to);
-    const stats = await Promise.all(
-      courses.map(async (c) => {
-        const recsRaw = await this.prisma.attendanceRecord.findMany({
-          where: { courseId: c.id, date: { gte: from, lte: to } },
-          select: { status: true, date: true },
-        });
-        const recs = recsRaw.filter((r) => !nonSchool.has(r.date.toISOString().split('T')[0]!));
-        const total = recs.length;
-        const present = recs.filter((r) => PRESENT_STATUSES.includes(r.status)).length;
-        return { ...c, total, rate: total > 0 ? present / total : 0 };
-      }),
-    );
-    const active = stats.filter((s) => s.total > 0);
+    const nonSchool = range
+      ? await this.calendar.getNonSchoolDays(schoolId, range.from, range.to)
+      : new Set<string>();
+    const records = range
+      ? await this.prisma.attendanceRecord.findMany({
+          where: {
+            course: { schoolId, active: true },
+            date: { gte: range.from, lte: range.to },
+          },
+          select: { courseId: true, status: true, date: true },
+        })
+      : [];
+    const recordsByCourse = new Map<string, typeof records>();
+    for (const record of this.filterSchoolRecords(records, nonSchool)) {
+      const bucket = recordsByCourse.get(record.courseId) ?? [];
+      bucket.push(record);
+      recordsByCourse.set(record.courseId, bucket);
+    }
 
-    const totalAll = active.reduce((a, s) => a + s.total, 0);
-    const presentAll = active.reduce((a, s) => a + s.rate * s.total, 0);
+    const ranges = range ? [range] : [];
+    const stats = courses.map((course) => {
+      const summary = this.summaryForRecords(
+        recordsByCourse.get(course.id) ?? [],
+        course.students,
+        ranges,
+        nonSchool,
+      );
+      return {
+        id: course.id,
+        code: course.code,
+        name: course.name,
+        total: summary.totalClasses,
+        totalClasses: summary.totalClasses,
+        attended: summary.attended,
+        missing: summary.missing,
+        rate: summary.attendanceRate ?? 0,
+      };
+    });
+    const active = stats.filter((s) => s.totalClasses > 0);
+
+    const totalAll = active.reduce((a, s) => a + s.totalClasses, 0);
+    const presentAll = active.reduce((a, s) => a + s.attended, 0);
     const overall = totalAll > 0 ? presentAll / totalAll : 0;
 
     const insights: Insight[] = [];
@@ -236,84 +355,136 @@ export class InsightsService {
     }
 
     return {
-      period: `${MONTH_NAMES[from.getMonth()]} ${year}`,
+      period: `${MONTH_NAMES[monthStart.getMonth()]} ${year}`,
       overallRate: overall,
       insights,
     };
   }
 
   async getAtRiskStudents(schoolId: string, year: number, month: number) {
-    const from = new Date(year, month - 1, 1);
-    const to = new Date(year, month, 0, 23, 59, 59);
+    const monthStart = new Date(year, month - 1, 1);
+    const range = this.limitRangeToToday({
+      from: monthStart,
+      to: new Date(year, month, 0, 23, 59, 59, 999),
+    });
 
-    const nonSchool = await this.calendar.getNonSchoolDays(schoolId, from, to);
-
-    const records = await this.prisma.attendanceRecord.findMany({
-      where: {
-        student: { schoolId, active: true },
-        date: { gte: from, lte: to },
-      },
-      select: {
-        studentId: true,
-        status: true,
-        date: true,
-        student: {
+    const students = range
+      ? await this.prisma.student.findMany({
+          where: {
+            schoolId,
+            ...this.schoolConfig.activeDuringRangesWhere([range]),
+          },
           select: {
-            id: true,
-            firstName: true,
-            lastName: true,
+            ...this.studentPeriodSelect(),
             rut: true,
             course: { select: { id: true, name: true, code: true } },
           },
-        },
-      },
-    });
+        })
+      : [];
 
-    const filtered = records.filter((r) => !nonSchool.has(r.date.toISOString().split('T')[0]!));
+    const nonSchool = range
+      ? await this.calendar.getNonSchoolDays(schoolId, range.from, range.to)
+      : new Set<string>();
 
-    const byStudent = new Map<
-      string,
-      { student: (typeof filtered)[0]['student']; total: number; absent: number }
-    >();
-    for (const r of filtered) {
-      const e = byStudent.get(r.studentId) ?? { student: r.student, total: 0, absent: 0 };
-      e.total++;
-      if (!PRESENT_STATUSES.includes(r.status)) e.absent++;
-      byStudent.set(r.studentId, e);
+    const records = range
+      ? await this.prisma.attendanceRecord.findMany({
+          where: {
+            studentId: { in: students.map((s) => s.id) },
+            date: { gte: range.from, lte: range.to },
+          },
+          select: { studentId: true, status: true, date: true },
+        })
+      : [];
+
+    const ranges = range ? [range] : [];
+    const byStudent = new Map(students.map((student) => [student.id, emptyAttendanceCounts()]));
+    for (const record of this.filterSchoolRecords(records, nonSchool)) {
+      const counts = byStudent.get(record.studentId);
+      if (counts) addAttendanceStatus(counts, record.status);
     }
 
-    const atRisk = Array.from(byStudent.values())
-      .map((v) => ({ ...v.student, total: v.total, attendanceRate: 1 - v.absent / v.total }))
-      .filter((s) => s.total >= 5 && s.attendanceRate < 0.7)
+    const atRisk = students
+      .map((student) => {
+        const totalClasses = this.schoolConfig.countActiveSchoolDaysInRanges(
+          student,
+          ranges,
+          nonSchool,
+        );
+        const summary = buildAttendanceSummary(
+          byStudent.get(student.id) ?? emptyAttendanceCounts(),
+          totalClasses,
+        );
+        return {
+          id: student.id,
+          firstName: student.firstName,
+          lastName: student.lastName,
+          rut: student.rut,
+          course: student.course,
+          total: summary.totalClasses,
+          totalClasses: summary.totalClasses,
+          missing: summary.missing,
+          attendanceRate: summary.attendanceRate ?? 0,
+        };
+      })
+      .filter((s) => s.totalClasses >= 5 && s.attendanceRate < 0.7)
       .sort((a, b) => a.attendanceRate - b.attendanceRate);
 
     return {
-      period: `${MONTH_NAMES[from.getMonth()]} ${year}`,
+      period: `${MONTH_NAMES[monthStart.getMonth()]} ${year}`,
       count: atRisk.length,
       students: atRisk,
     };
   }
 
   async getWeekdayHeatmap(schoolId: string, year: number, month: number) {
-    const from = new Date(year, month - 1, 1);
-    const to = new Date(year, month, 0, 23, 59, 59);
-
-    const records = await this.prisma.attendanceRecord.findMany({
-      where: {
-        course: { schoolId, active: true },
-        date: { gte: from, lte: to },
-      },
-      select: {
-        date: true,
-        status: true,
-        course: { select: { code: true } },
-      },
+    const range = this.limitRangeToToday({
+      from: new Date(year, month - 1, 1),
+      to: new Date(year, month, 0, 23, 59, 59, 999),
     });
 
-    const matrix: Record<string, Record<number, { total: number; present: number }>> = {};
-    const PRESENT = new Set<AttendanceStatus>(['PRESENT', 'LATE']);
+    const courses = await this.prisma.course.findMany({
+      where: { schoolId, active: true },
+      select: {
+        id: true,
+        code: true,
+        students: range
+          ? {
+              where: this.schoolConfig.activeDuringRangesWhere([range]),
+              select: this.studentPeriodSelect(),
+            }
+          : { where: { id: { in: [] } }, select: this.studentPeriodSelect() },
+      },
+    });
+    const nonSchool = range
+      ? await this.calendar.getNonSchoolDays(schoolId, range.from, range.to)
+      : new Set<string>();
 
-    for (const r of records) {
+    const matrix: Record<string, Record<number, { total: number; present: number }>> = {};
+    const ranges = range ? [range] : [];
+    for (const course of courses) {
+      matrix[course.code] = {};
+      const byDow = this.activeDayCountsByDow(course.students, ranges, nonSchool);
+      for (const [dow, cell] of byDow) {
+        if (dow === 0 || dow === 6) continue;
+        matrix[course.code]![dow] = { total: cell.total, present: 0 };
+      }
+    }
+
+    const records = range
+      ? await this.prisma.attendanceRecord.findMany({
+          where: {
+            course: { schoolId, active: true },
+            date: { gte: range.from, lte: range.to },
+          },
+          select: {
+            date: true,
+            status: true,
+            course: { select: { code: true } },
+          },
+        })
+      : [];
+
+    for (const r of this.filterSchoolRecords(records, nonSchool)) {
       const dow = r.date.getDay();
       if (dow === 0 || dow === 6) continue;
       const courseKey = r.course.code;
@@ -321,8 +492,7 @@ export class InsightsService {
       const courseMatrix = matrix[courseKey]!;
       if (!courseMatrix[dow]) courseMatrix[dow] = { total: 0, present: 0 };
       const cell = courseMatrix[dow]!;
-      cell.total++;
-      if (PRESENT.has(r.status)) cell.present++;
+      if (countsAsAttendance(r.status)) cell.present++;
     }
 
     return Object.entries(matrix)
@@ -340,13 +510,13 @@ export class InsightsService {
   }
 
   async getRiskPrediction(schoolId: string) {
-    const now = new Date();
+    const now = this.endOfLocalDay(new Date());
     const weeks = Array.from({ length: 4 }, (_, i) => {
       const end = new Date(now);
       end.setDate(end.getDate() - i * 7);
-      const start = new Date(end);
+      const start = this.startOfLocalDay(end);
       start.setDate(start.getDate() - 6);
-      return { start, end };
+      return { start, end: this.endOfLocalDay(end) };
     }).reverse();
 
     const firstWeek = weeks[0];
@@ -356,10 +526,14 @@ export class InsightsService {
     const from = firstWeek.start;
     const to = lastWeek.end;
 
-    const [students, allRecords] = await Promise.all([
+    const [students, allRecords, nonSchool] = await Promise.all([
       this.prisma.student.findMany({
-        where: { schoolId, active: true },
+        where: {
+          schoolId,
+          ...this.schoolConfig.activeDuringRangesWhere([{ from, to }]),
+        },
         select: {
+          ...this.studentPeriodSelect(),
           id: true,
           firstName: true,
           lastName: true,
@@ -368,21 +542,27 @@ export class InsightsService {
         },
       }),
       this.prisma.attendanceRecord.findMany({
-        where: { student: { schoolId, active: true }, date: { gte: from, lte: to } },
+        where: { student: { schoolId }, date: { gte: from, lte: to } },
         select: { studentId: true, date: true, status: true },
       }),
+      this.calendar.getNonSchoolDays(schoolId, from, to),
     ]);
 
-    const PRESENT = new Set<AttendanceStatus>(['PRESENT', 'LATE']);
+    const filteredRecords = this.filterSchoolRecords(allRecords, nonSchool);
     const results = [];
 
     for (const student of students) {
       const weekRates: number[] = weeks.map(({ start, end }) => {
-        const recs = allRecords.filter(
+        const totalClasses = this.schoolConfig.countActiveSchoolDaysInRanges(
+          student,
+          [{ from: start, to: end }],
+          nonSchool,
+        );
+        if (totalClasses === 0) return NaN;
+        const recs = filteredRecords.filter(
           (r) => r.studentId === student.id && r.date >= start && r.date <= end,
         );
-        if (!recs.length) return NaN;
-        return recs.filter((r) => PRESENT.has(r.status)).length / recs.length;
+        return recs.filter((r) => countsAsAttendance(r.status)).length / totalClasses;
       });
 
       const valid = weekRates.filter((r) => !isNaN(r));
@@ -419,6 +599,93 @@ export class InsightsService {
     return results.sort((a, b) => a.avgRate - b.avgRate).slice(0, 20);
   }
 
+  private studentPeriodSelect() {
+    return {
+      id: true,
+      firstName: true,
+      lastName: true,
+      enrolledAt: true,
+      withdrawnAt: true,
+    } as const;
+  }
+
+  private filterSchoolRecords<T extends { date: Date }>(
+    records: T[],
+    nonSchoolDays: Set<string>,
+  ): T[] {
+    return records.filter(
+      (record) => !nonSchoolDays.has(this.schoolConfig.formatDate(record.date)),
+    );
+  }
+
+  private summaryForRecords<T extends { status: AttendanceStatus | string | null | undefined }>(
+    records: T[],
+    students: Array<{ enrolledAt: Date; withdrawnAt: Date | null }>,
+    ranges: DateRange[],
+    nonSchoolDays: Set<string>,
+  ) {
+    const counts = emptyAttendanceCounts();
+    for (const record of records) addAttendanceStatus(counts, record.status);
+    const totalClasses = students.reduce(
+      (sum, student) =>
+        sum + this.schoolConfig.countActiveSchoolDaysInRanges(student, ranges, nonSchoolDays),
+      0,
+    );
+    return buildAttendanceSummary(counts, totalClasses);
+  }
+
+  private activeDayCountsByDow(
+    students: Array<{ enrolledAt: Date; withdrawnAt: Date | null }>,
+    ranges: DateRange[],
+    nonSchoolDays: Set<string>,
+  ): Map<number, { total: number; attended: number }> {
+    const byDow = new Map<number, { total: number; attended: number }>();
+    for (const student of students) {
+      for (const range of ranges) {
+        const start = this.startOfLocalDay(
+          student.enrolledAt > range.from ? student.enrolledAt : range.from,
+        );
+        const withdrawnEnd =
+          student.withdrawnAt && student.withdrawnAt <= range.to
+            ? this.addDays(this.startOfLocalDay(student.withdrawnAt), -1)
+            : range.to;
+        const end = this.startOfLocalDay(withdrawnEnd);
+        const cursor = new Date(start);
+        while (cursor <= end) {
+          const dow = cursor.getDay();
+          if (dow !== 0 && dow !== 6 && !nonSchoolDays.has(this.schoolConfig.formatDate(cursor))) {
+            const cell = byDow.get(dow) ?? { total: 0, attended: 0 };
+            cell.total++;
+            byDow.set(dow, cell);
+          }
+          cursor.setDate(cursor.getDate() + 1);
+        }
+      }
+    }
+    return byDow;
+  }
+
+  private limitRangeToToday(range: DateRange): DateRange | null {
+    const today = this.endOfLocalDay(new Date());
+    const to = range.to > today ? today : range.to;
+    if (to < range.from) return null;
+    return { from: range.from, to };
+  }
+
+  private startOfLocalDay(date: Date): Date {
+    return new Date(date.getFullYear(), date.getMonth(), date.getDate());
+  }
+
+  private endOfLocalDay(date: Date): Date {
+    return new Date(date.getFullYear(), date.getMonth(), date.getDate(), 23, 59, 59, 999);
+  }
+
+  private addDays(date: Date, days: number): Date {
+    const next = new Date(date);
+    next.setDate(next.getDate() + days);
+    return next;
+  }
+
   private async detectStreaks(
     courseId: string,
     from: Date,
@@ -441,7 +708,7 @@ export class InsightsService {
         student: { select: { firstName: true, lastName: true } },
       },
     });
-    const records = allRecords.filter((r) => !nonSchool.has(r.date.toISOString().split('T')[0]!));
+    const records = this.filterSchoolRecords(allRecords, nonSchool);
 
     const byStudent = new Map<
       string,
@@ -450,7 +717,7 @@ export class InsightsService {
     for (const r of records) {
       const name = `${r.student.firstName} ${r.student.lastName}`;
       const e = byStudent.get(r.studentId) ?? { name, dates: [] };
-      e.dates.push({ date: r.date, absent: !PRESENT_STATUSES.includes(r.status) });
+      e.dates.push({ date: r.date, absent: !countsAsAttendance(r.status) });
       byStudent.set(r.studentId, e);
     }
 

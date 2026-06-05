@@ -24,6 +24,7 @@ import { AuditModule } from './audit/audit.module.js';
 import { AlertsModule } from './alerts/alerts.module.js';
 import { RetentionModule } from './retention/retention.module.js';
 import { SchoolConfigModule } from './school-config/school-config.module.js';
+import { SystemConfigModule } from './system-config/system-config.module.js';
 
 @Module({
   imports: [
@@ -93,6 +94,7 @@ import { SchoolConfigModule } from './school-config/school-config.module.js';
     AlertsModule,
     RetentionModule,
     SchoolConfigModule,
+    SystemConfigModule,
     HealthModule,
   ],
   providers: [

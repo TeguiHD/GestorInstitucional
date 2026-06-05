@@ -40,7 +40,7 @@ WORKDIR /app
 
 ENV NODE_ENV=production
 
-RUN apk add --no-cache openssl
+RUN apk add --no-cache openssl mariadb-client zip bash 7zip
 RUN addgroup --system --gid 1001 nodejs && adduser --system --uid 1001 appuser
 
 RUN npm install -g pnpm@9
@@ -65,11 +65,14 @@ RUN PRISMA_DIR=/app/node_modules/.pnpm/@prisma+client@5.22.0_prisma@5.22.0/node_
 COPY --from=builder /app/apps/api/prisma ./apps/api/prisma
 COPY apps/api/assets ./apps/api/assets
 COPY apps/api/scripts ./apps/api/scripts
+COPY infra/backup ./infra/backup
+
+RUN chmod +x /app/infra/backup/run-backup.sh
 
 RUN find /app/node_modules/.pnpm -maxdepth 1 -name '@prisma+engines@5.22.0*' -exec chown -R appuser:nodejs {} + && \
     chown -R appuser:nodejs /app/node_modules/.pnpm/@prisma+client@5.22.0_prisma@5.22.0/node_modules/.prisma && \
-    mkdir -p /app/uploads && \
-    chown -R appuser:nodejs /app/uploads
+    mkdir -p /app/uploads /app/backups && \
+    chown -R appuser:nodejs /app/uploads /app/backups /app/infra/backup
 
 USER appuser
 EXPOSE 4000

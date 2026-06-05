@@ -41,6 +41,10 @@ const MONTH_NAMES_ES = [
 ];
 const DOW_LABELS = ['D', 'L', 'M', 'M', 'J', 'V', 'S'];
 
+export function calculateReportAttendanceRate(attended: number, totalClasses: number): number {
+  return totalClasses > 0 ? attended / totalClasses : 0;
+}
+
 @Injectable()
 export class ReportsService {
   constructor(
@@ -221,16 +225,30 @@ export class ReportsService {
 
     let y = 190;
     const rowH = 18;
+    const cols = {
+      num: { x: 54, w: 24 },
+      name: { x: 82, w: 174 },
+      rut: { x: 258, w: 60 },
+      p: { x: 322, w: 20 },
+      a: { x: 344, w: 20 },
+      l: { x: 366, w: 24 },
+      j: { x: 394, w: 20 },
+      attended: { x: 418, w: 32 },
+      total: { x: 452, w: 32 },
+      rate: { x: 488, w: 56 },
+    };
     doc.rect(48, y, 499, rowH).fill('#1F4E79');
-    doc.fillColor('#fff').font('Helvetica-Bold').fontSize(9);
-    doc.text('N°', 54, y + 5, { width: 28 });
-    doc.text('Alumno', 88, y + 5, { width: 230 });
-    doc.text('RUT', 322, y + 5, { width: 70 });
-    doc.text('P', 396, y + 5, { width: 22, align: 'center' });
-    doc.text('A', 420, y + 5, { width: 22, align: 'center' });
-    doc.text('AT', 444, y + 5, { width: 22, align: 'center' });
-    doc.text('J', 468, y + 5, { width: 22, align: 'center' });
-    doc.text('% Asist.', 494, y + 5, { width: 50, align: 'center' });
+    doc.fillColor('#fff').font('Helvetica-Bold').fontSize(8);
+    doc.text('N°', cols.num.x, y + 5, { width: cols.num.w });
+    doc.text('Alumno', cols.name.x, y + 5, { width: cols.name.w });
+    doc.text('RUT', cols.rut.x, y + 5, { width: cols.rut.w });
+    doc.text('P', cols.p.x, y + 5, { width: cols.p.w, align: 'center' });
+    doc.text('A', cols.a.x, y + 5, { width: cols.a.w, align: 'center' });
+    doc.text('AT', cols.l.x, y + 5, { width: cols.l.w, align: 'center' });
+    doc.text('J', cols.j.x, y + 5, { width: cols.j.w, align: 'center' });
+    doc.text('Asist.', cols.attended.x, y + 5, { width: cols.attended.w, align: 'center' });
+    doc.text('Total', cols.total.x, y + 5, { width: cols.total.w, align: 'center' });
+    doc.text('% Asist.', cols.rate.x, y + 5, { width: cols.rate.w, align: 'center' });
     y += rowH;
 
     doc.font('Helvetica').fontSize(9).fillColor('#000');
@@ -243,7 +261,7 @@ export class ReportsService {
       }
       const c = perStudent.get(s.id)!;
       const activeDays = this.countActiveSchoolDays(s, from, to, nonSchoolDays);
-      const rate = activeDays > 0 ? (c.p + c.l + c.j) / activeDays : 0;
+      const rate = activeDays > 0 ? (c.p + c.l) / activeDays : 0;
       if (activeDays > 0) {
         totalRate += rate;
         totalStudents++;
@@ -251,22 +269,27 @@ export class ReportsService {
       const band = i % 2 === 0 ? '#F5F8FB' : '#FFFFFF';
       doc.rect(48, y, 499, rowH).fill(band);
       doc.fillColor('#000');
-      doc.text(String(s.enrollmentNumber), 54, y + 5, { width: 28 });
+      doc.text(String(s.enrollmentNumber), cols.num.x, y + 5, { width: cols.num.w });
       doc.text(
         `${s.lastName}${s.secondLastName ? ' ' + s.secondLastName : ''}, ${s.firstName}`,
-        88,
+        cols.name.x,
         y + 5,
-        { width: 230, ellipsis: true },
+        { width: cols.name.w, ellipsis: true },
       );
-      doc.text(s.rut, 322, y + 5, { width: 70 });
-      doc.text(String(c.p), 396, y + 5, { width: 22, align: 'center' });
-      doc.text(String(c.a), 420, y + 5, { width: 22, align: 'center' });
-      doc.text(String(c.l), 444, y + 5, { width: 22, align: 'center' });
-      doc.text(String(c.j), 468, y + 5, { width: 22, align: 'center' });
+      doc.text(s.rut, cols.rut.x, y + 5, { width: cols.rut.w });
+      doc.text(String(c.p), cols.p.x, y + 5, { width: cols.p.w, align: 'center' });
+      doc.text(String(c.a), cols.a.x, y + 5, { width: cols.a.w, align: 'center' });
+      doc.text(String(c.l), cols.l.x, y + 5, { width: cols.l.w, align: 'center' });
+      doc.text(String(c.j), cols.j.x, y + 5, { width: cols.j.w, align: 'center' });
+      doc.text(String(c.p + c.l), cols.attended.x, y + 5, {
+        width: cols.attended.w,
+        align: 'center',
+      });
+      doc.text(String(activeDays), cols.total.x, y + 5, { width: cols.total.w, align: 'center' });
       const rateColor = rate >= 0.9 ? '#15803d' : rate >= 0.7 ? '#b45309' : '#b91c1c';
       doc.fillColor(rateColor).font('Helvetica-Bold');
-      doc.text(activeDays > 0 ? `${(rate * 100).toFixed(1)}%` : '—', 494, y + 5, {
-        width: 50,
+      doc.text(activeDays > 0 ? `${(rate * 100).toFixed(1)}%` : '—', cols.rate.x, y + 5, {
+        width: cols.rate.w,
         align: 'center',
       });
       doc.fillColor('#000').font('Helvetica');
@@ -281,6 +304,13 @@ export class ReportsService {
       width: 499 - 12,
     });
     y += 48;
+    doc.fillColor('#555').font('Helvetica-Oblique').fontSize(8);
+    doc.text(
+      '% = (Asist. * 100) / Total. Asist. = Presentes + Atrasos; Total = días lectivos trabajados con matrícula activa.',
+      48,
+      y - 16,
+      { width: 499 },
+    );
 
     if (y > 720) {
       doc.addPage();
@@ -519,7 +549,7 @@ export class ReportsService {
       }
 
       const activeDays = this.countActiveSchoolDays(s, from, to, nonSchoolDays);
-      const rate = activeDays > 0 ? (p + l + j) / activeDays : 0;
+      const rate = activeDays > 0 ? (p + l) / activeDays : 0;
       if (activeDays > 0) {
         totalRate += rate;
         totalStudents++;
@@ -557,7 +587,11 @@ export class ReportsService {
     y += 36;
 
     doc.fillColor('#000').font('Helvetica').fontSize(8);
-    doc.text('Leyenda: 1 = Presente  ·  0 = Ausente  ·  AT = Atraso  ·  J = Justificado', NAV_X, y);
+    doc.text(
+      'Leyenda: 1 = Presente  ·  0 = Ausente  ·  AT = Atraso  ·  J = Justificado  ·  % = (Presentes + Atrasos) * 100 / Total clases',
+      NAV_X,
+      y,
+    );
     y += 28;
     doc.text('_______________________________', NAV_X + 60, y);
     doc.text('_______________________________', PAGE_W - NAV_X - 220, y);
@@ -613,6 +647,7 @@ export class ReportsService {
       where: { courseId, date: { gte: start, lte: end } },
       select: { studentId: true, date: true, status: true },
     });
+    const nonSchoolDays = await this.calendar.getNonSchoolDays(course.school.id, start, end);
 
     const SYMBOL: Record<string, string> = {
       PRESENT: '1',
@@ -656,8 +691,9 @@ export class ReportsService {
     ws.getColumn(11).width = 8;
     ws.getColumn(12).width = 9;
     ws.getColumn(13).width = 8;
+    ws.getColumn(14).width = 11;
 
-    ws.mergeCells('A1:M1');
+    ws.mergeCells('A1:N1');
     const titleCell = ws.getCell('A1');
     titleCell.value = `${course.school.name} — LISTA SEMANAL`;
     titleCell.font = { bold: true, size: 14, color: { argb: 'FFFFFFFF' } };
@@ -665,7 +701,7 @@ export class ReportsService {
     titleCell.alignment = centerMid;
     ws.getRow(1).height = 24;
 
-    ws.mergeCells('A2:M2');
+    ws.mergeCells('A2:N2');
     ws.getCell('A2').value =
       `${course.name}  |  Semana ${start.toLocaleDateString('es-CL')} – ${end.toLocaleDateString('es-CL')}`;
     ws.getCell('A2').alignment = centerMid;
@@ -683,6 +719,7 @@ export class ReportsService {
       'Ausent.',
       '% Asist.',
       'Justif.',
+      'Total clases',
     ].forEach((h, i) => {
       const cell = ws.getCell(3, i + 1);
       cell.value = h;
@@ -735,8 +772,8 @@ export class ReportsService {
         }
       });
 
-      const total = present + absent + justified;
-      const pct = total > 0 ? (present + justified) / total : 0;
+      const activeDays = this.countActiveSchoolDays(student, start, end, nonSchoolDays);
+      const pct = calculateReportAttendanceRate(present, activeDays);
       ws.getCell(r, 10).value = present;
       ws.getCell(r, 10).border = borderAll;
       ws.getCell(r, 10).alignment = centerMid;
@@ -760,7 +797,19 @@ export class ReportsService {
       ws.getCell(r, 13).border = borderAll;
       ws.getCell(r, 13).alignment = centerMid;
       ws.getCell(r, 13).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFFF2CC' } };
+      ws.getCell(r, 14).value = activeDays;
+      ws.getCell(r, 14).border = borderAll;
+      ws.getCell(r, 14).alignment = centerMid;
+      ws.getCell(r, 14).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFDCE6F1' } };
     });
+
+    const formulaRow = course.students.length + 5;
+    ws.mergeCells(`A${formulaRow}:N${formulaRow}`);
+    const formulaCell = ws.getCell(formulaRow, 1);
+    formulaCell.value =
+      '% = (Presentes + Atrasos) * 100 / Total clases. Justificados y sin registro no suman asistencia.';
+    formulaCell.font = { italic: true, size: 9, color: { argb: 'FF666666' } };
+    formulaCell.alignment = { horizontal: 'left', vertical: 'middle' };
 
     await this.audit.log({
       userId: requestedById,
@@ -900,10 +949,11 @@ export class ReportsService {
     ws.getColumn(2).width = 35;
     ws.getColumn(3).width = 9;
     ws.getColumn(4).width = 9;
-    ws.getColumn(5).width = 10;
-    ws.getColumn(6).width = 9;
+    ws.getColumn(5).width = 12;
+    ws.getColumn(6).width = 10;
+    ws.getColumn(7).width = 9;
 
-    ws.mergeCells('A1:F1');
+    ws.mergeCells('A1:G1');
     ws.getCell('A1').value =
       `${course.school.name} — RESUMEN SEMESTRE ${semester} ${year} — ${course.name}`;
     ws.getCell('A1').font = { bold: true, size: 13, color: { argb: 'FFFFFFFF' } };
@@ -911,7 +961,7 @@ export class ReportsService {
     ws.getCell('A1').alignment = centerMid;
     ws.getRow(1).height = 22;
 
-    ['Nº', 'Alumno', 'Asist.', 'Ausent.', '% Asist.', 'Justif.'].forEach((h, i) => {
+    ['Nº', 'Alumno', 'Asist.', 'Ausent.', 'Total clases', '% Asist.', 'Justif.'].forEach((h, i) => {
       const c = ws.getCell(2, i + 1);
       c.value = h;
       c.font = { bold: true, color: { argb: 'FFFFFFFF' } };
@@ -930,7 +980,7 @@ export class ReportsService {
         ranges,
         nonSchoolDays,
       );
-      const pct = activeDays > 0 ? (e.p + e.j) / activeDays : 0;
+      const pct = activeDays > 0 ? e.p / activeDays : 0;
       // P2: use real enrollmentNumber
       ws.getCell(r, 1).value = student.enrollmentNumber;
       ws.getCell(r, 1).border = borderAll;
@@ -946,7 +996,11 @@ export class ReportsService {
       ws.getCell(r, 4).border = borderAll;
       ws.getCell(r, 4).alignment = centerMid;
       ws.getCell(r, 4).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFCE4E4' } };
-      const pctCell = ws.getCell(r, 5);
+      ws.getCell(r, 5).value = activeDays;
+      ws.getCell(r, 5).border = borderAll;
+      ws.getCell(r, 5).alignment = centerMid;
+      ws.getCell(r, 5).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFDCE6F1' } };
+      const pctCell = ws.getCell(r, 6);
       pctCell.value = pct;
       pctCell.numFmt = '0.0%';
       pctCell.border = borderAll;
@@ -957,12 +1011,18 @@ export class ReportsService {
         pattern: 'solid',
         fgColor: { argb: pct >= 0.85 ? 'FFE2EFDA' : pct >= 0.7 ? 'FFFFF2CC' : 'FFFCE4E4' },
       };
-      ws.getCell(r, 6).value = e.j;
-      ws.getCell(r, 6).border = borderAll;
-      ws.getCell(r, 6).alignment = centerMid;
-      ws.getCell(r, 6).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFFF2CC' } };
+      ws.getCell(r, 7).value = e.j;
+      ws.getCell(r, 7).border = borderAll;
+      ws.getCell(r, 7).alignment = centerMid;
+      ws.getCell(r, 7).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFFF2CC' } };
       rowIdx++;
     });
+
+    const formulaRow = course.students.length + 4;
+    ws.mergeCells(`A${formulaRow}:G${formulaRow}`);
+    ws.getCell(formulaRow, 1).value =
+      '% = (Asist. * 100) / Total clases. Asist. = Presentes + Atrasos.';
+    ws.getCell(formulaRow, 1).font = { italic: true, size: 9, color: { argb: 'FF666666' } };
 
     await this.audit.log({
       userId: requestedById,
@@ -1068,17 +1128,18 @@ export class ReportsService {
     ws.getColumn(2).width = 35;
     ws.getColumn(3).width = 9;
     ws.getColumn(4).width = 9;
-    ws.getColumn(5).width = 10;
-    ws.getColumn(6).width = 9;
+    ws.getColumn(5).width = 12;
+    ws.getColumn(6).width = 10;
+    ws.getColumn(7).width = 9;
 
-    ws.mergeCells('A1:F1');
+    ws.mergeCells('A1:G1');
     ws.getCell('A1').value = `${course.school.name} — RESUMEN ANUAL ${year} — ${course.name}`;
     ws.getCell('A1').font = { bold: true, size: 13, color: { argb: 'FFFFFFFF' } };
     ws.getCell('A1').fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: BLUE } };
     ws.getCell('A1').alignment = centerMid;
     ws.getRow(1).height = 22;
 
-    ['Nº', 'Alumno', 'Asist.', 'Ausent.', '% Asist.', 'Justif.'].forEach((h, i) => {
+    ['Nº', 'Alumno', 'Asist.', 'Ausent.', 'Total clases', '% Asist.', 'Justif.'].forEach((h, i) => {
       const c = ws.getCell(2, i + 1);
       c.value = h;
       c.font = { bold: true, color: { argb: 'FFFFFFFF' } };
@@ -1095,7 +1156,7 @@ export class ReportsService {
         ranges,
         nonSchoolDays,
       );
-      const pct = activeDays > 0 ? (e.p + e.j) / activeDays : 0;
+      const pct = activeDays > 0 ? e.p / activeDays : 0;
       ws.getCell(r, 1).value = idx + 1;
       ws.getCell(r, 1).border = borderAll;
       ws.getCell(r, 1).alignment = centerMid;
@@ -1110,7 +1171,11 @@ export class ReportsService {
       ws.getCell(r, 4).border = borderAll;
       ws.getCell(r, 4).alignment = centerMid;
       ws.getCell(r, 4).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFCE4E4' } };
-      const pctCell = ws.getCell(r, 5);
+      ws.getCell(r, 5).value = activeDays;
+      ws.getCell(r, 5).border = borderAll;
+      ws.getCell(r, 5).alignment = centerMid;
+      ws.getCell(r, 5).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFDCE6F1' } };
+      const pctCell = ws.getCell(r, 6);
       pctCell.value = pct;
       pctCell.numFmt = '0.0%';
       pctCell.border = borderAll;
@@ -1121,11 +1186,17 @@ export class ReportsService {
         pattern: 'solid',
         fgColor: { argb: pct >= 0.9 ? 'FFE2EFDA' : pct >= 0.7 ? 'FFFFF2CC' : 'FFFCE4E4' },
       };
-      ws.getCell(r, 6).value = e.j;
-      ws.getCell(r, 6).border = borderAll;
-      ws.getCell(r, 6).alignment = centerMid;
-      ws.getCell(r, 6).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFFF2CC' } };
+      ws.getCell(r, 7).value = e.j;
+      ws.getCell(r, 7).border = borderAll;
+      ws.getCell(r, 7).alignment = centerMid;
+      ws.getCell(r, 7).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFFF2CC' } };
     });
+
+    const formulaRow = course.students.length + 4;
+    ws.mergeCells(`A${formulaRow}:G${formulaRow}`);
+    ws.getCell(formulaRow, 1).value =
+      '% = (Asist. * 100) / Total clases. Asist. = Presentes + Atrasos.';
+    ws.getCell(formulaRow, 1).font = { italic: true, size: 9, color: { argb: 'FF666666' } };
 
     await this.audit.log({
       userId: requestedById,
@@ -1241,16 +1312,30 @@ export class ReportsService {
 
     let y = 204;
     const rowH = 18;
+    const cols = {
+      num: { x: 54, w: 24 },
+      name: { x: 82, w: 174 },
+      rut: { x: 258, w: 60 },
+      p: { x: 322, w: 20 },
+      a: { x: 344, w: 20 },
+      l: { x: 366, w: 24 },
+      j: { x: 394, w: 20 },
+      attended: { x: 418, w: 32 },
+      total: { x: 452, w: 32 },
+      rate: { x: 488, w: 56 },
+    };
     doc.rect(48, y, 499, rowH).fill('#1F4E79');
-    doc.fillColor('#fff').font('Helvetica-Bold').fontSize(9);
-    doc.text('N°', 54, y + 5, { width: 28 });
-    doc.text('Alumno', 88, y + 5, { width: 230 });
-    doc.text('RUT', 322, y + 5, { width: 70 });
-    doc.text('P', 396, y + 5, { width: 22, align: 'center' });
-    doc.text('A', 420, y + 5, { width: 22, align: 'center' });
-    doc.text('AT', 444, y + 5, { width: 22, align: 'center' });
-    doc.text('J', 468, y + 5, { width: 22, align: 'center' });
-    doc.text('% Asist.', 494, y + 5, { width: 50, align: 'center' });
+    doc.fillColor('#fff').font('Helvetica-Bold').fontSize(8);
+    doc.text('N°', cols.num.x, y + 5, { width: cols.num.w });
+    doc.text('Alumno', cols.name.x, y + 5, { width: cols.name.w });
+    doc.text('RUT', cols.rut.x, y + 5, { width: cols.rut.w });
+    doc.text('P', cols.p.x, y + 5, { width: cols.p.w, align: 'center' });
+    doc.text('A', cols.a.x, y + 5, { width: cols.a.w, align: 'center' });
+    doc.text('AT', cols.l.x, y + 5, { width: cols.l.w, align: 'center' });
+    doc.text('J', cols.j.x, y + 5, { width: cols.j.w, align: 'center' });
+    doc.text('Asist.', cols.attended.x, y + 5, { width: cols.attended.w, align: 'center' });
+    doc.text('Total', cols.total.x, y + 5, { width: cols.total.w, align: 'center' });
+    doc.text('% Asist.', cols.rate.x, y + 5, { width: cols.rate.w, align: 'center' });
     y += rowH;
 
     doc.font('Helvetica').fontSize(9).fillColor('#000');
@@ -1263,7 +1348,7 @@ export class ReportsService {
       }
       const c = perStudent.get(s.id)!;
       const activeDays = this.schoolConfig.countActiveSchoolDaysInRanges(s, ranges, nonSchoolDays);
-      const rate = activeDays > 0 ? (c.p + c.l + c.j) / activeDays : 0;
+      const rate = activeDays > 0 ? (c.p + c.l) / activeDays : 0;
       if (activeDays > 0) {
         totalRate += rate;
         totalStudents++;
@@ -1271,22 +1356,27 @@ export class ReportsService {
       const band = i % 2 === 0 ? '#F5F8FB' : '#FFFFFF';
       doc.rect(48, y, 499, rowH).fill(band);
       doc.fillColor('#000');
-      doc.text(String(s.enrollmentNumber), 54, y + 5, { width: 28 });
+      doc.text(String(s.enrollmentNumber), cols.num.x, y + 5, { width: cols.num.w });
       doc.text(
         `${s.lastName}${s.secondLastName ? ' ' + s.secondLastName : ''}, ${s.firstName}`,
-        88,
+        cols.name.x,
         y + 5,
-        { width: 230, ellipsis: true },
+        { width: cols.name.w, ellipsis: true },
       );
-      doc.text(s.rut, 322, y + 5, { width: 70 });
-      doc.text(String(c.p), 396, y + 5, { width: 22, align: 'center' });
-      doc.text(String(c.a), 420, y + 5, { width: 22, align: 'center' });
-      doc.text(String(c.l), 444, y + 5, { width: 22, align: 'center' });
-      doc.text(String(c.j), 468, y + 5, { width: 22, align: 'center' });
+      doc.text(s.rut, cols.rut.x, y + 5, { width: cols.rut.w });
+      doc.text(String(c.p), cols.p.x, y + 5, { width: cols.p.w, align: 'center' });
+      doc.text(String(c.a), cols.a.x, y + 5, { width: cols.a.w, align: 'center' });
+      doc.text(String(c.l), cols.l.x, y + 5, { width: cols.l.w, align: 'center' });
+      doc.text(String(c.j), cols.j.x, y + 5, { width: cols.j.w, align: 'center' });
+      doc.text(String(c.p + c.l), cols.attended.x, y + 5, {
+        width: cols.attended.w,
+        align: 'center',
+      });
+      doc.text(String(activeDays), cols.total.x, y + 5, { width: cols.total.w, align: 'center' });
       const rateColor = rate >= 0.9 ? '#15803d' : rate >= 0.7 ? '#b45309' : '#b91c1c';
       doc.fillColor(rateColor).font('Helvetica-Bold');
-      doc.text(activeDays > 0 ? `${(rate * 100).toFixed(1)}%` : '—', 494, y + 5, {
-        width: 50,
+      doc.text(activeDays > 0 ? `${(rate * 100).toFixed(1)}%` : '—', cols.rate.x, y + 5, {
+        width: cols.rate.w,
         align: 'center',
       });
       doc.fillColor('#000').font('Helvetica');
@@ -1301,6 +1391,13 @@ export class ReportsService {
       width: 499 - 12,
     });
     y += 48;
+    doc.fillColor('#555').font('Helvetica-Oblique').fontSize(8);
+    doc.text(
+      '% = (Asist. * 100) / Total. Asist. = Presentes + Atrasos; Total = días lectivos trabajados con matrícula activa.',
+      48,
+      y - 16,
+      { width: 499 },
+    );
     if (y > 720) {
       doc.addPage();
       y = 80;
@@ -1419,16 +1516,30 @@ export class ReportsService {
 
     let y = 190;
     const rowH = 18;
+    const cols = {
+      num: { x: 54, w: 24 },
+      name: { x: 82, w: 174 },
+      rut: { x: 258, w: 60 },
+      p: { x: 322, w: 20 },
+      a: { x: 344, w: 20 },
+      l: { x: 366, w: 24 },
+      j: { x: 394, w: 20 },
+      attended: { x: 418, w: 32 },
+      total: { x: 452, w: 32 },
+      rate: { x: 488, w: 56 },
+    };
     doc.rect(48, y, 499, rowH).fill('#1F4E79');
-    doc.fillColor('#fff').font('Helvetica-Bold').fontSize(9);
-    doc.text('N°', 54, y + 5, { width: 28 });
-    doc.text('Alumno', 88, y + 5, { width: 230 });
-    doc.text('RUT', 322, y + 5, { width: 70 });
-    doc.text('P', 396, y + 5, { width: 22, align: 'center' });
-    doc.text('A', 420, y + 5, { width: 22, align: 'center' });
-    doc.text('AT', 444, y + 5, { width: 22, align: 'center' });
-    doc.text('J', 468, y + 5, { width: 22, align: 'center' });
-    doc.text('% Asist.', 494, y + 5, { width: 50, align: 'center' });
+    doc.fillColor('#fff').font('Helvetica-Bold').fontSize(8);
+    doc.text('N°', cols.num.x, y + 5, { width: cols.num.w });
+    doc.text('Alumno', cols.name.x, y + 5, { width: cols.name.w });
+    doc.text('RUT', cols.rut.x, y + 5, { width: cols.rut.w });
+    doc.text('P', cols.p.x, y + 5, { width: cols.p.w, align: 'center' });
+    doc.text('A', cols.a.x, y + 5, { width: cols.a.w, align: 'center' });
+    doc.text('AT', cols.l.x, y + 5, { width: cols.l.w, align: 'center' });
+    doc.text('J', cols.j.x, y + 5, { width: cols.j.w, align: 'center' });
+    doc.text('Asist.', cols.attended.x, y + 5, { width: cols.attended.w, align: 'center' });
+    doc.text('Total', cols.total.x, y + 5, { width: cols.total.w, align: 'center' });
+    doc.text('% Asist.', cols.rate.x, y + 5, { width: cols.rate.w, align: 'center' });
     y += rowH;
 
     doc.font('Helvetica').fontSize(9).fillColor('#000');
@@ -1441,7 +1552,7 @@ export class ReportsService {
       }
       const c = perStudent.get(s.id)!;
       const activeDays = this.schoolConfig.countActiveSchoolDaysInRanges(s, ranges, nonSchoolDays);
-      const rate = activeDays > 0 ? (c.p + c.l + c.j) / activeDays : 0;
+      const rate = activeDays > 0 ? (c.p + c.l) / activeDays : 0;
       if (activeDays > 0) {
         totalRate += rate;
         totalStudents++;
@@ -1449,22 +1560,27 @@ export class ReportsService {
       const band = i % 2 === 0 ? '#F5F8FB' : '#FFFFFF';
       doc.rect(48, y, 499, rowH).fill(band);
       doc.fillColor('#000');
-      doc.text(String(s.enrollmentNumber), 54, y + 5, { width: 28 });
+      doc.text(String(s.enrollmentNumber), cols.num.x, y + 5, { width: cols.num.w });
       doc.text(
         `${s.lastName}${s.secondLastName ? ' ' + s.secondLastName : ''}, ${s.firstName}`,
-        88,
+        cols.name.x,
         y + 5,
-        { width: 230, ellipsis: true },
+        { width: cols.name.w, ellipsis: true },
       );
-      doc.text(s.rut, 322, y + 5, { width: 70 });
-      doc.text(String(c.p), 396, y + 5, { width: 22, align: 'center' });
-      doc.text(String(c.a), 420, y + 5, { width: 22, align: 'center' });
-      doc.text(String(c.l), 444, y + 5, { width: 22, align: 'center' });
-      doc.text(String(c.j), 468, y + 5, { width: 22, align: 'center' });
+      doc.text(s.rut, cols.rut.x, y + 5, { width: cols.rut.w });
+      doc.text(String(c.p), cols.p.x, y + 5, { width: cols.p.w, align: 'center' });
+      doc.text(String(c.a), cols.a.x, y + 5, { width: cols.a.w, align: 'center' });
+      doc.text(String(c.l), cols.l.x, y + 5, { width: cols.l.w, align: 'center' });
+      doc.text(String(c.j), cols.j.x, y + 5, { width: cols.j.w, align: 'center' });
+      doc.text(String(c.p + c.l), cols.attended.x, y + 5, {
+        width: cols.attended.w,
+        align: 'center',
+      });
+      doc.text(String(activeDays), cols.total.x, y + 5, { width: cols.total.w, align: 'center' });
       const rateColor = rate >= 0.9 ? '#15803d' : rate >= 0.7 ? '#b45309' : '#b91c1c';
       doc.fillColor(rateColor).font('Helvetica-Bold');
-      doc.text(activeDays > 0 ? `${(rate * 100).toFixed(1)}%` : '—', 494, y + 5, {
-        width: 50,
+      doc.text(activeDays > 0 ? `${(rate * 100).toFixed(1)}%` : '—', cols.rate.x, y + 5, {
+        width: cols.rate.w,
         align: 'center',
       });
       doc.fillColor('#000').font('Helvetica');
@@ -1479,6 +1595,13 @@ export class ReportsService {
       width: 499 - 12,
     });
     y += 48;
+    doc.fillColor('#555').font('Helvetica-Oblique').fontSize(8);
+    doc.text(
+      '% = (Asist. * 100) / Total. Asist. = Presentes + Atrasos; Total = días lectivos trabajados con matrícula activa.',
+      48,
+      y - 16,
+      { width: 499 },
+    );
     if (y > 720) {
       doc.addPage();
       y = 80;
@@ -1551,7 +1674,8 @@ export class ReportsService {
 
     const nonSchoolDays = await this.calendar.getNonSchoolDays(student.course.school.id, from, to);
     const activeDays = this.countActiveSchoolDays(student, from, to, nonSchoolDays);
-    const rate = activeDays > 0 ? (p + l + j) / activeDays : 0;
+    const attendedDays = p + l;
+    const rate = calculateReportAttendanceRate(attendedDays, activeDays);
 
     const doc = new PDFDocument({ size: 'A4', margin: 48 });
     const chunks: Buffer[] = [];
@@ -1606,7 +1730,7 @@ export class ReportsService {
     );
     doc.text(`RUT: ${student.rut}`, 56, y + 38);
     doc.text(`N° Lista: ${student.enrollmentNumber}`, 300, y + 24);
-    doc.text(`Días hábiles del mes: ${activeDays}`, 300, y + 38);
+    doc.text(`Total clases: ${activeDays}`, 300, y + 38);
     y += 76;
 
     const rowH = 18;
@@ -1679,7 +1803,7 @@ export class ReportsService {
       doc.addPage();
       y = 80;
     }
-    doc.rect(48, y, 499, 80).fill('#DCE6F1');
+    doc.rect(48, y, 499, 104).fill('#DCE6F1');
     doc.fillColor('#1F4E79').font('Helvetica-Bold').fontSize(11);
     doc.text('RESUMEN ESTADÍSTICO', 56, y + 8);
     doc.font('Helvetica').fontSize(10).fillColor('#000');
@@ -1687,12 +1811,18 @@ export class ReportsService {
     doc.text(`Ausentes (A): ${a}`, 56, y + 44);
     doc.text(`Atrasos (AT): ${l}`, 220, y + 28);
     doc.text(`Justificados (J): ${j}`, 220, y + 44);
+    doc.text(`Días asistidos (P+AT): ${attendedDays}`, 56, y + 64);
+    doc.text(`Total clases: ${activeDays}`, 220, y + 64);
+    doc
+      .fontSize(8)
+      .fillColor('#555')
+      .text(`Fórmula: ${attendedDays} * 100 / ${activeDays}`, 56, y + 82, { width: 260 });
     const rateColor = rate >= 0.9 ? '#15803d' : rate >= 0.7 ? '#b45309' : '#b91c1c';
     doc.fillColor(rateColor).font('Helvetica-Bold').fontSize(14);
     doc.text(`${(rate * 100).toFixed(1)}%`, 400, y + 32, { width: 100, align: 'center' });
     doc.fillColor('#000').font('Helvetica').fontSize(9);
     doc.text('Asistencia', 400, y + 52, { width: 100, align: 'center' });
-    y += 96;
+    y += 120;
 
     if (y > 720) {
       doc.addPage();
@@ -1704,7 +1834,7 @@ export class ReportsService {
       .font('Helvetica-Oblique')
       .text(
         'Documento emitido conforme al Decreto 67/2018 del MINEDUC y Ley 19.799 (FES). ' +
-          'El porcentaje se calcula sobre días de matrícula activa.',
+          'El porcentaje se calcula como (Presentes + Atrasos) * 100 / Total clases con matrícula activa.',
         48,
         y,
         { width: 499 },
@@ -1806,7 +1936,8 @@ export class ReportsService {
       ranges,
       nonSchoolDays,
     );
-    const rate = activeDays > 0 ? (totalP + totalL + totalJ) / activeDays : 0;
+    const attendedDays = totalP + totalL;
+    const rate = calculateReportAttendanceRate(attendedDays, activeDays);
 
     const doc = new PDFDocument({ size: 'A4', margin: 48 });
     const chunks: Buffer[] = [];
@@ -1865,13 +1996,15 @@ export class ReportsService {
 
     const rowH = 18;
     doc.rect(48, y, 499, rowH).fill('#1F4E79');
-    doc.fillColor('#fff').font('Helvetica-Bold').fontSize(9);
-    doc.text('Mes', 54, y + 5, { width: 100 });
-    doc.text('P', 160, y + 5, { width: 40, align: 'center' });
-    doc.text('A', 206, y + 5, { width: 40, align: 'center' });
-    doc.text('AT', 252, y + 5, { width: 40, align: 'center' });
-    doc.text('J', 298, y + 5, { width: 40, align: 'center' });
-    doc.text('% Asist.', 344, y + 5, { width: 80, align: 'center' });
+    doc.fillColor('#fff').font('Helvetica-Bold').fontSize(8);
+    doc.text('Mes', 54, y + 5, { width: 98 });
+    doc.text('P', 158, y + 5, { width: 28, align: 'center' });
+    doc.text('A', 190, y + 5, { width: 28, align: 'center' });
+    doc.text('AT', 222, y + 5, { width: 30, align: 'center' });
+    doc.text('J', 256, y + 5, { width: 28, align: 'center' });
+    doc.text('Asist.', 288, y + 5, { width: 42, align: 'center' });
+    doc.text('Total', 334, y + 5, { width: 42, align: 'center' });
+    doc.text('% Asist.', 382, y + 5, { width: 74, align: 'center' });
     y += rowH;
 
     doc.font('Helvetica').fontSize(9).fillColor('#000');
@@ -1883,19 +2016,21 @@ export class ReportsService {
         [monthRange],
         nonSchoolDays,
       );
-      const monthRate = monthActiveDays > 0 ? (e.p + e.l + e.j) / monthActiveDays : 0;
+      const monthRate = calculateReportAttendanceRate(e.p + e.l, monthActiveDays);
       const band = i % 2 === 0 ? '#F5F8FB' : '#FFFFFF';
       doc.rect(48, y, 499, rowH).fill(band);
       doc.fillColor('#000');
-      doc.text(MONTH_NAMES_ES[m - 1] ?? '', 54, y + 5, { width: 100 });
-      doc.text(String(e.p), 160, y + 5, { width: 40, align: 'center' });
-      doc.text(String(e.a), 206, y + 5, { width: 40, align: 'center' });
-      doc.text(String(e.l), 252, y + 5, { width: 40, align: 'center' });
-      doc.text(String(e.j), 298, y + 5, { width: 40, align: 'center' });
+      doc.text(MONTH_NAMES_ES[m - 1] ?? '', 54, y + 5, { width: 98 });
+      doc.text(String(e.p), 158, y + 5, { width: 28, align: 'center' });
+      doc.text(String(e.a), 190, y + 5, { width: 28, align: 'center' });
+      doc.text(String(e.l), 222, y + 5, { width: 30, align: 'center' });
+      doc.text(String(e.j), 256, y + 5, { width: 28, align: 'center' });
+      doc.text(String(e.p + e.l), 288, y + 5, { width: 42, align: 'center' });
+      doc.text(String(monthActiveDays), 334, y + 5, { width: 42, align: 'center' });
       const rateColor = monthRate >= 0.9 ? '#15803d' : monthRate >= 0.7 ? '#b45309' : '#b91c1c';
       doc.fillColor(rateColor).font('Helvetica-Bold');
-      doc.text(monthActiveDays > 0 ? `${(monthRate * 100).toFixed(1)}%` : '—', 344, y + 5, {
-        width: 80,
+      doc.text(monthActiveDays > 0 ? `${(monthRate * 100).toFixed(1)}%` : '—', 382, y + 5, {
+        width: 74,
         align: 'center',
       });
       doc.fillColor('#000').font('Helvetica');
@@ -1913,7 +2048,13 @@ export class ReportsService {
     doc.text(`Total Ausentes: ${totalA}`, 56, y + 14);
     doc.text(`Total Atrasos: ${totalL}`, 220, y);
     doc.text(`Total Justificados: ${totalJ}`, 220, y + 14);
-    y += 40;
+    doc.text(`Días asistidos (P+AT): ${attendedDays}`, 56, y + 32);
+    doc.text(`Total clases: ${activeDays}`, 220, y + 32);
+    doc
+      .fontSize(8)
+      .fillColor('#555')
+      .text(`Fórmula: ${attendedDays} * 100 / ${activeDays}`, 56, y + 48, { width: 260 });
+    y += 66;
 
     if (y > 720) {
       doc.addPage();
@@ -1925,7 +2066,7 @@ export class ReportsService {
       .font('Helvetica-Oblique')
       .text(
         'Documento emitido conforme al Decreto 67/2018 del MINEDUC y Ley 19.799 (FES). ' +
-          'El porcentaje se calcula sobre días de matrícula activa.',
+          'El porcentaje se calcula como (Presentes + Atrasos) * 100 / Total clases con matrícula activa.',
         48,
         y,
         { width: 499 },
@@ -2020,7 +2161,8 @@ export class ReportsService {
       ranges,
       nonSchoolDays,
     );
-    const rate = activeDays > 0 ? (totalP + totalL + totalJ) / activeDays : 0;
+    const attendedDays = totalP + totalL;
+    const rate = calculateReportAttendanceRate(attendedDays, activeDays);
 
     const doc = new PDFDocument({ size: 'A4', margin: 48 });
     const chunks: Buffer[] = [];
@@ -2079,13 +2221,15 @@ export class ReportsService {
 
     const rowH = 18;
     doc.rect(48, y, 499, rowH).fill('#1F4E79');
-    doc.fillColor('#fff').font('Helvetica-Bold').fontSize(9);
-    doc.text('Mes', 54, y + 5, { width: 100 });
-    doc.text('P', 160, y + 5, { width: 40, align: 'center' });
-    doc.text('A', 206, y + 5, { width: 40, align: 'center' });
-    doc.text('AT', 252, y + 5, { width: 40, align: 'center' });
-    doc.text('J', 298, y + 5, { width: 40, align: 'center' });
-    doc.text('% Asist.', 344, y + 5, { width: 80, align: 'center' });
+    doc.fillColor('#fff').font('Helvetica-Bold').fontSize(8);
+    doc.text('Mes', 54, y + 5, { width: 98 });
+    doc.text('P', 158, y + 5, { width: 28, align: 'center' });
+    doc.text('A', 190, y + 5, { width: 28, align: 'center' });
+    doc.text('AT', 222, y + 5, { width: 30, align: 'center' });
+    doc.text('J', 256, y + 5, { width: 28, align: 'center' });
+    doc.text('Asist.', 288, y + 5, { width: 42, align: 'center' });
+    doc.text('Total', 334, y + 5, { width: 42, align: 'center' });
+    doc.text('% Asist.', 382, y + 5, { width: 74, align: 'center' });
     y += rowH;
 
     doc.font('Helvetica').fontSize(9).fillColor('#000');
@@ -2101,19 +2245,21 @@ export class ReportsService {
         [monthRange],
         nonSchoolDays,
       );
-      const monthRate = monthActiveDays > 0 ? (e.p + e.l + e.j) / monthActiveDays : 0;
+      const monthRate = calculateReportAttendanceRate(e.p + e.l, monthActiveDays);
       const band = i % 2 === 0 ? '#F5F8FB' : '#FFFFFF';
       doc.rect(48, y, 499, rowH).fill(band);
       doc.fillColor('#000');
-      doc.text(MONTH_NAMES_ES[m - 1] ?? '', 54, y + 5, { width: 100 });
-      doc.text(String(e.p), 160, y + 5, { width: 40, align: 'center' });
-      doc.text(String(e.a), 206, y + 5, { width: 40, align: 'center' });
-      doc.text(String(e.l), 252, y + 5, { width: 40, align: 'center' });
-      doc.text(String(e.j), 298, y + 5, { width: 40, align: 'center' });
+      doc.text(MONTH_NAMES_ES[m - 1] ?? '', 54, y + 5, { width: 98 });
+      doc.text(String(e.p), 158, y + 5, { width: 28, align: 'center' });
+      doc.text(String(e.a), 190, y + 5, { width: 28, align: 'center' });
+      doc.text(String(e.l), 222, y + 5, { width: 30, align: 'center' });
+      doc.text(String(e.j), 256, y + 5, { width: 28, align: 'center' });
+      doc.text(String(e.p + e.l), 288, y + 5, { width: 42, align: 'center' });
+      doc.text(String(monthActiveDays), 334, y + 5, { width: 42, align: 'center' });
       const rateColor = monthRate >= 0.9 ? '#15803d' : monthRate >= 0.7 ? '#b45309' : '#b91c1c';
       doc.fillColor(rateColor).font('Helvetica-Bold');
-      doc.text(monthActiveDays > 0 ? `${(monthRate * 100).toFixed(1)}%` : '—', 344, y + 5, {
-        width: 80,
+      doc.text(monthActiveDays > 0 ? `${(monthRate * 100).toFixed(1)}%` : '—', 382, y + 5, {
+        width: 74,
         align: 'center',
       });
       doc.fillColor('#000').font('Helvetica');
@@ -2131,7 +2277,13 @@ export class ReportsService {
     doc.text(`Total Ausentes: ${totalA}`, 56, y + 14);
     doc.text(`Total Atrasos: ${totalL}`, 220, y);
     doc.text(`Total Justificados: ${totalJ}`, 220, y + 14);
-    y += 40;
+    doc.text(`Días asistidos (P+AT): ${attendedDays}`, 56, y + 32);
+    doc.text(`Total clases: ${activeDays}`, 220, y + 32);
+    doc
+      .fontSize(8)
+      .fillColor('#555')
+      .text(`Fórmula: ${attendedDays} * 100 / ${activeDays}`, 56, y + 48, { width: 260 });
+    y += 66;
 
     if (y > 720) {
       doc.addPage();
@@ -2143,7 +2295,7 @@ export class ReportsService {
       .font('Helvetica-Oblique')
       .text(
         'Documento emitido conforme al Decreto 67/2018 del MINEDUC y Ley 19.799 (FES). ' +
-          'El porcentaje se calcula sobre días de matrícula activa.',
+          'El porcentaje se calcula como (Presentes + Atrasos) * 100 / Total clases con matrícula activa.',
         48,
         y,
         { width: 499 },
@@ -2350,7 +2502,8 @@ export class ReportsService {
 
     const nonSchoolDays = await this.calendar.getNonSchoolDays(student.course.school.id, from, to);
     const activeDays = this.countActiveSchoolDays(student, from, to, nonSchoolDays);
-    const rate = activeDays > 0 ? (p + l + j) / activeDays : 0;
+    const attendedDays = p + l;
+    const rate = calculateReportAttendanceRate(attendedDays, activeDays);
 
     ws.getCell(r, 1).value = 'Presentes:';
     ws.getCell(r, 1).font = { bold: true };
@@ -2369,6 +2522,15 @@ export class ReportsService {
     ws.getCell(r, 4).value = j;
     ws.getCell(r, 4).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFFF2CC' } };
     r++;
+    ws.getCell(r, 1).value = 'Días asistidos:';
+    ws.getCell(r, 1).font = { bold: true };
+    ws.getCell(r, 2).value = attendedDays;
+    ws.getCell(r, 2).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFE2EFDA' } };
+    ws.getCell(r, 3).value = 'Total clases:';
+    ws.getCell(r, 3).font = { bold: true };
+    ws.getCell(r, 4).value = activeDays;
+    ws.getCell(r, 4).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFDCE6F1' } };
+    r++;
     ws.getCell(r, 1).value = '% Asistencia:';
     ws.getCell(r, 1).font = { bold: true };
     const pctCell = ws.getCell(r, 2);
@@ -2385,7 +2547,7 @@ export class ReportsService {
     ws.mergeCells(r, 1, r, 5);
     ws.getCell(r, 1).value =
       'Documento emitido conforme al Decreto 67/2018 del MINEDUC y Ley 19.799 (FES). ' +
-      'El porcentaje se calcula sobre días de matrícula activa.';
+      `El porcentaje se calcula como (Presentes + Atrasos) * 100 / Total clases: ${attendedDays} * 100 / ${activeDays}.`;
     ws.getCell(r, 1).font = { italic: true, size: 8, color: { argb: 'FF666666' } };
     ws.getCell(r, 1).alignment = { wrapText: true };
     ws.getRow(r).height = 30;
@@ -2590,7 +2752,7 @@ export class ReportsService {
         [monthRange],
         nonSchoolDays,
       );
-      const rate = activeDays > 0 ? (p + l + j) / activeDays : 0;
+      const rate = activeDays > 0 ? (p + l) / activeDays : 0;
       ws.getCell(r, 1).value = 'P:';
       ws.getCell(r, 1).font = { bold: true };
       ws.getCell(r, 2).value = p;
@@ -2604,6 +2766,13 @@ export class ReportsService {
       ws.getCell(r, 3).value = 'J:';
       ws.getCell(r, 3).font = { bold: true };
       ws.getCell(r, 4).value = j;
+      r++;
+      ws.getCell(r, 1).value = 'Asist.:';
+      ws.getCell(r, 1).font = { bold: true };
+      ws.getCell(r, 2).value = p + l;
+      ws.getCell(r, 3).value = 'Total clases:';
+      ws.getCell(r, 3).font = { bold: true };
+      ws.getCell(r, 4).value = activeDays;
       r++;
       ws.getCell(r, 1).value = '%:';
       ws.getCell(r, 1).font = { bold: true };
@@ -2619,9 +2788,11 @@ export class ReportsService {
     summary.getColumn(3).width = 10;
     summary.getColumn(4).width = 10;
     summary.getColumn(5).width = 10;
-    summary.getColumn(6).width = 12;
+    summary.getColumn(6).width = 10;
+    summary.getColumn(7).width = 12;
+    summary.getColumn(8).width = 12;
 
-    summary.mergeCells('A1:F1');
+    summary.mergeCells('A1:H1');
     summary.getCell('A1').value =
       `${student.course.school.name} — ${semLabel} ${year} — ${student.lastName}, ${student.firstName}`;
     summary.getCell('A1').font = { bold: true, size: 12, color: { argb: 'FFFFFFFF' } };
@@ -2629,7 +2800,7 @@ export class ReportsService {
     summary.getCell('A1').alignment = centerMid;
     summary.getRow(1).height = 22;
 
-    ['Mes', 'P', 'A', 'AT', 'J', '% Asist.'].forEach((h, i) => {
+    ['Mes', 'P', 'A', 'AT', 'J', 'Asist.', 'Total clases', '% Asist.'].forEach((h, i) => {
       const c = summary.getCell(2, i + 1);
       c.value = h;
       c.font = { bold: true, color: { argb: 'FFFFFFFF' } };
@@ -2667,7 +2838,7 @@ export class ReportsService {
         [monthRange],
         nonSchoolDays,
       );
-      const rate = activeDays > 0 ? (mp + ml + mj) / activeDays : 0;
+      const rate = activeDays > 0 ? (mp + ml) / activeDays : 0;
 
       const r = i + 3;
       summary.getCell(r, 1).value = MONTH_NAMES_ES[month - 1] ?? '';
@@ -2684,7 +2855,13 @@ export class ReportsService {
       summary.getCell(r, 5).value = mj;
       summary.getCell(r, 5).alignment = centerMid;
       summary.getCell(r, 5).border = borderAll;
-      const pctCell = summary.getCell(r, 6);
+      summary.getCell(r, 6).value = mp + ml;
+      summary.getCell(r, 6).alignment = centerMid;
+      summary.getCell(r, 6).border = borderAll;
+      summary.getCell(r, 7).value = activeDays;
+      summary.getCell(r, 7).alignment = centerMid;
+      summary.getCell(r, 7).border = borderAll;
+      const pctCell = summary.getCell(r, 8);
       pctCell.value = rate;
       pctCell.numFmt = '0.0%';
       pctCell.alignment = centerMid;
@@ -2696,6 +2873,44 @@ export class ReportsService {
         fgColor: { argb: rate >= 0.9 ? 'FFE2EFDA' : rate >= 0.7 ? 'FFFFF2CC' : 'FFFCE4E4' },
       };
     }
+
+    const semesterActiveDays = this.schoolConfig.countActiveSchoolDaysInRanges(
+      student,
+      ranges,
+      nonSchoolDays,
+    );
+    const semesterAttendedDays = totalP + totalL;
+    const semesterRate = calculateReportAttendanceRate(semesterAttendedDays, semesterActiveDays);
+    const totalRow = monthRanges.length + 3;
+    for (let c = 1; c <= 8; c++) {
+      const cell = summary.getCell(totalRow, c);
+      cell.border = borderAll;
+      cell.alignment = c === 1 ? { vertical: 'middle' } : centerMid;
+      cell.font = { bold: true };
+      cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFDCE6F1' } };
+    }
+    summary.getCell(totalRow, 1).value = 'TOTAL';
+    summary.getCell(totalRow, 2).value = totalP;
+    summary.getCell(totalRow, 3).value = totalA;
+    summary.getCell(totalRow, 4).value = totalL;
+    summary.getCell(totalRow, 5).value = totalJ;
+    summary.getCell(totalRow, 6).value = semesterAttendedDays;
+    summary.getCell(totalRow, 7).value = semesterActiveDays;
+    const semesterPctCell = summary.getCell(totalRow, 8);
+    semesterPctCell.value = semesterRate;
+    semesterPctCell.numFmt = '0.0%';
+    semesterPctCell.fill = {
+      type: 'pattern',
+      pattern: 'solid',
+      fgColor: {
+        argb: semesterRate >= 0.9 ? 'FFE2EFDA' : semesterRate >= 0.7 ? 'FFFFF2CC' : 'FFFCE4E4',
+      },
+    };
+    const formulaRow = totalRow + 2;
+    summary.mergeCells(formulaRow, 1, formulaRow, 8);
+    summary.getCell(formulaRow, 1).value =
+      `% = (Presentes + Atrasos) * 100 / Total clases. Cálculo total: ${semesterAttendedDays} * 100 / ${semesterActiveDays}.`;
+    summary.getCell(formulaRow, 1).font = { italic: true, size: 9, color: { argb: 'FF666666' } };
 
     await this.audit.log({
       userId: requestedById,
@@ -2875,7 +3090,7 @@ export class ReportsService {
         [monthRange],
         nonSchoolDays,
       );
-      const rate = activeDays > 0 ? (p + l + j) / activeDays : 0;
+      const rate = activeDays > 0 ? (p + l) / activeDays : 0;
       ws.getCell(r, 1).value = 'P:';
       ws.getCell(r, 1).font = { bold: true };
       ws.getCell(r, 2).value = p;
@@ -2889,6 +3104,13 @@ export class ReportsService {
       ws.getCell(r, 3).value = 'J:';
       ws.getCell(r, 3).font = { bold: true };
       ws.getCell(r, 4).value = j;
+      r++;
+      ws.getCell(r, 1).value = 'Asist.:';
+      ws.getCell(r, 1).font = { bold: true };
+      ws.getCell(r, 2).value = p + l;
+      ws.getCell(r, 3).value = 'Total clases:';
+      ws.getCell(r, 3).font = { bold: true };
+      ws.getCell(r, 4).value = activeDays;
       r++;
       ws.getCell(r, 1).value = '%:';
       ws.getCell(r, 1).font = { bold: true };
@@ -2904,9 +3126,11 @@ export class ReportsService {
     summary.getColumn(3).width = 10;
     summary.getColumn(4).width = 10;
     summary.getColumn(5).width = 10;
-    summary.getColumn(6).width = 12;
+    summary.getColumn(6).width = 10;
+    summary.getColumn(7).width = 12;
+    summary.getColumn(8).width = 12;
 
-    summary.mergeCells('A1:F1');
+    summary.mergeCells('A1:H1');
     summary.getCell('A1').value =
       `${student.course.school.name} — ${year} — ${student.lastName}, ${student.firstName}`;
     summary.getCell('A1').font = { bold: true, size: 12, color: { argb: 'FFFFFFFF' } };
@@ -2914,7 +3138,7 @@ export class ReportsService {
     summary.getCell('A1').alignment = centerMid;
     summary.getRow(1).height = 22;
 
-    ['Mes', 'P', 'A', 'AT', 'J', '% Asist.'].forEach((h, i) => {
+    ['Mes', 'P', 'A', 'AT', 'J', 'Asist.', 'Total clases', '% Asist.'].forEach((h, i) => {
       const c = summary.getCell(2, i + 1);
       c.value = h;
       c.font = { bold: true, color: { argb: 'FFFFFFFF' } };
@@ -2952,7 +3176,7 @@ export class ReportsService {
         [monthRange],
         nonSchoolDays,
       );
-      const rate = activeDays > 0 ? (mp + ml + mj) / activeDays : 0;
+      const rate = activeDays > 0 ? (mp + ml) / activeDays : 0;
 
       const r = i + 3;
       summary.getCell(r, 1).value = MONTH_NAMES_ES[month - 1] ?? '';
@@ -2969,7 +3193,13 @@ export class ReportsService {
       summary.getCell(r, 5).value = mj;
       summary.getCell(r, 5).alignment = centerMid;
       summary.getCell(r, 5).border = borderAll;
-      const pctCell = summary.getCell(r, 6);
+      summary.getCell(r, 6).value = mp + ml;
+      summary.getCell(r, 6).alignment = centerMid;
+      summary.getCell(r, 6).border = borderAll;
+      summary.getCell(r, 7).value = activeDays;
+      summary.getCell(r, 7).alignment = centerMid;
+      summary.getCell(r, 7).border = borderAll;
+      const pctCell = summary.getCell(r, 8);
       pctCell.value = rate;
       pctCell.numFmt = '0.0%';
       pctCell.alignment = centerMid;
@@ -3013,8 +3243,17 @@ export class ReportsService {
       ranges,
       nonSchoolDays,
     );
-    const annualRate = annualActiveDays > 0 ? (totalP + totalL + totalJ) / annualActiveDays : 0;
-    const annualPct = summary.getCell(totalRow, 6);
+    const annualAttendedDays = totalP + totalL;
+    summary.getCell(totalRow, 6).value = annualAttendedDays;
+    summary.getCell(totalRow, 6).alignment = centerMid;
+    summary.getCell(totalRow, 6).border = borderAll;
+    summary.getCell(totalRow, 6).font = { bold: true };
+    summary.getCell(totalRow, 7).value = annualActiveDays;
+    summary.getCell(totalRow, 7).alignment = centerMid;
+    summary.getCell(totalRow, 7).border = borderAll;
+    summary.getCell(totalRow, 7).font = { bold: true };
+    const annualRate = calculateReportAttendanceRate(annualAttendedDays, annualActiveDays);
+    const annualPct = summary.getCell(totalRow, 8);
     annualPct.value = annualRate;
     annualPct.numFmt = '0.0%';
     annualPct.alignment = centerMid;
@@ -3027,6 +3266,12 @@ export class ReportsService {
         argb: annualRate >= 0.9 ? 'FFE2EFDA' : annualRate >= 0.7 ? 'FFFFF2CC' : 'FFFCE4E4',
       },
     };
+
+    const formulaRow = totalRow + 2;
+    summary.mergeCells(formulaRow, 1, formulaRow, 8);
+    summary.getCell(formulaRow, 1).value =
+      `% = (Presentes + Atrasos) * 100 / Total clases. Cálculo total: ${annualAttendedDays} * 100 / ${annualActiveDays}.`;
+    summary.getCell(formulaRow, 1).font = { italic: true, size: 9, color: { argb: 'FF666666' } };
 
     await this.audit.log({
       userId: requestedById,
@@ -3086,7 +3331,7 @@ export class ReportsService {
     ws.getColumn(3).width = 33.5; // C Name
     ws.getColumn(4).width = 0.75; // D gutter
     for (let c = 5; c <= 35; c++) ws.getColumn(c).width = 4.125; // E..AI day cols
-    for (let c = 36; c <= 39; c++) ws.getColumn(c).width = 8; // AJ..AM summary
+    for (let c = 36; c <= 40; c++) ws.getColumn(c).width = c === 38 ? 10 : 8; // AJ..AN summary
 
     const centerMid = {
       horizontal: 'center' as const,
@@ -3097,7 +3342,7 @@ export class ReportsService {
     const borderAll = { top: thin, bottom: thin, left: thin, right: thin };
 
     // ---- Row 1: title ----
-    ws.mergeCells('B1:AM1');
+    ws.mergeCells('B1:AN1');
     const title = ws.getCell('B1');
     title.value = 'LISTA DE ASISTENCIA';
     title.alignment = centerMid;
@@ -3231,15 +3476,16 @@ export class ReportsService {
     const summary = [
       { col: 'AJ', label: 'ASISTENCIA', color: GREEN },
       { col: 'AK', label: 'AUSENCIA', color: RED },
-      { col: 'AL', label: '% ASIST.', color: ORANGE },
-      { col: 'AM', label: 'JUSTIF.', color: YELLOW },
+      { col: 'AL', label: 'TOTAL CLASES', color: LIGHT_BLUE, textColor: 'FF000000' },
+      { col: 'AM', label: '% ASIST.', color: ORANGE },
+      { col: 'AN', label: 'JUSTIF.', color: YELLOW, textColor: 'FF000000' },
     ];
     for (const s of summary) {
       ws.mergeCells(`${s.col}11:${s.col}13`);
       const cell = ws.getCell(`${s.col}11`);
       cell.value = s.label;
       cell.alignment = { ...centerMid, textRotation: 90 };
-      cell.font = { bold: true, size: 10, color: { argb: 'FFFFFFFF' } };
+      cell.font = { bold: true, size: 10, color: { argb: s.textColor ?? 'FFFFFFFF' } };
       cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: s.color } };
       cell.border = borderAll;
     }
@@ -3327,7 +3573,7 @@ export class ReportsService {
         periodTo,
         ctx.nonSchoolDays,
       );
-      const pct = activeDays > 0 ? (present + justified) / activeDays : 0;
+      const pct = activeDays > 0 ? present / activeDays : 0;
 
       const a = ws.getCell(r, 36);
       a.value = present;
@@ -3341,7 +3587,13 @@ export class ReportsService {
       b.border = borderAll;
       b.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFCE4E4' } };
 
-      const p = ws.getCell(r, 38);
+      const t = ws.getCell(r, 38);
+      t.value = activeDays;
+      t.alignment = centerMid;
+      t.border = borderAll;
+      t.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: LIGHT_BLUE } };
+
+      const p = ws.getCell(r, 39);
       p.value = pct;
       p.numFmt = '0.0%';
       p.alignment = centerMid;
@@ -3353,7 +3605,7 @@ export class ReportsService {
         fgColor: { argb: pct >= 0.85 ? 'FFE2EFDA' : pct >= 0.7 ? 'FFFFF2CC' : 'FFFCE4E4' },
       };
 
-      const j = ws.getCell(r, 39);
+      const j = ws.getCell(r, 40);
       j.value = justified;
       j.alignment = centerMid;
       j.border = borderAll;
@@ -3429,9 +3681,11 @@ export class ReportsService {
     nonSchoolDays: Set<string> = new Set(),
   ): number {
     const start = this.startOfDay(student.enrolledAt > from ? student.enrolledAt : from);
-    const end = this.startOfDay(
-      student.withdrawnAt && student.withdrawnAt < to ? student.withdrawnAt : to,
-    );
+    const withdrawnEnd =
+      student.withdrawnAt && student.withdrawnAt <= to
+        ? this.previousCalendarDay(student.withdrawnAt)
+        : to;
+    const end = this.startOfDay(withdrawnEnd);
     let days = 0;
     const cursor = new Date(start);
     while (cursor <= end) {
@@ -3691,7 +3945,7 @@ export class ReportsService {
     year: number,
     month: number,
     recordMap: Map<string, Map<number, string>>,
-    options?: { isFirstMonth?: boolean },
+    options?: { isFirstMonth?: boolean; from?: Date; to?: Date; nonSchoolDays?: Set<string> },
   ): void {
     const daysInMonth = new Date(year, month, 0).getDate();
     const PAGE_W = 842;
@@ -3848,9 +4102,14 @@ export class ReportsService {
         x += DAY_W;
       }
 
-      const tot = p + a + l + j;
-      const rate = tot > 0 ? (p + l + j) / tot : 0;
-      if (tot > 0) {
+      const activeDays = this.countActiveSchoolDays(
+        s,
+        options?.from ?? new Date(year, month - 1, 1),
+        options?.to ?? new Date(year, month, 0, 23, 59, 59, 999),
+        options?.nonSchoolDays ?? new Set(),
+      );
+      const rate = calculateReportAttendanceRate(p + l, activeDays);
+      if (activeDays > 0) {
         totalRate += rate;
         totalStudents++;
       }
@@ -3866,7 +4125,7 @@ export class ReportsService {
       x += SUM_W;
       const rateColor = rate >= 0.9 ? '#15803d' : rate >= 0.7 ? '#b45309' : '#b91c1c';
       doc.fillColor(rateColor).font('Helvetica-Bold');
-      doc.text(tot > 0 ? `${(rate * 100).toFixed(1)}%` : '—', x, y + 4, {
+      doc.text(activeDays > 0 ? `${(rate * 100).toFixed(1)}%` : '—', x, y + 4, {
         width: PCT_W,
         align: 'center',
       });
@@ -3887,7 +4146,11 @@ export class ReportsService {
     y += 36;
 
     doc.fillColor('#000').font('Helvetica').fontSize(8);
-    doc.text('Leyenda: 1 = Presente  ·  0 = Ausente  ·  AT = Atraso  ·  J = Justificado', NAV_X, y);
+    doc.text(
+      'Leyenda: 1 = Presente  ·  0 = Ausente  ·  AT = Atraso  ·  J = Justificado  ·  % = (Presentes + Atrasos) * 100 / Total clases',
+      NAV_X,
+      y,
+    );
   }
 
   /** MINEDUC-style semester PDF: one month grid page per month in the semester period. */
@@ -3929,6 +4192,11 @@ export class ReportsService {
       where: { courseId, date: { gte: globalFrom, lte: globalTo } },
       select: { studentId: true, date: true, status: true },
     });
+    const nonSchoolDays = await this.calendar.getNonSchoolDays(
+      courseHead.schoolId,
+      globalFrom,
+      globalTo,
+    );
 
     const SYMBOL: Record<string, string> = {
       PRESENT: '1',
@@ -3956,6 +4224,9 @@ export class ReportsService {
       }
       this.renderMonthGridPage(doc, course, monthFrom.getFullYear(), mr.month, recordMap, {
         isFirstMonth: idx === 0,
+        from: monthFrom,
+        to: monthTo,
+        nonSchoolDays,
       });
     }
 
@@ -4006,6 +4277,11 @@ export class ReportsService {
       where: { courseId, date: { gte: globalFrom, lte: globalTo } },
       select: { studentId: true, date: true, status: true },
     });
+    const nonSchoolDays = await this.calendar.getNonSchoolDays(
+      courseHead.schoolId,
+      globalFrom,
+      globalTo,
+    );
 
     const SYMBOL: Record<string, string> = {
       PRESENT: '1',
@@ -4033,6 +4309,9 @@ export class ReportsService {
       }
       this.renderMonthGridPage(doc, course, monthFrom.getFullYear(), mr.month, recordMap, {
         isFirstMonth: idx === 0,
+        from: monthFrom,
+        to: monthTo,
+        nonSchoolDays,
       });
     }
 
@@ -4064,6 +4343,12 @@ export class ReportsService {
   private startOfDay(date: Date): Date {
     const d = new Date(date);
     d.setHours(0, 0, 0, 0);
+    return d;
+  }
+
+  private previousCalendarDay(date: Date): Date {
+    const d = this.startOfDay(date);
+    d.setDate(d.getDate() - 1);
     return d;
   }
 }

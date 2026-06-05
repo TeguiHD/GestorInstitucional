@@ -2,7 +2,14 @@ import { Injectable, Logger } from '@nestjs/common';
 import { Cron } from '@nestjs/schedule';
 import { AttendanceStatus, MailCategory, MailPriority } from '@prisma/client';
 
+import {
+  addAttendanceStatus,
+  buildAttendanceSummary,
+  emptyAttendanceCounts,
+} from '../attendance/attendance-calculation.js';
+import { CalendarService } from '../calendar/calendar.service.js';
 import { PrismaService } from '../prisma/prisma.service.js';
+import { SchoolConfigService } from '../school-config/school-config.service.js';
 import { MailService } from './mail.service.js';
 
 // Every Friday at 18:00 server time
@@ -13,6 +20,8 @@ export class WeeklyDigestCron {
   constructor(
     private readonly prisma: PrismaService,
     private readonly mail: MailService,
+    private readonly calendar: CalendarService,
+    private readonly schoolConfig: SchoolConfigService,
   ) {}
 
   @Cron('0 18 * * 5', { name: 'mail-weekly-digest', timeZone: 'America/Santiago' })
@@ -43,11 +52,14 @@ export class WeeklyDigestCron {
               id: true,
               firstName: true,
               lastName: true,
+              enrolledAt: true,
+              withdrawnAt: true,
               course: { select: { name: true } },
             },
           },
         },
       });
+      const nonSchool = await this.calendar.getNonSchoolDays(school.id, weekStart, weekEnd);
 
       for (const g of guardianships) {
         const records = await this.prisma.attendanceRecord.findMany({
@@ -59,18 +71,28 @@ export class WeeklyDigestCron {
         });
         if (records.length === 0) continue;
 
-        const stats = { present: 0, absent: 0, late: 0, justified: 0, total: records.length };
+        const counts = emptyAttendanceCounts();
         const absentDates: string[] = [];
-        for (const r of records) {
-          if (r.status === AttendanceStatus.PRESENT) stats.present++;
-          else if (r.status === AttendanceStatus.ABSENT) {
-            stats.absent++;
-            absentDates.push(formatShort(r.date));
-          } else if (r.status === AttendanceStatus.LATE) stats.late++;
-          else if (r.status === AttendanceStatus.JUSTIFIED) stats.justified++;
+        for (const r of records.filter((record) => !nonSchool.has(formatKey(record.date)))) {
+          addAttendanceStatus(counts, r.status);
+          if (r.status === AttendanceStatus.ABSENT) absentDates.push(formatShort(r.date));
         }
-        const rate =
-          stats.total > 0 ? (stats.present + stats.late + stats.justified) / stats.total : 1;
+        const totalClasses = this.schoolConfig.countActiveSchoolDaysInRanges(
+          g.student,
+          [{ from: weekStart, to: weekEnd }],
+          nonSchool,
+        );
+        if (totalClasses === 0) continue;
+        const summary = buildAttendanceSummary(counts, totalClasses);
+        const stats = {
+          present: summary.present,
+          absent: summary.absent,
+          late: summary.late,
+          justified: summary.justified,
+          missing: summary.missing,
+          total: summary.totalClasses,
+          rate: summary.attendanceRate ?? 0,
+        };
 
         const { subject, html, text } = this.mail.templates.weeklyDigest({
           guardianName: `${g.guardian.firstName} ${g.guardian.lastName}`,
@@ -78,12 +100,12 @@ export class WeeklyDigestCron {
           courseName: g.student.course.name,
           weekStart,
           weekEnd,
-          stats: { ...stats, rate },
+          stats,
           absentDates,
           portalUrl: this.mail.webUrl(),
         });
 
-        const weekKey = weekStart.toISOString().slice(0, 10);
+        const weekKey = formatKey(weekStart);
         const result = await this.mail.enqueue({
           to: { email: g.guardian.email, name: `${g.guardian.firstName} ${g.guardian.lastName}` },
           subject,
@@ -110,4 +132,11 @@ function endOfDay(d: Date): Date {
 
 function formatShort(d: Date): string {
   return d.toLocaleDateString('es-CL', { day: '2-digit', month: 'short' });
+}
+
+function formatKey(d: Date): string {
+  const year = d.getFullYear();
+  const month = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
 }

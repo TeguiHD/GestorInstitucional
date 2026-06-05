@@ -64,6 +64,17 @@ test-results/
 # Prisma
 apps/api/prisma/migrations/dev/
 
+# Backups (local SQL dumps)
+backup_*.sql
+*.sql.gz
+*.sql.zip
+
+# Vite temp files
+*.timestamp-*.mjs
+
+# Iteration notes
+ITERACIONES/
+
 # Misc
 .cache/
 tmp/

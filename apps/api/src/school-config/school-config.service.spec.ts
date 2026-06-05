@@ -110,4 +110,17 @@ describe('SchoolConfigService', () => {
       }),
     );
   });
+
+  it('no cuenta el dia de retiro como dia activo del alumno', () => {
+    const { service } = makeService();
+    const total = service.countActiveSchoolDaysInRanges(
+      {
+        enrolledAt: new Date(2026, 2, 2),
+        withdrawnAt: new Date(2026, 2, 5),
+      },
+      [{ from: new Date(2026, 2, 2), to: new Date(2026, 2, 6, 23, 59, 59, 999) }],
+    );
+
+    expect(total).toBe(3);
+  });
 });

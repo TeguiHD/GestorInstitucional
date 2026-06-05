@@ -7,8 +7,15 @@ import {
 } from '@nestjs/common';
 import { AuditAction, EnrollmentStatus, SystemRole, WithdrawalReason } from '@prisma/client';
 
+import {
+  addAttendanceStatus,
+  buildAttendanceSummary,
+  emptyAttendanceCounts,
+} from '../attendance/attendance-calculation.js';
+import { CalendarService } from '../calendar/calendar.service.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { AuditService } from '../audit/audit.service.js';
+import { SchoolConfigService, type DateRange } from '../school-config/school-config.service.js';
 import type { CreateStudentDto } from './dto/create-student.dto.js';
 import type { JwtPayload } from '../common/decorators/current-user.decorator.js';
 import { parseDateOnlyUtc } from '../common/date-only.js';
@@ -19,6 +26,8 @@ export class StudentsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly audit: AuditService,
+    private readonly calendar: CalendarService,
+    private readonly schoolConfig: SchoolConfigService,
   ) {}
 
   async findByCourse(courseId: string, date?: string) {
@@ -462,7 +471,7 @@ export class StudentsService {
       orderBy: { date: 'asc' },
     });
     if (out) {
-      const iso = out.date.toISOString().slice(0, 10);
+      const iso = this.schoolConfig.formatDate(out.date);
       throw new BadRequestException(
         `Existe asistencia registrada el ${iso} fuera del nuevo rango de matrícula. Elimina o ajusta esos registros primero.`,
       );
@@ -897,25 +906,58 @@ export class StudentsService {
     });
   }
 
-  /** Summary stats for a student (total present/absent/late/justified). */
+  /** Summary stats for a student using the institutional attendance formula. */
   async getStats(studentId: string, from?: Date, to?: Date) {
-    const where = {
-      studentId,
-      ...(from || to
-        ? { date: { ...(from ? { gte: from } : {}), ...(to ? { lte: to } : {}) } }
-        : {}),
+    const student = await this.prisma.student.findUnique({
+      where: { id: studentId },
+      select: {
+        id: true,
+        schoolId: true,
+        enrolledAt: true,
+        withdrawnAt: true,
+      },
+    });
+    if (!student) throw new NotFoundException('Alumno no encontrado');
+
+    const ranges = await this.resolveStatsRanges(student, from, to);
+    const nonSchool = await this.getNonSchoolDays(student.schoolId, ranges);
+    const records =
+      ranges.length > 0
+        ? await this.prisma.attendanceRecord.findMany({
+            where: {
+              studentId,
+              OR: ranges.map((range) => ({ date: { gte: range.from, lte: range.to } })),
+            },
+            select: { status: true, date: true },
+          })
+        : [];
+
+    const counts = emptyAttendanceCounts();
+    for (const record of records) {
+      if (!nonSchool.has(this.schoolConfig.formatDate(record.date))) {
+        addAttendanceStatus(counts, record.status);
+      }
+    }
+    const totalClasses = this.schoolConfig.countActiveSchoolDaysInRanges(
+      student,
+      ranges,
+      nonSchool,
+    );
+    const summary = buildAttendanceSummary(counts, totalClasses);
+
+    return {
+      total: summary.totalClasses,
+      recorded: records.length,
+      present: summary.present,
+      absent: summary.absent,
+      late: summary.late,
+      justified: summary.justified,
+      attended: summary.attended,
+      totalClasses: summary.totalClasses,
+      missing: summary.missing,
+      attendanceRate: summary.attendanceRate ?? 0,
+      formulaVersion: summary.formulaVersion,
     };
-
-    const [total, present, absent, late, justified] = await Promise.all([
-      this.prisma.attendanceRecord.count({ where }),
-      this.prisma.attendanceRecord.count({ where: { ...where, status: 'PRESENT' } }),
-      this.prisma.attendanceRecord.count({ where: { ...where, status: 'ABSENT' } }),
-      this.prisma.attendanceRecord.count({ where: { ...where, status: 'LATE' } }),
-      this.prisma.attendanceRecord.count({ where: { ...where, status: 'JUSTIFIED' } }),
-    ]);
-
-    const attendanceRate = total > 0 ? (present + late + justified) / total : 0;
-    return { total, present, absent, late, justified, attendanceRate };
   }
 
   async findWithdrawn(schoolId: string, actor: JwtPayload) {
@@ -1076,6 +1118,46 @@ export class StudentsService {
     };
   }
 
+  private async resolveStatsRanges(
+    student: { schoolId: string; enrolledAt: Date; withdrawnAt: Date | null },
+    from?: Date,
+    to?: Date,
+  ): Promise<DateRange[]> {
+    if (!from && !to) {
+      const today = new Date();
+      const period = await this.schoolConfig.getAnnualPeriod(student.schoolId, today.getFullYear());
+      return this.capRangesToToday(period.ranges);
+    }
+
+    return this.capRangesToToday([
+      {
+        from: this.startOfDay(from ?? student.enrolledAt),
+        to: this.endOfDay(to ?? new Date()),
+      },
+    ]);
+  }
+
+  private capRangesToToday(ranges: DateRange[]): DateRange[] {
+    const today = this.endOfDay(new Date());
+    return ranges
+      .map((range) => ({
+        from: range.from,
+        to: range.to > today ? today : range.to,
+      }))
+      .filter((range) => range.to >= range.from);
+  }
+
+  private async getNonSchoolDays(schoolId: string, ranges: DateRange[]): Promise<Set<string>> {
+    const days = new Set<string>();
+    const sets = await Promise.all(
+      ranges.map((range) => this.calendar.getNonSchoolDays(schoolId, range.from, range.to)),
+    );
+    for (const set of sets) {
+      for (const day of set) days.add(day);
+    }
+    return days;
+  }
+
   private parseDateOnly(value?: string): Date {
     return parseDateOnlyUtc(value);
   }
@@ -1083,6 +1165,12 @@ export class StudentsService {
   private startOfDay(date: Date): Date {
     const d = new Date(date);
     d.setHours(0, 0, 0, 0);
+    return d;
+  }
+
+  private endOfDay(date: Date): Date {
+    const d = new Date(date);
+    d.setHours(23, 59, 59, 999);
     return d;
   }
 

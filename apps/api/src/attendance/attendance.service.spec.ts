@@ -24,6 +24,21 @@ function makeService(params: { activeStudentIds: string[]; existingStudentIds?: 
         .mockResolvedValue((params.existingStudentIds ?? []).map((studentId) => ({ studentId }))),
       upsert: vi.fn((args) => args),
     },
+    course: {
+      findUnique: vi.fn().mockResolvedValue({
+        id: 'course-1',
+        code: '1A',
+        name: 'Primero A',
+        schoolId: 'school-1',
+        students: params.activeStudentIds.map((id, idx) => ({
+          id,
+          firstName: `Alumno${idx + 1}`,
+          lastName: 'Test',
+          secondLastName: null,
+          enrollmentNumber: idx + 1,
+        })),
+      }),
+    },
     $transaction: vi.fn().mockResolvedValue([]),
   };
   const audit = { log: vi.fn().mockResolvedValue(undefined) };

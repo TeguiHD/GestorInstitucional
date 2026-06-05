@@ -138,6 +138,28 @@ class ReEnrollStudentDto extends EnrollmentMovementDto {
   enrollmentNumber?: number;
 }
 
+function parseQueryDateOnly(value: string, endOfDay = false): Date {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
+  if (!match) throw new BadRequestException('Fecha inválida');
+  const date = new Date(
+    Number(match[1]),
+    Number(match[2]) - 1,
+    Number(match[3]),
+    endOfDay ? 23 : 0,
+    endOfDay ? 59 : 0,
+    endOfDay ? 59 : 0,
+    endOfDay ? 999 : 0,
+  );
+  if (
+    date.getFullYear() !== Number(match[1]) ||
+    date.getMonth() + 1 !== Number(match[2]) ||
+    date.getDate() !== Number(match[3])
+  ) {
+    throw new BadRequestException('Fecha inválida');
+  }
+  return date;
+}
+
 @ApiTags('students')
 @UseGuards(JwtAuthGuard, RolesGuard)
 @ApiBearerAuth()
@@ -237,8 +259,8 @@ export class StudentsController {
     await this.students.assertCanAccessStudent(id, user);
     return this.students.getStats(
       id,
-      from ? new Date(from) : undefined,
-      to ? new Date(to) : undefined,
+      from ? parseQueryDateOnly(from) : undefined,
+      to ? parseQueryDateOnly(to, true) : undefined,
     );
   }
 

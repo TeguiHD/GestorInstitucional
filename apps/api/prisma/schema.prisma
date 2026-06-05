@@ -741,3 +741,16 @@ model RetentionSnapshot {
   @@index([schoolId])
   @@map("retention_snapshots")
 }
+
+// =============================================================================
+// SYSTEM CONFIGURATION
+// =============================================================================
+
+model SystemSetting {
+  key       String   @id @db.VarChar(100)
+  value     String   @db.Text
+  updatedAt DateTime @updatedAt
+
+  @@map("system_settings")
+}
+

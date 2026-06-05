@@ -118,10 +118,11 @@ export function CourseStatsTab({ courseId }: { courseId: string }) {
 
   const students = matrix?.students ?? [];
   const validRates = students.filter((s) => s.rate != null);
-  const avgRate =
+  const fallbackAvgRate =
     validRates.length > 0
       ? validRates.reduce((acc, s) => acc + s.rate!, 0) / validRates.length
       : null;
+  const overallRate = insights?.attendanceRate ?? fallbackAvgRate;
 
   const atRisk = students.filter((s) => s.rate != null && s.rate < 0.75).length;
   const sorted = [...students].sort((a, b) => (a.rate ?? -1) - (b.rate ?? -1));
@@ -165,8 +166,8 @@ export function CourseStatsTab({ courseId }: { courseId: string }) {
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
         <KpiCard
           label="Asistencia general"
-          value={avgRate != null ? `${(avgRate * 100).toFixed(1)}%` : '—'}
-          color={rateColor(avgRate)}
+          value={overallRate != null ? `${(overallRate * 100).toFixed(1)}%` : '—'}
+          color={rateColor(overallRate)}
           sub={`${students.length} alumnos`}
           loading={matrixLoading}
         />
@@ -201,7 +202,7 @@ export function CourseStatsTab({ courseId }: { courseId: string }) {
       {trendData.length > 0 && (
         <div className="rounded-xl border border-border bg-background p-5">
           <h3 className="text-sm font-semibold mb-4">
-            Tendencia diaria — {MONTH_NAMES[month - 1]} {year}
+            Tasa diaria registrada — {MONTH_NAMES[month - 1]} {year}
           </h3>
           <ResponsiveContainer width="100%" height={200}>
             <BarChart data={trendData} margin={{ top: 0, right: 0, bottom: 0, left: -10 }}>
@@ -219,7 +220,7 @@ export function CourseStatsTab({ courseId }: { courseId: string }) {
                   borderRadius: '8px',
                   fontSize: '13px',
                 }}
-                formatter={(v: number) => [`${(v * 100).toFixed(1)}%`, 'Asistencia']}
+                formatter={(v: number) => [`${(v * 100).toFixed(1)}%`, 'Tasa registrada']}
                 labelFormatter={(l) => `Día ${l}`}
               />
               <Bar dataKey="rate" radius={[4, 4, 0, 0]}>

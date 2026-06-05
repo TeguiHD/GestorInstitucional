@@ -1,6 +1,15 @@
 import { createFileRoute, redirect } from '@tanstack/react-router';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { CalendarDays, CheckCircle2, Save, Settings, TriangleAlert } from 'lucide-react';
+import {
+  CalendarDays,
+  CheckCircle2,
+  Database,
+  Eye,
+  EyeOff,
+  Save,
+  Settings,
+  TriangleAlert,
+} from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 import { toast } from 'sonner';
 
@@ -39,6 +48,7 @@ function ConfiguracionPage() {
   const user = useUser();
   const schoolId = useEffectiveSchoolId();
   const qc = useQueryClient();
+  const [activeTab, setActiveTab] = useState<'calendar' | 'backup'>('calendar');
   const [year, setYear] = useState(currentYear);
   const [form, setForm] = useState<FormState>({
     firstSemesterStart: '',
@@ -89,134 +99,168 @@ function ConfiguracionPage() {
     <div className="max-w-5xl space-y-5">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
-          <h1 className="text-2xl font-bold tracking-tight">Configuración escolar</h1>
+          <h1 className="text-2xl font-bold tracking-tight">Configuración del sistema</h1>
           <p className="text-sm text-muted-foreground mt-1">
-            Fechas oficiales de inicio y término para reportes semestrales y anuales.
+            Administración del año académico escolar y copias de seguridad de datos.
           </p>
         </div>
-        <SchoolSelector />
       </div>
 
-      <div className="rounded-xl border border-border bg-background overflow-hidden">
-        <div className="border-b border-border px-5 py-4 flex flex-wrap items-center justify-between gap-3">
-          <div className="flex items-center gap-3">
-            <div className="size-10 rounded-lg bg-muted flex items-center justify-center">
-              <Settings className="size-5 text-muted-foreground" />
-            </div>
-            <div>
-              <h2 className="text-sm font-semibold">Año escolar</h2>
-              <p className="text-xs text-muted-foreground">
-                {config?.source === 'saved' ? 'Configuración guardada' : 'Valores por defecto'}
-              </p>
-            </div>
+      <div className="flex border-b border-border">
+        <button
+          onClick={() => setActiveTab('calendar')}
+          className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors -mb-px flex items-center gap-2 ${
+            activeTab === 'calendar'
+              ? 'border-primary text-primary font-semibold'
+              : 'border-transparent text-muted-foreground hover:text-foreground'
+          }`}
+        >
+          <CalendarDays className="size-4" />
+          Calendario Académico
+        </button>
+        <button
+          onClick={() => setActiveTab('backup')}
+          className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors -mb-px flex items-center gap-2 ${
+            activeTab === 'backup'
+              ? 'border-primary text-primary font-semibold'
+              : 'border-transparent text-muted-foreground hover:text-foreground'
+          }`}
+        >
+          <Database className="size-4" />
+          Copias de Seguridad (Backup)
+        </button>
+      </div>
+
+      {activeTab === 'calendar' ? (
+        <div className="space-y-5">
+          <div className="flex justify-end">
+            <SchoolSelector />
           </div>
-          <div className="flex items-center gap-2">
-            <label className="text-xs font-medium text-muted-foreground" htmlFor="year">
-              Año
-            </label>
-            <input
-              id="year"
-              type="number"
-              min={2020}
-              max={2100}
-              value={year}
-              onChange={(e) => setYear(Number(e.target.value))}
-              className="w-24 rounded-lg border border-border bg-background px-3 py-2 text-sm"
-            />
+
+          <div className="rounded-xl border border-border bg-background overflow-hidden">
+            <div className="border-b border-border px-5 py-4 flex flex-wrap items-center justify-between gap-3">
+              <div className="flex items-center gap-3">
+                <div className="size-10 rounded-lg bg-muted flex items-center justify-center">
+                  <Settings className="size-5 text-muted-foreground" />
+                </div>
+                <div>
+                  <h2 className="text-sm font-semibold">Año escolar</h2>
+                  <p className="text-xs text-muted-foreground">
+                    {config?.source === 'saved' ? 'Configuración guardada' : 'Valores por defecto'}
+                  </p>
+                </div>
+              </div>
+              <div className="flex items-center gap-2">
+                <label className="text-xs font-medium text-muted-foreground" htmlFor="year">
+                  Año
+                </label>
+                <input
+                  id="year"
+                  type="number"
+                  min={2020}
+                  max={2100}
+                  value={year}
+                  onChange={(e) => setYear(Number(e.target.value))}
+                  className="w-24 rounded-lg border border-border bg-background px-3 py-2 text-sm"
+                />
+              </div>
+            </div>
+
+            {!schoolId ? (
+              <div className="p-8 text-center text-sm text-muted-foreground">
+                Selecciona un colegio para gestionar sus fechas.
+              </div>
+            ) : isLoading ? (
+              <div className="p-6 space-y-3">
+                {Array.from({ length: 4 }).map((_, i) => (
+                  <div key={i} className="h-12 animate-pulse rounded-lg bg-muted" />
+                ))}
+              </div>
+            ) : (
+              <form
+                className="p-5 space-y-5"
+                onSubmit={(event) => {
+                  event.preventDefault();
+                  save.mutate(form);
+                }}
+              >
+                <div className="grid gap-4 md:grid-cols-2">
+                  <SemesterFieldset
+                    title="Primer semestre"
+                    startId="firstSemesterStart"
+                    endId="firstSemesterEnd"
+                    startValue={form.firstSemesterStart}
+                    endValue={form.firstSemesterEnd}
+                    onStartChange={(value) =>
+                      setForm((current) => ({ ...current, firstSemesterStart: value }))
+                    }
+                    onEndChange={(value) =>
+                      setForm((current) => ({ ...current, firstSemesterEnd: value }))
+                    }
+                  />
+                  <SemesterFieldset
+                    title="Segundo semestre"
+                    startId="secondSemesterStart"
+                    endId="secondSemesterEnd"
+                    startValue={form.secondSemesterStart}
+                    endValue={form.secondSemesterEnd}
+                    onStartChange={(value) =>
+                      setForm((current) => ({ ...current, secondSemesterStart: value }))
+                    }
+                    onEndChange={(value) =>
+                      setForm((current) => ({ ...current, secondSemesterEnd: value }))
+                    }
+                  />
+                </div>
+
+                <div className="rounded-lg border border-border bg-muted/30 px-4 py-3 text-sm">
+                  <div className="flex items-center gap-2 font-medium">
+                    <CalendarDays className="size-4 text-muted-foreground" />
+                    Año escolar configurado
+                  </div>
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    {formatRange(form.firstSemesterStart, form.firstSemesterEnd)} ·{' '}
+                    {formatRange(form.secondSemesterStart, form.secondSemesterEnd)}
+                  </p>
+                </div>
+
+                {conflict && (
+                  <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-900 dark:border-red-900/50 dark:bg-red-950/30 dark:text-red-200">
+                    <div className="flex items-center gap-2 font-semibold">
+                      <TriangleAlert className="size-4" />
+                      Asistencias fuera del período
+                    </div>
+                    <p className="mt-1 text-xs">{conflict.message}</p>
+                    <p className="mt-2 text-xs font-medium">
+                      Fechas detectadas: {conflict.conflictingDates.join(', ')}
+                      {conflict.totalConflicts > conflict.conflictingDates.length
+                        ? ` y ${conflict.totalConflicts - conflict.conflictingDates.length} más`
+                        : ''}
+                    </p>
+                  </div>
+                )}
+
+                <div className="flex flex-wrap items-center justify-between gap-3 border-t border-border pt-4">
+                  <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                    <CheckCircle2 className="size-4" />
+                    No se modifica ni elimina asistencia existente.
+                  </div>
+                  <button
+                    type="submit"
+                    disabled={!hasChanges || save.isPending}
+                    className="inline-flex items-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    <Save className="size-4" />
+                    {save.isPending ? 'Guardando...' : 'Guardar'}
+                  </button>
+                </div>
+              </form>
+            )}
           </div>
         </div>
-
-        {!schoolId ? (
-          <div className="p-8 text-center text-sm text-muted-foreground">
-            Selecciona un colegio para gestionar sus fechas.
-          </div>
-        ) : isLoading ? (
-          <div className="p-6 space-y-3">
-            {Array.from({ length: 4 }).map((_, i) => (
-              <div key={i} className="h-12 animate-pulse rounded-lg bg-muted" />
-            ))}
-          </div>
-        ) : (
-          <form
-            className="p-5 space-y-5"
-            onSubmit={(event) => {
-              event.preventDefault();
-              save.mutate(form);
-            }}
-          >
-            <div className="grid gap-4 md:grid-cols-2">
-              <SemesterFieldset
-                title="Primer semestre"
-                startId="firstSemesterStart"
-                endId="firstSemesterEnd"
-                startValue={form.firstSemesterStart}
-                endValue={form.firstSemesterEnd}
-                onStartChange={(value) =>
-                  setForm((current) => ({ ...current, firstSemesterStart: value }))
-                }
-                onEndChange={(value) =>
-                  setForm((current) => ({ ...current, firstSemesterEnd: value }))
-                }
-              />
-              <SemesterFieldset
-                title="Segundo semestre"
-                startId="secondSemesterStart"
-                endId="secondSemesterEnd"
-                startValue={form.secondSemesterStart}
-                endValue={form.secondSemesterEnd}
-                onStartChange={(value) =>
-                  setForm((current) => ({ ...current, secondSemesterStart: value }))
-                }
-                onEndChange={(value) =>
-                  setForm((current) => ({ ...current, secondSemesterEnd: value }))
-                }
-              />
-            </div>
-
-            <div className="rounded-lg border border-border bg-muted/30 px-4 py-3 text-sm">
-              <div className="flex items-center gap-2 font-medium">
-                <CalendarDays className="size-4 text-muted-foreground" />
-                Año escolar configurado
-              </div>
-              <p className="mt-1 text-xs text-muted-foreground">
-                {formatRange(form.firstSemesterStart, form.firstSemesterEnd)} ·{' '}
-                {formatRange(form.secondSemesterStart, form.secondSemesterEnd)}
-              </p>
-            </div>
-
-            {conflict && (
-              <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-900 dark:border-red-900/50 dark:bg-red-950/30 dark:text-red-200">
-                <div className="flex items-center gap-2 font-semibold">
-                  <TriangleAlert className="size-4" />
-                  Asistencias fuera del período
-                </div>
-                <p className="mt-1 text-xs">{conflict.message}</p>
-                <p className="mt-2 text-xs font-medium">
-                  Fechas detectadas: {conflict.conflictingDates.join(', ')}
-                  {conflict.totalConflicts > conflict.conflictingDates.length
-                    ? ` y ${conflict.totalConflicts - conflict.conflictingDates.length} más`
-                    : ''}
-                </p>
-              </div>
-            )}
-
-            <div className="flex flex-wrap items-center justify-between gap-3 border-t border-border pt-4">
-              <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                <CheckCircle2 className="size-4" />
-                No se modifica ni elimina asistencia existente.
-              </div>
-              <button
-                type="submit"
-                disabled={!hasChanges || save.isPending}
-                className="inline-flex items-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-50"
-              >
-                <Save className="size-4" />
-                {save.isPending ? 'Guardando...' : 'Guardar'}
-              </button>
-            </div>
-          </form>
-        )}
-      </div>
+      ) : (
+        <BackupConfigPanel />
+      )}
     </div>
   );
 }
@@ -303,4 +347,230 @@ function conflictFromError(
     totalConflicts:
       typeof data.totalConflicts === 'number' ? data.totalConflicts : data.conflictingDates.length,
   };
+}
+
+type BackupConfig = {
+  emails: string;
+  time: string;
+  hasPassword: boolean;
+  active: boolean;
+};
+
+function BackupConfigPanel() {
+  const qc = useQueryClient();
+  const [emails, setEmails] = useState('');
+  const [time, setTime] = useState('23:00');
+  const [password, setPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
+  const [active, setActive] = useState(true);
+
+  const { data: config, isLoading } = useQuery<BackupConfig>({
+    queryKey: ['system-backup-config'],
+    queryFn: () => api.get('/system-config/backup'),
+  });
+
+  useEffect(() => {
+    if (!config) return;
+    setEmails(config.emails);
+    setTime(config.time);
+    setActive(config.active);
+  }, [config]);
+
+  const save = useMutation({
+    mutationFn: (body: {
+      emails: string;
+      time: string;
+      encryptPassword?: string;
+      active: boolean;
+    }) => api.put<BackupConfig>('/system-config/backup', body),
+    onSuccess: (saved) => {
+      toast.success('Configuración de backup guardada');
+      void qc.setQueryData(['system-backup-config'], saved);
+      setPassword('');
+    },
+    onError: (error: Error) => toast.error(error.message),
+  });
+
+  const testBackup = useMutation({
+    mutationFn: () => api.post('/system-config/backup/test', {}),
+    onSuccess: () => {
+      toast.success('Prueba de backup iniciada. Recibirás un correo en unos momentos.');
+    },
+    onError: (error: Error) => toast.error(error.message),
+  });
+
+  if (isLoading) {
+    return (
+      <div className="p-6 space-y-3 rounded-xl border border-border bg-background">
+        {Array.from({ length: 4 }).map((_, i) => (
+          <div key={i} className="h-12 animate-pulse rounded-lg bg-muted" />
+        ))}
+      </div>
+    );
+  }
+
+  const hasChanges =
+    !!config &&
+    (emails !== config.emails ||
+      time !== config.time ||
+      password !== '' ||
+      active !== config.active);
+
+  return (
+    <form
+      onSubmit={(e) => {
+        e.preventDefault();
+        save.mutate({
+          emails,
+          time,
+          active,
+          ...(password.trim() !== '' ? { encryptPassword: password } : {}),
+        });
+      }}
+      className="rounded-xl border border-border bg-background overflow-hidden"
+    >
+      <div className="border-b border-border px-5 py-4 flex items-center gap-3">
+        <div className="size-10 rounded-lg bg-muted flex items-center justify-center">
+          <Database className="size-5 text-muted-foreground" />
+        </div>
+        <div>
+          <h2 className="text-sm font-semibold">Respaldo Automático de Base de Datos</h2>
+          <p className="text-xs text-muted-foreground">
+            Configure el envío por cambios de asistencia al horario definido.
+          </p>
+        </div>
+      </div>
+
+      <div className="p-5 space-y-5">
+        {/* Habilitar */}
+        <div className="flex items-center justify-between rounded-lg border border-border bg-muted/10 p-4">
+          <div className="space-y-0.5">
+            <label className="text-sm font-semibold cursor-pointer" htmlFor="backup-active">
+              Habilitar Copias por Cambios de Asistencia
+            </label>
+            <p className="text-xs text-muted-foreground">
+              Si no hay cambios desde el último respaldo exitoso, no se enviará correo.
+            </p>
+          </div>
+          <input
+            id="backup-active"
+            type="checkbox"
+            checked={active}
+            onChange={(e) => setActive(e.target.checked)}
+            className="size-5 cursor-pointer rounded border-border accent-primary"
+          />
+        </div>
+
+        <div className="grid gap-4 md:grid-cols-2">
+          {/* Correos */}
+          <div className="space-y-1">
+            <label className="text-xs font-medium text-muted-foreground" htmlFor="backup-emails">
+              Correos de Destinatarios (separados por coma)
+            </label>
+            <input
+              id="backup-emails"
+              type="text"
+              placeholder="ejemplo@correo.com, admin@correo.com"
+              value={emails}
+              onChange={(e) => setEmails(e.target.value)}
+              className="block w-full rounded-lg border border-border bg-background px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-primary focus:border-primary disabled:opacity-50"
+              required
+              disabled={!active}
+            />
+            <p className="text-[10px] text-muted-foreground">
+              Solo se enviará correo cuando existan cambios de asistencia pendientes de respaldar.
+            </p>
+          </div>
+
+          {/* Hora */}
+          <div className="space-y-1">
+            <label className="text-xs font-medium text-muted-foreground" htmlFor="backup-time">
+              Hora de Envío (Hora local de Chile)
+            </label>
+            <input
+              id="backup-time"
+              type="time"
+              value={time}
+              onChange={(e) => setTime(e.target.value)}
+              className="block w-full rounded-lg border border-border bg-background px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-primary focus:border-primary disabled:opacity-50"
+              required
+              disabled={!active}
+            />
+            <p className="text-[10px] text-muted-foreground">
+              A esta hora se revisarán cambios de asistencia y, si existen, se enviará respaldo.
+            </p>
+          </div>
+        </div>
+
+        <div className="grid gap-4 md:grid-cols-2">
+          {/* Contraseña ZIP */}
+          <div className="space-y-1">
+            <label className="text-xs font-medium text-muted-foreground" htmlFor="backup-password">
+              Contraseña de Cifrado del archivo ZIP (Recomendado)
+            </label>
+            <div className="relative">
+              <input
+                id="backup-password"
+                type={showPassword ? 'text' : 'password'}
+                placeholder={
+                  config?.hasPassword
+                    ? '•••••••• (Establecida - escribe para cambiarla)'
+                    : 'Sin contraseña de encriptación (No recomendado)'
+                }
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                className="block w-full rounded-lg border border-border bg-background pl-3 pr-10 py-2 text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-primary focus:border-primary disabled:opacity-50"
+                disabled={!active}
+              />
+              <button
+                type="button"
+                onClick={() => setShowPassword((v) => !v)}
+                className="absolute inset-y-0 right-0 flex items-center px-3 text-muted-foreground hover:text-foreground transition disabled:opacity-50"
+                disabled={!active}
+                tabIndex={-1}
+                aria-label={showPassword ? 'Ocultar contraseña' : 'Mostrar contraseña'}
+              >
+                {showPassword ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
+              </button>
+            </div>
+            <p className="text-[10px] text-muted-foreground text-amber-600 dark:text-amber-400">
+              Cifra el archivo adjunto con AES-256. La clave no se envía por correo.
+            </p>
+          </div>
+
+          {/* Información y Test */}
+          <div className="rounded-lg border border-border bg-muted/20 p-4 flex flex-col justify-between">
+            <div className="text-xs text-muted-foreground">
+              <span className="font-semibold text-foreground">Seguridad e Integridad:</span>
+              <p className="mt-1">
+                La prueba fuerza un respaldo y valida que el servidor pueda enviar los correos.
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={() => testBackup.mutate()}
+              disabled={testBackup.isPending || save.isPending || !active}
+              className="mt-3 w-full inline-flex justify-center items-center gap-2 rounded-lg border border-border bg-background px-3 py-2 text-xs font-medium hover:bg-muted transition-colors disabled:opacity-50"
+            >
+              {testBackup.isPending ? 'Ejecutando prueba...' : 'Probar Envío Ahora (Test)'}
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <div className="flex flex-wrap items-center justify-between gap-3 border-t border-border px-5 py-4 bg-muted/5">
+        <div className="text-xs text-muted-foreground">
+          Los cambios se aplicarán en la próxima revisión al horario configurado.
+        </div>
+        <button
+          type="submit"
+          disabled={!hasChanges || save.isPending}
+          className="inline-flex items-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90 disabled:opacity-50"
+        >
+          <Save className="size-4" />
+          {save.isPending ? 'Guardando...' : 'Guardar'}
+        </button>
+      </div>
+    </form>
+  );
 }
