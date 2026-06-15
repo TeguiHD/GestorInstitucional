@@ -134,11 +134,11 @@ export class SchoolConfigService {
       semester === 1
         ? {
             from: this.parseDate(config.firstSemester.startDate),
-            to: this.parseDate(config.firstSemester.endDate),
+            to: this.endOfDay(this.parseDate(config.firstSemester.endDate)),
           }
         : {
             from: this.parseDate(config.secondSemester.startDate),
-            to: this.parseDate(config.secondSemester.endDate),
+            to: this.endOfDay(this.parseDate(config.secondSemester.endDate)),
           };
 
     return {
@@ -155,11 +155,11 @@ export class SchoolConfigService {
       ranges: [
         {
           from: this.parseDate(config.firstSemester.startDate),
-          to: this.parseDate(config.firstSemester.endDate),
+          to: this.endOfDay(this.parseDate(config.firstSemester.endDate)),
         },
         {
           from: this.parseDate(config.secondSemester.startDate),
-          to: this.parseDate(config.secondSemester.endDate),
+          to: this.endOfDay(this.parseDate(config.secondSemester.endDate)),
         },
       ],
       source: config.source,

@@ -424,6 +424,10 @@ export function MonthlyAttendanceGrid({ courseId }: { courseId: string }) {
       removeStoredDraft(draftKey);
       setDirty(new Map());
       void qc.invalidateQueries({ queryKey: ['course-matrix', courseId, year, month] });
+      // Invalidate report caches so reports page reflects updated attendance immediately
+      void qc.invalidateQueries({ queryKey: ['course-matrix-report', courseId] });
+      void qc.invalidateQueries({ queryKey: ['course-summary-report', courseId] });
+      void qc.invalidateQueries({ queryKey: ['course-monthly-breakdown', courseId] });
       toast.success('Asistencia guardada', {
         description: `${dirtyCount} cambio${dirtyCount !== 1 ? 's' : ''} registrado${dirtyCount !== 1 ? 's' : ''}`,
       });
