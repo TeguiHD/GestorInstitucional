@@ -119,6 +119,9 @@ mark_failed_on_exit() {
     upsert_setting backup_last_status failed 2>/dev/null || true
     upsert_setting backup_last_error "${err:-Proceso de backup fallido con codigo $code}" 2>/dev/null || true
   fi
+  if [ -n "${SQL_PATH:-}" ] && [ -f "$SQL_PATH" ]; then
+    rm -f "$SQL_PATH"
+  fi
   rm -f "$LAST_ERROR_FILE" "$SEND_RESULT_FILE"
   cleanup_lock
 }
@@ -240,6 +243,7 @@ fi
 if [ ! -s "$ZIP_PATH" ]; then
   fail "no se genero ZIP de respaldo."
 fi
+chmod 600 "$ZIP_PATH" 2>/dev/null || true
 
 echo "[$(date)] Backup completado: $ZIP_PATH"
 
