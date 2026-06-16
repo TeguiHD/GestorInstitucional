@@ -274,7 +274,7 @@ async function main() {
   const deliveryBlock =
     deliveryMode === 'download_link'
       ? `
-      <p>El respaldo supera el limite practico de adjunto del proveedor de correo. Por seguridad queda cifrado y disponible temporalmente en el servidor.</p>
+      <p>El respaldo se entrega por enlace temporal seguro por tamano o compatibilidad del proveedor de correo. Por seguridad queda cifrado y disponible temporalmente en el servidor.</p>
       <p>
         <a href="${escapeHtml(downloadUrl)}" style="display:inline-block;padding:10px 14px;background:#0f766e;color:#fff;text-decoration:none;border-radius:6px;">
           Descargar respaldo cifrado

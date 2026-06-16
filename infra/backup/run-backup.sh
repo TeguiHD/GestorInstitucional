@@ -187,6 +187,7 @@ DATE="$(date +%Y-%m-%d_%H%M%S)"
 FILE_NAME="backup_asistencia_${DATE}.sql"
 SQL_PATH="${BACKUP_DIR}/${FILE_NAME}"
 ZIP_PATH="${SQL_PATH}.zip"
+FORCE_DOWNLOAD_LINK=false
 
 RUN_STARTED=true
 ATTEMPT_AT="$(date -u '+%Y-%m-%d %H:%M:%S')"
@@ -223,6 +224,7 @@ if [ -n "$BACKUP_PASS_ZIP" ]; then
         fail "7z fallo al cifrar el respaldo en formato 7z."
       fi
       ZIP_PATH="$FALLBACK_7Z_PATH"
+      FORCE_DOWNLOAD_LINK=true
     else
       fail "7z fallo al cifrar el respaldo."
     fi
@@ -250,7 +252,7 @@ DOWNLOAD_EXPIRES_AT="$(
   node -e "console.log(new Date(Date.now()+7*24*60*60*1000).toISOString().slice(0,19).replace('T',' '));"
 )"
 
-if [ "$ZIP_SIZE_BYTES" -gt "$ATTACHMENT_LIMIT_BYTES" ]; then
+if [ "$ZIP_SIZE_BYTES" -gt "$ATTACHMENT_LIMIT_BYTES" ] || [ "$FORCE_DOWNLOAD_LINK" = "true" ]; then
   if [ -z "$BACKUP_PASS_ZIP" ]; then
     fail "el ZIP pesa ${ZIP_SIZE_BYTES} bytes y supera el limite de adjunto; configura una contrasena para habilitar descarga segura."
   fi
@@ -278,7 +280,11 @@ if [ "$ZIP_SIZE_BYTES" -gt "$ATTACHMENT_LIMIT_BYTES" ]; then
   upsert_setting backup_download_expires_at "$DOWNLOAD_EXPIRES_AT"
 
   DELIVERY_MODE="download_link"
-  echo "[$(date)] ZIP supera limite de adjunto (${ZIP_SIZE_BYTES} > ${ATTACHMENT_LIMIT_BYTES}); se enviara link temporal."
+  if [ "$FORCE_DOWNLOAD_LINK" = "true" ]; then
+    echo "[$(date)] Archivo cifrado requiere entrega por link temporal."
+  else
+    echo "[$(date)] ZIP supera limite de adjunto (${ZIP_SIZE_BYTES} > ${ATTACHMENT_LIMIT_BYTES}); se enviara link temporal."
+  fi
 fi
 
 export BACKUP_EMAILS
