@@ -1,4 +1,5 @@
 import { mkdtemp, rm, writeFile } from 'fs/promises';
+import { createHash } from 'crypto';
 import { tmpdir } from 'os';
 import path from 'path';
 
@@ -159,5 +160,46 @@ describe('SystemConfigService backup scheduler', () => {
 
     await rm(backupDir, { recursive: true, force: true });
     await rm(outsideDir, { recursive: true, force: true });
+  });
+
+  it('permite descargar con un token historico vigente', async () => {
+    const backupDir = await mkdtemp(path.join(tmpdir(), 'asistencia-backups-'));
+    process.env.BACKUP_DIR = backupDir;
+    const filePath = path.join(backupDir, 'backup_historico.sql.7z');
+    await writeFile(filePath, '7z');
+    const token = 'token-historico';
+    const tokenHash = createHash('sha256').update(token).digest('hex');
+
+    const service = makeService();
+    const prisma = (
+      service as unknown as {
+        prisma: { systemSetting: { findMany: ReturnType<typeof vi.fn> } };
+      }
+    ).prisma;
+    prisma.systemSetting.findMany.mockResolvedValue(
+      settings({
+        backup_download_token_hash: createHash('sha256').update('token-actual').digest('hex'),
+        backup_download_path: path.join(backupDir, 'backup_actual.sql.7z'),
+        backup_download_file_name: 'backup_actual.sql.7z',
+        backup_download_expires_at: '2999-01-01 00:00:00',
+        backup_download_tokens: JSON.stringify([
+          {
+            tokenHash,
+            path: filePath,
+            fileName: 'backup_historico.sql.7z',
+            sizeBytes: 2,
+            expiresAt: '2999-01-01 00:00:00',
+          },
+        ]),
+      }),
+    );
+
+    const download = await service.getBackupDownload(token);
+
+    expect(download.filePath).toBe(filePath);
+    expect(download.fileName).toBe('backup_historico.sql.7z');
+    expect(download.size).toBe(2);
+
+    await rm(backupDir, { recursive: true, force: true });
   });
 });

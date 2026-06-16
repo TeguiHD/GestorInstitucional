@@ -101,6 +101,65 @@ upsert_setting() {
   db_query "INSERT INTO system_settings (\`key\`, value, updatedAt) VALUES ('$key', '$value', NOW(3)) ON DUPLICATE KEY UPDATE value = VALUES(value), updatedAt = NOW(3);"
 }
 
+append_download_token() {
+  local token_hash="$1"
+  local file_path="$2"
+  local file_name="$3"
+  local file_size_bytes="$4"
+  local expires_at="$5"
+  local current next
+  current="$(get_setting backup_download_tokens)"
+  next="$(
+    node - "$current" "$token_hash" "$file_path" "$file_name" "$file_size_bytes" "$expires_at" <<'NODE'
+const [raw, tokenHash, filePath, fileName, fileSizeBytes, expiresAt] = process.argv.slice(2);
+let list = [];
+try {
+  const parsed = raw ? JSON.parse(raw) : [];
+  if (Array.isArray(parsed)) list = parsed;
+} catch {}
+const now = Date.now();
+const next = list
+  .filter((item) => item && typeof item === 'object')
+  .filter((item) => {
+    const expires = Date.parse(String(item.expiresAt || '').replace(' ', 'T') + 'Z');
+    return Number.isFinite(expires) && expires > now;
+  })
+  .filter((item) => item.tokenHash !== tokenHash);
+next.push({
+  tokenHash,
+  path: filePath,
+  fileName,
+  sizeBytes: Number(fileSizeBytes) || null,
+  expiresAt,
+});
+console.log(JSON.stringify(next.slice(-20)));
+NODE
+  )"
+  upsert_setting backup_download_tokens "$next"
+}
+
+verify_download_link() {
+  local url="$1"
+  node - "$url" <<'NODE'
+const url = process.argv[2];
+const controller = new AbortController();
+const timeout = setTimeout(() => controller.abort(), 15000);
+fetch(url, { signal: controller.signal })
+  .then((res) => {
+    clearTimeout(timeout);
+    if (!res.ok) {
+      throw new Error(`HTTP ${res.status}`);
+    }
+    res.body?.cancel?.();
+  })
+  .catch((error) => {
+    clearTimeout(timeout);
+    console.error(`Link de descarga no valido: ${error.message}`);
+    process.exit(1);
+  });
+NODE
+}
+
 RUN_STARTED=false
 LAST_ERROR_FILE="$(mktemp)"
 SEND_RESULT_FILE="$(mktemp)"
@@ -282,12 +341,22 @@ if [ "$ZIP_SIZE_BYTES" -gt "$ATTACHMENT_LIMIT_BYTES" ] || [ "$FORCE_DOWNLOAD_LIN
   upsert_setting backup_download_file_name "$(basename "$ZIP_PATH")"
   upsert_setting backup_download_file_size_bytes "$ZIP_SIZE_BYTES"
   upsert_setting backup_download_expires_at "$DOWNLOAD_EXPIRES_AT"
+  append_download_token \
+    "$DOWNLOAD_TOKEN_HASH" \
+    "$ZIP_PATH" \
+    "$(basename "$ZIP_PATH")" \
+    "$ZIP_SIZE_BYTES" \
+    "$DOWNLOAD_EXPIRES_AT"
 
   DELIVERY_MODE="download_link"
   if [ "$FORCE_DOWNLOAD_LINK" = "true" ]; then
     echo "[$(date)] Archivo cifrado requiere entrega por link temporal."
   else
     echo "[$(date)] ZIP supera limite de adjunto (${ZIP_SIZE_BYTES} > ${ATTACHMENT_LIMIT_BYTES}); se enviara link temporal."
+  fi
+  echo "[$(date)] Verificando link temporal antes del envio..."
+  if ! verify_download_link "$DOWNLOAD_URL" 2>"$LAST_ERROR_FILE"; then
+    fail "el link temporal de descarga no responde correctamente."
   fi
 fi
 

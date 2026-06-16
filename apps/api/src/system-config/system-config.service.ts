@@ -31,6 +31,7 @@ const BACKUP_KEYS = [
   'backup_download_file_name',
   'backup_download_file_size_bytes',
   'backup_download_expires_at',
+  'backup_download_tokens',
 ];
 
 const BACKUP_TZ = 'America/Santiago';
@@ -63,6 +64,14 @@ type BackupFileDownload = {
   filePath: string;
   fileName: string;
   size: number;
+  expiresAt: string;
+};
+
+type StoredBackupDownload = {
+  tokenHash: string;
+  path: string;
+  fileName: string;
+  sizeBytes?: number;
   expiresAt: string;
 };
 
@@ -176,25 +185,25 @@ export class SystemConfigService {
   async getBackupDownload(token: string | undefined) {
     if (!token) throw new NotFoundException('Respaldo no encontrado');
     const configMap = await this.getBackupSettings();
-    const tokenHash = configMap.get('backup_download_token_hash');
-    const filePath = configMap.get('backup_download_path');
-    const expiresAt = this.parseUtcSql(configMap.get('backup_download_expires_at'));
-
-    if (!tokenHash || !filePath || !expiresAt) {
-      throw new NotFoundException('Respaldo no encontrado');
-    }
-    if (expiresAt.getTime() < Date.now()) {
-      throw new NotFoundException('El enlace de respaldo expiró');
-    }
-
     const providedHash = createHash('sha256').update(token).digest('hex');
-    const expected = Buffer.from(tokenHash, 'hex');
-    const provided = Buffer.from(providedHash, 'hex');
-    if (expected.length !== provided.length || !timingSafeEqual(expected, provided)) {
-      throw new NotFoundException('Respaldo no encontrado');
+
+    const currentTokenHash = configMap.get('backup_download_token_hash');
+    if (currentTokenHash && this.sameHash(currentTokenHash, providedHash)) {
+      return this.resolveStoredBackupFile(configMap);
     }
 
-    return this.resolveStoredBackupFile(configMap);
+    for (const download of this.parseStoredDownloadTokens(
+      configMap.get('backup_download_tokens'),
+    )) {
+      if (!this.sameHash(download.tokenHash, providedHash)) continue;
+      return this.resolveBackupFile({
+        filePath: download.path,
+        fileName: download.fileName,
+        expiresAtRaw: download.expiresAt,
+      });
+    }
+
+    throw new NotFoundException('Respaldo no encontrado');
   }
 
   async getLatestBackupDownload() {
@@ -299,9 +308,19 @@ export class SystemConfigService {
   private async resolveStoredBackupFile(
     configMap: Map<string, string>,
   ): Promise<BackupFileDownload> {
-    const filePath = configMap.get('backup_download_path');
-    const fileName = configMap.get('backup_download_file_name') || 'backup_asistencia.sql.zip';
-    const expiresAtRaw = configMap.get('backup_download_expires_at');
+    return this.resolveBackupFile({
+      filePath: configMap.get('backup_download_path'),
+      fileName: configMap.get('backup_download_file_name') || 'backup_asistencia.sql.zip',
+      expiresAtRaw: configMap.get('backup_download_expires_at'),
+    });
+  }
+
+  private async resolveBackupFile(input: {
+    filePath: string | null | undefined;
+    fileName: string;
+    expiresAtRaw: string | null | undefined;
+  }): Promise<BackupFileDownload> {
+    const { filePath, fileName, expiresAtRaw } = input;
     const expiresAt = this.parseUtcSql(expiresAtRaw);
 
     if (!filePath || !expiresAt || !expiresAtRaw) {
@@ -328,6 +347,36 @@ export class SystemConfigService {
       size: info.size,
       expiresAt: expiresAtRaw,
     };
+  }
+
+  private parseStoredDownloadTokens(raw: string | null | undefined): StoredBackupDownload[] {
+    if (!raw) return [];
+    try {
+      const parsed = JSON.parse(raw) as unknown;
+      if (!Array.isArray(parsed)) return [];
+      return parsed.filter((item): item is StoredBackupDownload => {
+        if (!item || typeof item !== 'object') return false;
+        const candidate = item as Partial<StoredBackupDownload>;
+        return (
+          typeof candidate.tokenHash === 'string' &&
+          typeof candidate.path === 'string' &&
+          typeof candidate.fileName === 'string' &&
+          typeof candidate.expiresAt === 'string'
+        );
+      });
+    } catch {
+      return [];
+    }
+  }
+
+  private sameHash(expectedHash: string, providedHash: string): boolean {
+    try {
+      const expected = Buffer.from(expectedHash, 'hex');
+      const provided = Buffer.from(providedHash, 'hex');
+      return expected.length === provided.length && timingSafeEqual(expected, provided);
+    } catch {
+      return false;
+    }
   }
 
   private isBackupRunning(configMap: Map<string, string>): boolean {

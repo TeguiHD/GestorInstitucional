@@ -280,6 +280,10 @@ async function main() {
           Descargar respaldo cifrado
         </a>
       </p>
+      <p style="font-size:12px;color:#555;word-break:break-all;">
+        Si el boton no abre, copia este enlace completo:<br>
+        <a href="${escapeHtml(downloadUrl)}">${escapeHtml(downloadUrl)}</a>
+      </p>
       <p><strong>Expira:</strong> ${escapeHtml(downloadExpiresAt || '7 dias')}</p>
       `
       : '<p>Se adjunta el respaldo SQL completo de la base de datos del sistema de asistencia.</p>';
