@@ -22,7 +22,7 @@ import { useEffectiveSchoolId } from '@/stores/school.store';
 import { useUser } from '@/stores/auth.store';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { ErrorState } from '@/components/ui/ErrorState';
-import { dateInputValue, fmtDateCl } from '@/lib/date';
+import { dateInputValue, fmtDateCl, formatDateLocal } from '@/lib/date';
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -189,7 +189,7 @@ function MatricularDialog({
   const [birthDate, setBirthDate] = useState('');
   const [courseId, setCourseId] = useState(courses[0]?.id ?? '');
   const [enrollmentNumber, setEnrollmentNumber] = useState('');
-  const [effectiveDate, setEffectiveDate] = useState(new Date().toISOString().split('T')[0]!);
+  const [effectiveDate, setEffectiveDate] = useState(formatDateLocal(new Date()));
   const [isTransfer, setIsTransfer] = useState(false);
   const [originSchool, setOriginSchool] = useState('');
 
@@ -365,7 +365,7 @@ const CONFIRM_WORD = 'RETIRAR';
 function DarDeBajaDialog({ student, onClose }: { student: ActiveStudent; onClose: () => void }) {
   const qc = useQueryClient();
   const schoolId = useEffectiveSchoolId();
-  const [effectiveDate, setEffectiveDate] = useState(new Date().toISOString().split('T')[0]!);
+  const [effectiveDate, setEffectiveDate] = useState(formatDateLocal(new Date()));
   const [isTransfer, setIsTransfer] = useState(false);
   const [destinationSchool, setDestinationSchool] = useState('');
   const [withdrawalReason, setWithdrawalReason] = useState<WithdrawalReason>('RETIRO_VOLUNTARIO');
@@ -531,7 +531,7 @@ function ReingresarDialog({
   const qc = useQueryClient();
   const schoolId = useEffectiveSchoolId();
   const [courseId, setCourseId] = useState(student.course.id);
-  const [effectiveDate, setEffectiveDate] = useState(new Date().toISOString().split('T')[0]!);
+  const [effectiveDate, setEffectiveDate] = useState(formatDateLocal(new Date()));
   const [reason, setReason] = useState('');
 
   const mutation = useMutation({

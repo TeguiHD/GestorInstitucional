@@ -4,6 +4,7 @@ import {
   ChevronLeft,
   ChevronRight,
   CalendarDays,
+  CheckCircle2,
   Save,
   Loader2,
 } from 'lucide-react';
@@ -15,6 +16,7 @@ import { attendanceQueue } from '@/lib/attendance-queue';
 import { useAttendanceSync } from '@/hooks/useAttendanceSync';
 import { cn } from '@/lib/cn';
 import { formatStudentFullName } from '@/lib/student-name';
+import { useUser } from '@/stores/auth.store';
 import {
   attendanceDraftStorageKey,
   buildPresentStatusMap,
@@ -114,6 +116,15 @@ function formatGridDate(date: string): string {
   });
 }
 
+function parseFocusDate(
+  value: string | undefined,
+): { date: string; year: number; month: number } | null {
+  if (!value || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return null;
+  const [year, month] = value.split('-').map(Number);
+  if (!year || !month || month < 1 || month > 12) return null;
+  return { date: value, year, month };
+}
+
 function readStoredDraft(key: string): unknown | null {
   try {
     const raw = globalThis.localStorage?.getItem(key);
@@ -152,10 +163,17 @@ type PendingConfirm = {
 /*  Component                                                          */
 /* ------------------------------------------------------------------ */
 
-export function MonthlyAttendanceGrid({ courseId }: { courseId: string }) {
+export function MonthlyAttendanceGrid({
+  courseId,
+  focusDate,
+}: {
+  courseId: string;
+  focusDate?: string | undefined;
+}) {
   const today = new Date();
-  const [year, setYear] = useState(today.getFullYear());
-  const [month, setMonth] = useState(today.getMonth() + 1);
+  const initialFocusDate = parseFocusDate(focusDate);
+  const [year, setYear] = useState(initialFocusDate?.year ?? today.getFullYear());
+  const [month, setMonth] = useState(initialFocusDate?.month ?? today.getMonth() + 1);
 
   // dirty = user modifications: date -> studentId -> status
   const [dirty, setDirty] = useState<Map<string, Map<string, StatusKey>>>(new Map());
@@ -166,10 +184,13 @@ export function MonthlyAttendanceGrid({ courseId }: { courseId: string }) {
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const todayColRef = useRef<HTMLTableHeaderCellElement>(null);
+  const focusColRef = useRef<HTMLTableHeaderCellElement>(null);
   const restoredDraftKeyRef = useRef<string | null>(null);
   const skipNextDraftPersistRef = useRef<string | null>(null);
   const qc = useQueryClient();
   const { online, pendingCount, refreshCount } = useAttendanceSync();
+  const parsedFocusDate = useMemo(() => parseFocusDate(focusDate), [focusDate]);
+  const user = useUser();
 
   const { data: matrix, isLoading } = useQuery<MatrixData>({
     queryKey: ['course-matrix', courseId, year, month],
@@ -180,9 +201,15 @@ export function MonthlyAttendanceGrid({ courseId }: { courseId: string }) {
   const dates = matrix?.dates ?? [];
   const todayKey = matrix?.today ?? '';
   const draftKey = useMemo(
-    () => attendanceDraftStorageKey(courseId, year, month),
-    [courseId, month, year],
+    () => attendanceDraftStorageKey(user?.sub ?? 'anonymous', courseId, year, month),
+    [courseId, month, user?.sub, year],
   );
+
+  useEffect(() => {
+    if (!parsedFocusDate) return;
+    setYear(parsedFocusDate.year);
+    setMonth(parsedFocusDate.month);
+  }, [parsedFocusDate]);
 
   // Reset dirty when month/course changes; restoration below will rehydrate any local draft.
   useEffect(() => {
@@ -242,16 +269,15 @@ export function MonthlyAttendanceGrid({ courseId }: { courseId: string }) {
     }
   }, [dirty, draftKey, matrix]);
 
-  // Scroll to today column on load
+  // Scroll to the focused pending day when present; otherwise keep the today behavior.
   useEffect(() => {
-    if (todayColRef.current && scrollRef.current) {
-      const container = scrollRef.current;
-      const col = todayColRef.current;
-      const offset =
-        col.offsetLeft - container.offsetLeft - container.clientWidth / 2 + col.clientWidth / 2;
-      container.scrollTo({ left: Math.max(0, offset), behavior: 'smooth' });
-    }
-  }, [matrix]);
+    const col = focusColRef.current ?? todayColRef.current;
+    if (!col || !scrollRef.current) return;
+    const container = scrollRef.current;
+    const offset =
+      col.offsetLeft - container.offsetLeft - container.clientWidth / 2 + col.clientWidth / 2;
+    container.scrollTo({ left: Math.max(0, offset), behavior: 'smooth' });
+  }, [matrix, parsedFocusDate]);
 
   const dirtyCount = useMemo(() => {
     let count = 0;
@@ -303,6 +329,55 @@ export function MonthlyAttendanceGrid({ courseId }: { courseId: string }) {
       return dirty.get(date)?.has(studentId) ?? false;
     },
     [dirty],
+  );
+
+  const fillDateWithPresent = useCallback(
+    (date: string) => {
+      if (!matrix) return;
+      if (date > matrix.today) return;
+      if (matrix.nonSchoolDays[date]) return;
+
+      const completion = getDateCompletion(matrix.students, date, matrix.matrix, dirty);
+      if (completion.activeCount === 0) return;
+      if (completion.isComplete) {
+        setUnlockedDays((prev) => (date < matrix.today ? new Set(prev).add(date) : prev));
+        toast.info('Día ya completo', {
+          description: `${formatGridDate(date)} no tiene alumnos pendientes.`,
+        });
+        return;
+      }
+
+      setDirty((prev) => {
+        const next = new Map(prev);
+        const dateMap = completion.isEmpty
+          ? buildPresentStatusMap(matrix.students, date, matrix.matrix)
+          : new Map(next.get(date) ?? []);
+
+        if (!completion.isEmpty) {
+          for (const studentId of completion.missingStudentIds) {
+            dateMap.set(studentId, 'PRESENT');
+          }
+        }
+
+        next.set(date, dateMap);
+        return next;
+      });
+
+      if (date < matrix.today) {
+        setUnlockedDays((prev) => new Set(prev).add(date));
+      }
+
+      toast.success(completion.isEmpty ? 'Día inicializado' : 'Día completado', {
+        description: completion.isEmpty
+          ? `${formatGridDate(date)} quedó marcado como presente.`
+          : `${completion.missingCount} alumno${
+              completion.missingCount !== 1 ? 's' : ''
+            } pendiente${completion.missingCount !== 1 ? 's' : ''} marcado${
+              completion.missingCount !== 1 ? 's' : ''
+            } como presente.`,
+      });
+    },
+    [dirty, matrix],
   );
 
   const handleCellClick = useCallback(
@@ -377,29 +452,14 @@ export function MonthlyAttendanceGrid({ courseId }: { courseId: string }) {
 
       if (!completion.isEmpty) {
         if (completion.isPartial) {
-          toast.warning('Asistencia incompleta', {
-            description: `${formatGridDate(date)} tiene ${completion.missingCount} alumno${
-              completion.missingCount !== 1 ? 's' : ''
-            } sin estado.`,
-          });
+          fillDateWithPresent(date);
         }
         return;
       }
 
-      const presentMap = buildPresentStatusMap(matrix.students, date, matrix.matrix);
-      setDirty((prev) => {
-        const next = new Map(prev);
-        next.set(date, presentMap);
-        return next;
-      });
-      if (date < matrix.today) {
-        setUnlockedDays((prev) => new Set(prev).add(date));
-      }
-      toast.success('Día inicializado', {
-        description: `${formatGridDate(date)} quedó marcado como presente.`,
-      });
+      fillDateWithPresent(date);
     },
-    [dirty, matrix],
+    [dirty, fillDateWithPresent, matrix],
   );
 
   // Save mutation: sends dirty entries grouped by date
@@ -424,6 +484,10 @@ export function MonthlyAttendanceGrid({ courseId }: { courseId: string }) {
       removeStoredDraft(draftKey);
       setDirty(new Map());
       void qc.invalidateQueries({ queryKey: ['course-matrix', courseId, year, month] });
+      void qc.invalidateQueries({ queryKey: ['missing-attendance'] });
+      void qc.invalidateQueries({ queryKey: ['missing-attendance-prof'] });
+      void qc.invalidateQueries({ queryKey: ['missing-attendance-bell'] });
+      void qc.invalidateQueries({ queryKey: ['course-insights', courseId] });
       // Invalidate report caches so reports page reflects updated attendance immediately
       void qc.invalidateQueries({ queryKey: ['course-matrix-report', courseId] });
       void qc.invalidateQueries({ queryKey: ['course-summary-report', courseId] });
@@ -530,6 +594,21 @@ export function MonthlyAttendanceGrid({ courseId }: { courseId: string }) {
     return { present, absent, late, justified, total };
   }, [matrix, students, todayKey, dates, getEffectiveStatus]);
 
+  const focusedCompletion =
+    parsedFocusDate && dates.includes(parsedFocusDate.date)
+      ? dayCompletion.get(parsedFocusDate.date)
+      : undefined;
+  const focusedNonSchoolDay =
+    parsedFocusDate && matrix ? matrix.nonSchoolDays[parsedFocusDate.date] : undefined;
+  const focusedIsFuture = !!parsedFocusDate && !!matrix && parsedFocusDate.date > matrix.today;
+  const focusedCanFill =
+    !!parsedFocusDate &&
+    !!focusedCompletion &&
+    !focusedNonSchoolDay &&
+    !focusedIsFuture &&
+    focusedCompletion.activeCount > 0 &&
+    !focusedCompletion.isComplete;
+
   return (
     <div className="space-y-4">
       {/* Header bar */}
@@ -632,6 +711,49 @@ export function MonthlyAttendanceGrid({ courseId }: { courseId: string }) {
         </div>
       )}
 
+      {parsedFocusDate && (
+        <div
+          className={cn(
+            'flex items-start justify-between gap-3 rounded-lg border px-3 py-2 text-xs',
+            focusedCanFill
+              ? 'border-amber-300 bg-amber-50 text-amber-900 dark:border-amber-500/40 dark:bg-amber-500/10 dark:text-amber-200'
+              : 'border-border bg-muted/30 text-muted-foreground',
+          )}
+        >
+          <div className="flex min-w-0 items-start gap-2">
+            {focusedCanFill ? (
+              <AlertTriangle className="mt-0.5 size-3.5 shrink-0" />
+            ) : (
+              <CheckCircle2 className="mt-0.5 size-3.5 shrink-0" />
+            )}
+            <span>
+              {focusedNonSchoolDay
+                ? `${formatGridDate(parsedFocusDate.date)} es ${focusedNonSchoolDay.description}.`
+                : focusedIsFuture
+                  ? `${formatGridDate(parsedFocusDate.date)} todavía no puede registrarse.`
+                  : focusedCompletion?.isComplete
+                    ? `${formatGridDate(parsedFocusDate.date)} ya tiene asistencia completa.`
+                    : focusedCompletion?.isPartial
+                      ? `${formatGridDate(parsedFocusDate.date)} tiene ${
+                          focusedCompletion.missingCount
+                        } alumno${focusedCompletion.missingCount !== 1 ? 's' : ''} sin estado.`
+                      : focusedCompletion?.isEmpty
+                        ? `${formatGridDate(parsedFocusDate.date)} está sin registro.`
+                        : `${formatGridDate(parsedFocusDate.date)} no pertenece al mes visible.`}
+            </span>
+          </div>
+          {focusedCanFill && (
+            <button
+              type="button"
+              onClick={() => fillDateWithPresent(parsedFocusDate.date)}
+              className="shrink-0 rounded-lg bg-amber-200 px-3 py-1.5 font-semibold text-amber-950 transition hover:bg-amber-300 dark:bg-amber-800/60 dark:text-amber-100 dark:hover:bg-amber-700"
+            >
+              {focusedCompletion?.isEmpty ? 'Inicializar día' : 'Completar faltantes'}
+            </button>
+          )}
+        </div>
+      )}
+
       {/* Grid */}
       <div className="att-grid-wrapper rounded-xl border border-border bg-background overflow-hidden">
         {isLoading ? (
@@ -660,6 +782,7 @@ export function MonthlyAttendanceGrid({ courseId }: { courseId: string }) {
                     const day = dt.getDate();
                     const dow = DOW_LABELS[dt.getDay()]!;
                     const isToday = d === todayKey;
+                    const isFocused = d === parsedFocusDate?.date;
                     const isHoliday = !!matrix?.nonSchoolDays[d];
                     const isFuture = d > todayKey;
                     const completion = dayCompletion.get(d);
@@ -681,9 +804,10 @@ export function MonthlyAttendanceGrid({ courseId }: { courseId: string }) {
                     return (
                       <th
                         key={d}
-                        ref={isToday ? todayColRef : undefined}
+                        ref={isFocused ? focusColRef : isToday ? todayColRef : undefined}
                         className={cn(
                           'att-grid-header-cell att-grid-day-col',
+                          isFocused && 'att-grid-today-col',
                           isToday && 'att-grid-today-col',
                           isHoliday && 'att-grid-holiday-col',
                           isFuture && 'att-grid-future-col',
@@ -738,6 +862,7 @@ export function MonthlyAttendanceGrid({ courseId }: { courseId: string }) {
                         const isHoliday = !!matrix?.nonSchoolDays[d];
                         const isFuture = d > todayKey;
                         const isToday = d === todayKey;
+                        const isFocused = d === parsedFocusDate?.date;
                         const status = getEffectiveStatus(s.id, d);
                         const isWithdrawn = status === 'WITHDRAWN';
                         const isInactive = !isStudentActiveOnDate(s, d) && !isWithdrawn;
@@ -758,6 +883,7 @@ export function MonthlyAttendanceGrid({ courseId }: { courseId: string }) {
                               isFuture && 'att-cell--future',
                               isInactive && 'att-cell--inactive',
                               isToday && 'att-cell--today',
+                              isFocused && 'att-cell--today',
                               isMissing && 'att-cell--missing',
                               isDirty && 'att-cell--dirty',
                               isBlocked && 'att-cell--blocked',

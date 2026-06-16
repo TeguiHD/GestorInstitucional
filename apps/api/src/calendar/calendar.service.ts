@@ -1,8 +1,19 @@
 import { Injectable, Logger, NotFoundException } from '@nestjs/common';
 import type { CalendarDayType } from '@prisma/client';
 
+import { expandDateOnlyRange, parseDateOnlyUtc } from '../common/date-only.js';
 import { MailService } from '../mail/mail.service.js';
 import { PrismaService } from '../prisma/prisma.service.js';
+import { SchoolConfigService } from '../school-config/school-config.service.js';
+
+type CalendarDayRow = {
+  id: string;
+  schoolId: string;
+  date: Date;
+  type: CalendarDayType;
+  description: string;
+};
+type CalendarDayResponse = Omit<CalendarDayRow, 'date'> & { date: string };
 
 @Injectable()
 export class CalendarService {
@@ -11,17 +22,29 @@ export class CalendarService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly mail: MailService,
+    private readonly schoolConfig: SchoolConfigService,
   ) {}
 
   async listBySchool(schoolId: string, year?: number) {
     const where: { schoolId: string; date?: { gte: Date; lte: Date } } = { schoolId };
     if (year) {
-      where.date = { gte: new Date(year, 0, 1), lte: new Date(year, 11, 31) };
+      const range = expandDateOnlyRange(
+        parseDateOnlyUtc(`${year}-01-01`),
+        parseDateOnlyUtc(`${year}-12-31`),
+      );
+      where.date = { gte: range.from, lte: range.to };
     }
-    return this.prisma.schoolCalendarDay.findMany({
+    const days = await this.prisma.schoolCalendarDay.findMany({
       where,
       orderBy: { date: 'asc' },
     });
+    const byDate = new Map<string, CalendarDayResponse>();
+    for (const day of days) {
+      const date = this.calendarDateKey(day);
+      if (year && !date.startsWith(`${year}-`)) continue;
+      byDate.set(date, { ...day, date });
+    }
+    return Array.from(byDate.values()).sort((a, b) => a.date.localeCompare(b.date));
   }
 
   async create(dto: {
@@ -31,12 +54,13 @@ export class CalendarService {
     description: string;
     notify?: boolean;
   }) {
+    const date = parseDateOnlyUtc(dto.date);
     const created = await this.prisma.schoolCalendarDay.upsert({
-      where: { schoolId_date: { schoolId: dto.schoolId, date: new Date(dto.date) } },
+      where: { schoolId_date: { schoolId: dto.schoolId, date } },
       update: { type: dto.type, description: dto.description },
       create: {
         schoolId: dto.schoolId,
-        date: new Date(dto.date),
+        date,
         type: dto.type,
         description: dto.description,
       },
@@ -98,7 +122,7 @@ export class CalendarService {
       { md: '01-01', desc: 'Año Nuevo' },
       { md: '05-01', desc: 'Día del Trabajador' },
       { md: '05-21', desc: 'Día de las Glorias Navales' },
-      { md: '06-20', desc: 'Día Nacional de los Pueblos Indígenas' },
+      { md: '06-21', desc: 'Día Nacional de los Pueblos Indígenas' },
       { md: '06-29', desc: 'San Pedro y San Pablo' },
       { md: '07-16', desc: 'Virgen del Carmen' },
       { md: '08-15', desc: 'Asunción de la Virgen' },
@@ -112,7 +136,7 @@ export class CalendarService {
     ];
 
     const ops = fixed.map((h) => {
-      const date = new Date(`${year}-${h.md}T00:00:00`);
+      const date = parseDateOnlyUtc(`${year}-${h.md}`);
       return this.prisma.schoolCalendarDay.upsert({
         where: { schoolId_date: { schoolId, date } },
         update: {},
@@ -125,14 +149,61 @@ export class CalendarService {
 
   /** Returns set of ISO dates (YYYY-MM-DD) marked HOLIDAY or SUSPENDED in given range. */
   async getNonSchoolDays(schoolId: string, from: Date, to: Date): Promise<Set<string>> {
+    const range = expandDateOnlyRange(from, to);
     const days = await this.prisma.schoolCalendarDay.findMany({
       where: {
         schoolId,
-        date: { gte: from, lte: to },
+        date: { gte: range.from, lte: range.to },
         type: { in: ['HOLIDAY', 'SUSPENDED'] },
       },
-      select: { date: true },
+      select: { id: true, schoolId: true, date: true, type: true, description: true },
     });
-    return new Set(days.map((d) => d.date.toISOString().split('T')[0]!));
+    const fromKey = this.schoolConfig.formatDate(from);
+    const toKey = this.schoolConfig.formatDate(to);
+    return new Set(
+      days
+        .map((d) => this.calendarDateKey(d))
+        .filter((dateKey) => dateKey >= fromKey && dateKey <= toKey),
+    );
+  }
+
+  async getNonSchoolDayDetails(
+    schoolId: string,
+    from: Date,
+    to: Date,
+  ): Promise<Record<string, { type: string; description: string }>> {
+    const range = expandDateOnlyRange(from, to);
+    const fromKey = this.schoolConfig.formatDate(from);
+    const toKey = this.schoolConfig.formatDate(to);
+    const days = await this.prisma.schoolCalendarDay.findMany({
+      where: {
+        schoolId,
+        date: { gte: range.from, lte: range.to },
+        type: { in: ['HOLIDAY', 'SUSPENDED'] },
+      },
+      select: { id: true, schoolId: true, date: true, type: true, description: true },
+    });
+
+    const result: Record<string, { type: string; description: string }> = {};
+    for (const day of days) {
+      const key = this.calendarDateKey(day);
+      if (key < fromKey || key > toKey) continue;
+      result[key] = { type: day.type, description: day.description };
+    }
+    return result;
+  }
+
+  private calendarDateKey(day: { date: Date; description: string }): string {
+    const key = this.schoolConfig.formatDate(day.date);
+    const normalizedDescription = day.description
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .toLowerCase();
+
+    if (normalizedDescription.includes('pueblos indigenas')) {
+      return `${key.slice(0, 4)}-06-21`;
+    }
+
+    return key;
   }
 }

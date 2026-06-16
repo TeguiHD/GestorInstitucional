@@ -103,7 +103,7 @@ export class ReportsService {
       WITHDRAWN: '-',
     };
     for (const r of records) {
-      const key = r.date.toISOString().split('T')[0]!;
+      const key = this.schoolConfig.formatDate(r.date);
       if (!recordMap.has(r.studentId)) recordMap.set(r.studentId, new Map());
       recordMap.get(r.studentId)!.set(key, SYMBOL[r.status] ?? '-');
     }
@@ -658,7 +658,7 @@ export class ReportsService {
     };
     const recordMap = new Map<string, Map<string, string>>();
     for (const r of records) {
-      const key = r.date.toISOString().split('T')[0]!;
+      const key = this.schoolConfig.formatDate(r.date);
       if (!recordMap.has(r.studentId)) recordMap.set(r.studentId, new Map());
       recordMap.get(r.studentId)!.set(key, SYMBOL[r.status] ?? '-');
     }
@@ -742,7 +742,7 @@ export class ReportsService {
         absent = 0,
         justified = 0;
       days.forEach((d, di) => {
-        const key = d.toISOString().split('T')[0]!;
+        const key = this.schoolConfig.formatDate(d);
         const sym = this.attendanceSymbolFor(student, d, recordMap.get(student.id)?.get(key));
         const cell = ws.getCell(r, 3 + di);
         cell.border = borderAll;
@@ -902,7 +902,7 @@ export class ReportsService {
       );
       const recordMap = new Map<string, Map<string, string>>();
       for (const r of records) {
-        const key = r.date.toISOString().split('T')[0]!;
+        const key = this.schoolConfig.formatDate(r.date);
         if (!recordMap.has(r.studentId)) recordMap.set(r.studentId, new Map());
         recordMap.get(r.studentId)!.set(key, SYMBOL[r.status] ?? '-');
       }
@@ -1096,7 +1096,7 @@ export class ReportsService {
       );
       const recordMap = new Map<string, Map<string, string>>();
       for (const r of records) {
-        const key = r.date.toISOString().split('T')[0]!;
+        const key = this.schoolConfig.formatDate(r.date);
         if (!recordMap.has(r.studentId)) recordMap.set(r.studentId, new Map());
         recordMap.get(r.studentId)!.set(key, SYMBOL[r.status] ?? '-');
       }
@@ -3537,7 +3537,7 @@ export class ReportsService {
           continue;
         }
 
-        const key = date.toISOString().split('T')[0]!;
+        const key = this.schoolConfig.formatDate(date);
         const sym = this.attendanceSymbolFor(student, date, records.get(student.id)?.get(key));
         if (!sym) continue;
 

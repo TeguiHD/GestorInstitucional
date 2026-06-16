@@ -60,6 +60,20 @@ function statusLabel(status) {
   return STATUS_LABELS[status] ?? String(status);
 }
 
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function isRetryableStatus(status) {
+  return status === 408 || status === 409 || status === 425 || status === 429 || status >= 500;
+}
+
+function writeResult(result) {
+  const resultFile = process.env.BACKUP_SEND_RESULT_FILE;
+  if (!resultFile) return;
+  fs.writeFileSync(resultFile, `${JSON.stringify(result)}\n`, 'utf8');
+}
+
 function dbQuery(sql, env) {
   const user = process.env.DB_USER || env.DB_USER || 'asistencia_app';
   const password = process.env.DB_PASSWORD || env.DB_PASSWORD || '';
@@ -131,18 +145,23 @@ LIMIT 500;
   return changes;
 }
 
-function renderChangesSummary(changes, error) {
+function renderChangesSummary(changes, error, deliveryMode) {
+  const deliveryText =
+    deliveryMode === 'download_link'
+      ? 'Se preparo un respaldo completo y se envio un enlace temporal de descarga.'
+      : 'Se adjunta el respaldo completo.';
+
   if (error) {
     return `
       <h3>Resumen de cambios de asistencia</h3>
-      <p>No fue posible cargar el detalle de auditoria para este correo. Se adjunta el respaldo completo.</p>
+      <p>No fue posible cargar el detalle de auditoria para este correo. ${deliveryText}</p>
     `;
   }
 
   if (changes.length === 0) {
     return `
       <h3>Resumen de cambios de asistencia</h3>
-      <p>Prueba manual o respaldo forzado sin cambios auditados desde el ultimo respaldo exitoso.</p>
+      <p>Prueba manual o respaldo forzado sin cambios auditados desde el ultimo respaldo exitoso. ${deliveryText}</p>
     `;
   }
 
@@ -166,9 +185,7 @@ function renderChangesSummary(changes, error) {
       const student = change.enrollmentNumber
         ? `${change.enrollmentNumber} - ${change.studentName}`
         : change.studentName;
-      const fields = change.changedFields
-        .filter((field) => field !== 'note')
-        .join(', ');
+      const fields = change.changedFields.filter((field) => field !== 'note').join(', ');
       items.push(`
         <li>
           <strong>${escapeHtml(student)}</strong>:
@@ -189,7 +206,7 @@ function renderChangesSummary(changes, error) {
     <h3>Resumen de cambios de asistencia</h3>
     <p><strong>${changes.length}</strong> cambio${changes.length === 1 ? '' : 's'} auditado${changes.length === 1 ? '' : 's'} desde el ultimo respaldo exitoso.</p>
     ${sections.join('')}
-    ${remaining > 0 ? `<p>Se omitieron ${remaining} cambios adicionales del correo para mantenerlo compacto. El respaldo SQL adjunto contiene el historial completo.</p>` : ''}
+    ${remaining > 0 ? `<p>Se omitieron ${remaining} cambios adicionales del correo para mantenerlo compacto. El respaldo SQL contiene el historial completo.</p>` : ''}
     <p style="color:#666">Este resumen no incluye RUT ni notas sensibles.</p>
   `;
 }
@@ -212,9 +229,22 @@ async function main() {
     process.env.MAIL_FROM_EMAIL || env.MAIL_FROM_EMAIL || 'no-reply@asistencia.nicoholas.dev';
   const fromName = process.env.MAIL_FROM_NAME || env.MAIL_FROM_NAME || 'Asistencia CSSP';
   const backupEmailsRaw = process.env.BACKUP_EMAILS || env.BACKUP_EMAILS || '';
+  const deliveryMode = process.env.BACKUP_DELIVERY_MODE || 'attachment';
+  const downloadUrl = process.env.BACKUP_DOWNLOAD_URL || '';
+  const downloadExpiresAt = process.env.BACKUP_DOWNLOAD_EXPIRES_AT || '';
 
   if (!apiKey) {
     console.error('Error: BREVO_API_KEY no configurado en los archivos env.');
+    process.exit(1);
+  }
+
+  if (!['attachment', 'download_link'].includes(deliveryMode)) {
+    console.error(`Error: BACKUP_DELIVERY_MODE invalido: ${deliveryMode}`);
+    process.exit(1);
+  }
+
+  if (deliveryMode === 'download_link' && !downloadUrl) {
+    console.error('Error: BACKUP_DOWNLOAD_URL requerido para envio con link temporal.');
     process.exit(1);
   }
 
@@ -238,58 +268,114 @@ async function main() {
   }
 
   const fileName = path.basename(filePath);
-  const fileContentBase64 = fs.readFileSync(filePath).toString('base64');
+  const fileSizeBytes = fs.statSync(filePath).size;
   const today = new Date().toISOString().split('T')[0];
   const changeCount = process.env.BACKUP_CHANGE_COUNT || String(changes.length);
+  const deliveryBlock =
+    deliveryMode === 'download_link'
+      ? `
+      <p>El respaldo supera el limite practico de adjunto del proveedor de correo. Por seguridad queda cifrado y disponible temporalmente en el servidor.</p>
+      <p>
+        <a href="${escapeHtml(downloadUrl)}" style="display:inline-block;padding:10px 14px;background:#0f766e;color:#fff;text-decoration:none;border-radius:6px;">
+          Descargar respaldo cifrado
+        </a>
+      </p>
+      <p><strong>Expira:</strong> ${escapeHtml(downloadExpiresAt || '7 dias')}</p>
+      `
+      : '<p>Se adjunta el respaldo SQL completo de la base de datos del sistema de asistencia.</p>';
 
   const payload = {
     sender: { name: fromName, email: fromEmail },
     to: recipients.map((email) => ({ email })),
-    subject: `Respaldo por Cambios de Asistencia - CSSP [${today}]`,
+    subject: `Respaldo Completo de Asistencia - CSSP [${today}]`,
     htmlContent: `
-      <h2>Respaldo por Cambios de Asistencia</h2>
-      <p>Se adjunta el respaldo SQL completo de la base de datos del sistema de asistencia.</p>
+      <h2>Respaldo Completo de Asistencia</h2>
+      ${deliveryBlock}
       <ul>
         <li><strong>Fecha:</strong> ${escapeHtml(today)}</li>
         <li><strong>Archivo:</strong> ${escapeHtml(fileName)}</li>
+        <li><strong>Tamano:</strong> ${escapeHtml(fileSizeBytes)} bytes</li>
+        <li><strong>Modo de entrega:</strong> ${deliveryMode === 'download_link' ? 'link temporal seguro' : 'adjunto'}</li>
         <li><strong>Cambios detectados:</strong> ${escapeHtml(changeCount)}</li>
       </ul>
-      ${renderChangesSummary(changes, summaryError)}
-      <p>Si el adjunto esta cifrado, la clave debe mantenerse fuera del correo.</p>
+      ${renderChangesSummary(changes, summaryError, deliveryMode)}
+      <p>Si el archivo esta cifrado, la clave debe mantenerse fuera del correo.</p>
       <p>Este es un correo automatico de seguridad.</p>
     `,
-    attachment: [
+  };
+
+  if (deliveryMode === 'attachment') {
+    payload.attachment = [
       {
-        content: fileContentBase64,
+        content: fs.readFileSync(filePath).toString('base64'),
         name: fileName,
       },
-    ],
-  };
+    ];
+  }
 
   console.log(`Enviando respaldo a: ${recipients.join(', ')}...`);
 
-  try {
-    const res = await fetch('https://api.brevo.com/v3/smtp/email', {
-      method: 'POST',
-      headers: {
-        'api-key': apiKey,
-        'content-type': 'application/json',
-        accept: 'application/json',
-      },
-      body: JSON.stringify(payload),
-    });
+  const maxAttempts = Number(process.env.BACKUP_SEND_ATTEMPTS || 3);
+  let lastError = null;
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      const res = await fetch('https://api.brevo.com/v3/smtp/email', {
+        method: 'POST',
+        headers: {
+          'api-key': apiKey,
+          'content-type': 'application/json',
+          accept: 'application/json',
+        },
+        body: JSON.stringify(payload),
+      });
 
-    if (!res.ok) {
-      const errorText = await res.text();
-      throw new Error(`Brevo API Error (${res.status}): ${errorText}`);
+      if (!res.ok) {
+        const errorText = await res.text();
+        const error = new Error(`Brevo API Error (${res.status}): ${errorText}`);
+        error.retryable = isRetryableStatus(res.status);
+        if (attempt < maxAttempts && error.retryable) {
+          lastError = error;
+          console.error(`Intento ${attempt}/${maxAttempts} fallo: ${error.message}`);
+          await sleep(1500 * attempt);
+          continue;
+        }
+        throw error;
+      }
+
+      const data = await res.json();
+      if (!data.messageId || typeof data.messageId !== 'string') {
+        const error = new Error('Brevo acepto la respuesta HTTP pero no retorno messageId.');
+        error.retryable = false;
+        throw error;
+      }
+      const result = {
+        messageId: data.messageId,
+        deliveryMode,
+        recipients,
+        fileName,
+        fileSizeBytes,
+        downloadExpiresAt: deliveryMode === 'download_link' ? downloadExpiresAt : null,
+      };
+      writeResult(result);
+      console.log(`Respaldo enviado exitosamente. MessageID: ${data.messageId}`);
+      return;
+    } catch (error) {
+      if (attempt < maxAttempts && error.retryable !== false) {
+        lastError = error;
+        console.error(`Intento ${attempt}/${maxAttempts} fallo: ${error.message}`);
+        await sleep(1500 * attempt);
+        continue;
+      }
+      lastError = error;
+      break;
     }
-
-    const data = await res.json();
-    console.log(`Respaldo enviado exitosamente. MessageID: ${data.messageId || 'N/A'}`);
-  } catch (err) {
-    console.error('Error al enviar email:', err.message);
-    process.exit(1);
   }
+
+  console.error(
+    'Error al enviar email:',
+    (lastError ?? new Error('No se pudo enviar el respaldo')).message,
+  );
+  process.exit(1);
 }
 
 main();

@@ -171,7 +171,7 @@ describe('api auth refresh', () => {
     for (const [, init] of resourceCalls) {
       expect(init).toEqual(
         expect.objectContaining({
-          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${newToken}` },
+          headers: { Authorization: `Bearer ${newToken}` },
         }),
       );
     }

@@ -123,8 +123,8 @@ describe('monthly attendance grid logic', () => {
   });
 
   it('usa una clave estable de borrador por curso y mes', () => {
-    expect(attendanceDraftStorageKey('course-1', 2026, 5)).toBe(
-      'cssp:attendance-draft:course-1:2026-05',
+    expect(attendanceDraftStorageKey('user-1', 'course-1', 2026, 5)).toBe(
+      'cssp:attendance-draft:user-1:course-1:2026-05',
     );
   });
 });

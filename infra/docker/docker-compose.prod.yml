@@ -49,6 +49,7 @@ services:
       TZ: America/Santiago
     volumes:
       - uploads:/app/uploads
+      - backups:/app/backups
     init: true
     cap_drop:
       - ALL
@@ -97,6 +98,8 @@ volumes:
     name: asistencia_db_prod
   uploads:
     name: asistencia_uploads
+  backups:
+    name: asistencia_backups
 
 networks:
   internal:

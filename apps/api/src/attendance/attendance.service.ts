@@ -12,7 +12,11 @@ import { MailService } from '../mail/mail.service.js';
 import { WhatsAppService } from '../mail/whatsapp.service.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { AuditService } from '../audit/audit.service.js';
-import { parseDateOnlyUtc } from '../common/date-only.js';
+import {
+  dateOnlyCandidateKeys,
+  expandDateOnlyRange,
+  parseDateOnlyUtc,
+} from '../common/date-only.js';
 import { SchoolConfigService } from '../school-config/school-config.service.js';
 import type { RecordAttendanceDto } from './dto/record-attendance.dto.js';
 import type { JwtPayload } from '../common/decorators/current-user.decorator.js';
@@ -24,6 +28,15 @@ import {
   emptyAttendanceCounts,
   type AttendanceCounts,
 } from './attendance-calculation.js';
+
+type ExistingAttendanceRecord = {
+  id: string;
+  studentId: string;
+  date: Date;
+  status: AttendanceStatus;
+  lateMinutes: number | null;
+  note: string | null;
+};
 
 @Injectable()
 export class AttendanceService {
@@ -42,32 +55,39 @@ export class AttendanceService {
   async recordBulk(dto: RecordAttendanceDto, recordedById: string): Promise<{ upserted: number }> {
     const date = parseDateOnlyUtc(dto.date);
     const activeStudentIds = await this.assertEntriesBelongToCourse(dto, date);
-    await this.assertDailyAttendanceComplete(dto, date, activeStudentIds);
-    const changeAudit = await this.buildAttendanceChangeAudit(dto, date, recordedById);
-
-    const upserts = dto.entries.map((entry) =>
-      this.prisma.attendanceRecord.upsert({
-        where: { studentId_date: { studentId: entry.studentId, date } },
-        update: {
-          status: entry.status as AttendanceStatus,
-          note: entry.note ?? null,
-          lateMinutes: entry.lateMinutes ?? null,
-          recordedById,
-          updatedAt: new Date(),
-        },
-        create: {
-          studentId: entry.studentId,
-          courseId: dto.courseId,
-          date,
-          status: entry.status as AttendanceStatus,
-          note: entry.note ?? null,
-          lateMinutes: entry.lateMinutes ?? null,
-          recordedById,
-        },
-      }),
+    const existingRecords = await this.findExistingRecordsForDate(
+      dto.courseId,
+      dto.date,
+      activeStudentIds,
     );
+    await this.assertDailyAttendanceComplete(dto, activeStudentIds, existingRecords);
+    const changeAudit = await this.buildAttendanceChangeAudit(dto, existingRecords, recordedById);
+    const existingByStudent = new Map(existingRecords.map((record) => [record.studentId, record]));
 
-    await this.prisma.$transaction(upserts);
+    const writes = dto.entries.map((entry) => {
+      const existing = existingByStudent.get(entry.studentId);
+      const data = {
+        status: entry.status as AttendanceStatus,
+        note: entry.note ?? null,
+        lateMinutes: entry.lateMinutes ?? null,
+        recordedById,
+      };
+      return existing
+        ? this.prisma.attendanceRecord.update({
+            where: { id: existing.id },
+            data: { ...data, updatedAt: new Date() },
+          })
+        : this.prisma.attendanceRecord.create({
+            data: {
+              studentId: entry.studentId,
+              courseId: dto.courseId,
+              date,
+              ...data,
+            },
+          });
+    });
+
+    await this.prisma.$transaction(writes);
 
     await this.audit.log({
       userId: recordedById,
@@ -121,20 +141,43 @@ export class AttendanceService {
     return allowedStudentIds;
   }
 
-  private async assertDailyAttendanceComplete(
-    dto: RecordAttendanceDto,
-    date: Date,
-    activeStudentIds: Set<string>,
-  ) {
-    const existingRecords = await this.prisma.attendanceRecord.findMany({
+  private async findExistingRecordsForDate(
+    courseId: string,
+    dateKey: string,
+    studentIds: Set<string>,
+  ): Promise<ExistingAttendanceRecord[]> {
+    const date = parseDateOnlyUtc(dateKey);
+    const range = expandDateOnlyRange(date, date);
+    const candidates = await this.prisma.attendanceRecord.findMany({
       where: {
-        courseId: dto.courseId,
-        date,
-        studentId: { in: Array.from(activeStudentIds) },
+        courseId,
+        date: { gte: range.from, lte: range.to },
+        studentId: { in: Array.from(studentIds) },
       },
-      select: { studentId: true },
+      select: {
+        id: true,
+        studentId: true,
+        date: true,
+        status: true,
+        lateMinutes: true,
+        note: true,
+      },
+      orderBy: { updatedAt: 'desc' },
     });
 
+    const byStudent = new Map<string, ExistingAttendanceRecord>();
+    for (const record of candidates) {
+      if (!dateOnlyCandidateKeys(record.date).includes(dateKey)) continue;
+      if (!byStudent.has(record.studentId)) byStudent.set(record.studentId, record);
+    }
+    return Array.from(byStudent.values());
+  }
+
+  private async assertDailyAttendanceComplete(
+    dto: RecordAttendanceDto,
+    activeStudentIds: Set<string>,
+    existingRecords: ExistingAttendanceRecord[],
+  ) {
     const coveredStudentIds = new Set(existingRecords.map((record) => record.studentId));
     for (const entry of dto.entries) {
       coveredStudentIds.add(entry.studentId);
@@ -154,37 +197,36 @@ export class AttendanceService {
 
   private async buildAttendanceChangeAudit(
     dto: RecordAttendanceDto,
-    date: Date,
+    existingRecordsForDate: ExistingAttendanceRecord[],
     recordedById: string,
   ) {
     const studentIds = dto.entries.map((entry) => entry.studentId);
-    const [course, existingRecords] = await Promise.all([
-      this.prisma.course.findUnique({
-        where: { id: dto.courseId },
-        select: {
-          id: true,
-          code: true,
-          name: true,
-          schoolId: true,
-          students: {
-            where: { id: { in: studentIds } },
-            select: {
-              id: true,
-              firstName: true,
-              lastName: true,
-              secondLastName: true,
-              enrollmentNumber: true,
-            },
+    const course = await this.prisma.course.findUnique({
+      where: { id: dto.courseId },
+      select: {
+        id: true,
+        code: true,
+        name: true,
+        schoolId: true,
+        students: {
+          where: { id: { in: studentIds } },
+          select: {
+            id: true,
+            firstName: true,
+            lastName: true,
+            secondLastName: true,
+            enrollmentNumber: true,
           },
         },
-      }),
-      this.prisma.attendanceRecord.findMany({
-        where: { courseId: dto.courseId, date, studentId: { in: studentIds } },
-        select: { studentId: true, status: true, lateMinutes: true, note: true },
-      }),
-    ]);
+      },
+    });
 
-    const existingByStudent = new Map(existingRecords.map((record) => [record.studentId, record]));
+    const entryStudentIds = new Set(studentIds);
+    const existingByStudent = new Map(
+      existingRecordsForDate
+        .filter((record) => entryStudentIds.has(record.studentId))
+        .map((record) => [record.studentId, record]),
+    );
     const studentsById = new Map((course?.students ?? []).map((student) => [student.id, student]));
     const changedAt = new Date().toISOString();
     const changes = dto.entries
@@ -256,11 +298,13 @@ export class AttendanceService {
     if (nonSchool.has(dateKey)) return;
 
     const studentIds = toNotify.map((e) => e.studentId);
+    const range = expandDateOnlyRange(date, date);
     const records = await this.prisma.attendanceRecord.findMany({
-      where: { date, studentId: { in: studentIds } },
+      where: { date: { gte: range.from, lte: range.to }, studentId: { in: studentIds } },
       select: {
         id: true,
         studentId: true,
+        date: true,
         status: true,
         lateMinutes: true,
         student: {
@@ -290,9 +334,12 @@ export class AttendanceService {
         },
       },
     });
+    const recordsForDate = records.filter((record) =>
+      dateOnlyCandidateKeys(record.date).includes(dateKey),
+    );
 
     const now = new Date();
-    for (const rec of records) {
+    for (const rec of recordsForDate) {
       if (rec.status !== 'ABSENT' && rec.status !== 'LATE') continue;
       const wantsNotif = (g: {
         notifyAbsences: boolean;
@@ -343,8 +390,10 @@ export class AttendanceService {
   }
 
   async getByCourseDate(courseId: string, date: string) {
-    return this.prisma.attendanceRecord.findMany({
-      where: { courseId, date: new Date(date) },
+    const parsed = parseDateOnlyUtc(date);
+    const range = expandDateOnlyRange(parsed, parsed);
+    const records = await this.prisma.attendanceRecord.findMany({
+      where: { courseId, date: { gte: range.from, lte: range.to } },
       include: {
         student: {
           select: {
@@ -359,32 +408,42 @@ export class AttendanceService {
       },
       orderBy: { student: { enrollmentNumber: 'asc' } },
     });
+    return records.filter((record) => dateOnlyCandidateKeys(record.date).includes(date));
   }
 
   async getByStudent(studentId: string, from?: string, to?: string) {
-    return this.prisma.attendanceRecord.findMany({
+    const fromDate = from ? parseDateOnlyUtc(from) : undefined;
+    const toDate = to ? this.endOfDateOnly(to) : undefined;
+    const range = fromDate && toDate ? expandDateOnlyRange(fromDate, toDate) : null;
+    const records = await this.prisma.attendanceRecord.findMany({
       where: {
         studentId,
-        ...(from || to
+        ...(range || fromDate || toDate
           ? {
               date: {
-                ...(from ? { gte: new Date(from) } : {}),
-                ...(to ? { lte: new Date(to) } : {}),
+                ...(range ? { gte: range.from } : fromDate ? { gte: fromDate } : {}),
+                ...(range ? { lte: range.to } : toDate ? { lte: toDate } : {}),
               },
             }
           : {}),
       },
       orderBy: { date: 'asc' },
     });
+    return records.filter((record) => {
+      const key = this.schoolConfig.formatDate(record.date);
+      return (!from || key >= from) && (!to || key <= to);
+    });
   }
 
   /** Course summary: group by date, calc rates. */
   async getCourseMonthSummary(courseId: string, year: number, month: number) {
-    const from = new Date(year, month - 1, 1);
-    const to = new Date(year, month, 0); // last day
+    const from = new Date(Date.UTC(year, month - 1, 1));
+    const to = new Date(Date.UTC(year, month, 0, 23, 59, 59, 999)); // last day
+    const range = expandDateOnlyRange(from, to);
+    const monthPrefix = `${year}-${String(month).padStart(2, '0')}-`;
 
     const records = await this.prisma.attendanceRecord.findMany({
-      where: { courseId, date: { gte: from, lte: to } },
+      where: { courseId, date: { gte: range.from, lte: range.to } },
       select: { date: true, status: true, studentId: true },
     });
 
@@ -395,6 +454,7 @@ export class AttendanceService {
     >();
     for (const r of records) {
       const key = this.schoolConfig.formatDate(r.date);
+      if (!key.startsWith(monthPrefix)) continue;
       const entry = byDate.get(key) ?? { present: 0, absent: 0, late: 0, justified: 0, total: 0 };
       entry.total++;
       if (r.status === 'PRESENT') entry.present++;
@@ -416,8 +476,8 @@ export class AttendanceService {
 
   /** School-level stats per course for a given period. */
   async getSchoolStats(schoolId: string, from: string, to: string) {
-    const fromDate = new Date(from);
-    const toDate = new Date(to);
+    const fromDate = parseDateOnlyUtc(from);
+    const toDate = this.endOfDateOnly(to);
     const today = new Date();
     today.setHours(23, 59, 59, 999);
     const cappedToDate = toDate < today ? toDate : today;
@@ -443,32 +503,28 @@ export class AttendanceService {
     ]);
 
     const courseIds = courses.map((course) => course.id);
-    const nonSchoolDates = Array.from(nonSchool).map((date) => new Date(date));
+    const queryRange = expandDateOnlyRange(fromDate, cappedToDate);
+    const fromKey = this.schoolConfig.formatDate(fromDate);
+    const toKey = this.schoolConfig.formatDate(cappedToDate);
 
-    const grouped =
+    const records =
       courseIds.length === 0
         ? []
-        : await this.prisma.attendanceRecord.groupBy({
-            by: ['courseId', 'status'],
+        : await this.prisma.attendanceRecord.findMany({
             where: {
               courseId: { in: courseIds },
-              date: {
-                gte: fromDate,
-                lte: cappedToDate,
-                notIn: nonSchoolDates,
-              },
+              date: { gte: queryRange.from, lte: queryRange.to },
             },
-            _count: { _all: true },
+            select: { courseId: true, date: true, status: true },
           });
 
     const byCourse = new Map<string, AttendanceCounts>();
-    for (const row of grouped) {
-      const cur = byCourse.get(row.courseId) ?? emptyAttendanceCounts();
-      if (row.status === 'PRESENT') cur.present += row._count._all;
-      else if (row.status === 'LATE') cur.late += row._count._all;
-      else if (row.status === 'ABSENT') cur.absent += row._count._all;
-      else if (row.status === 'JUSTIFIED') cur.justified += row._count._all;
-      byCourse.set(row.courseId, cur);
+    for (const record of records) {
+      const key = this.schoolConfig.formatDate(record.date);
+      if (key < fromKey || key > toKey || nonSchool.has(key)) continue;
+      const cur = byCourse.get(record.courseId) ?? emptyAttendanceCounts();
+      addAttendanceStatus(cur, record.status);
+      byCourse.set(record.courseId, cur);
     }
 
     return courses
@@ -505,17 +561,21 @@ export class AttendanceService {
   }
 
   async getCourseDailyTrend(courseId: string, from: string, to: string) {
-    const fromDate = new Date(from);
-    const toDate = new Date(to);
+    const fromDate = parseDateOnlyUtc(from);
+    const toDate = this.endOfDateOnly(to);
+    const range = expandDateOnlyRange(fromDate, toDate);
     const records = await this.prisma.attendanceRecord.findMany({
-      where: { courseId, date: { gte: fromDate, lte: toDate } },
+      where: { courseId, date: { gte: range.from, lte: range.to } },
       select: { date: true, status: true },
       orderBy: { date: 'asc' },
     });
 
+    const fromKey = this.schoolConfig.formatDate(fromDate);
+    const toKey = this.schoolConfig.formatDate(toDate);
     const byDate = new Map<string, { total: number; present: number }>();
     for (const r of records) {
       const d = this.schoolConfig.formatDate(r.date);
+      if (d < fromKey || d > toKey) continue;
       const cur = byDate.get(d) ?? { total: 0, present: 0 };
       cur.total += 1;
       if (countsAsAttendance(r.status)) cur.present += 1;
@@ -535,8 +595,9 @@ export class AttendanceService {
   }
 
   async getCourseMatrix(courseId: string, year: number, month: number) {
-    const from = new Date(year, month - 1, 1);
-    const to = new Date(year, month, 0, 23, 59, 59);
+    const from = new Date(Date.UTC(year, month - 1, 1));
+    const to = new Date(Date.UTC(year, month, 0, 23, 59, 59, 999));
+    const queryRange = expandDateOnlyRange(from, to);
     const today = new Date();
     today.setHours(23, 59, 59, 999);
     const cappedTo = to < today ? to : today;
@@ -565,7 +626,7 @@ export class AttendanceService {
         },
       }),
       this.prisma.attendanceRecord.findMany({
-        where: { courseId, date: { gte: from, lte: to } },
+        where: { courseId, date: { gte: queryRange.from, lte: queryRange.to } },
         select: { studentId: true, date: true, status: true },
         orderBy: { date: 'asc' },
       }),
@@ -575,37 +636,19 @@ export class AttendanceService {
 
     // Build ALL weekday dates for the month (Mon-Fri)
     const allDates: string[] = [];
-    const lastDay = new Date(year, month, 0).getDate();
+    const lastDay = new Date(Date.UTC(year, month, 0)).getUTCDate();
     for (let d = 1; d <= lastDay; d++) {
-      const dt = new Date(year, month - 1, d);
-      const dow = dt.getDay();
+      const dt = new Date(Date.UTC(year, month - 1, d));
+      const dow = dt.getUTCDay();
       if (dow !== 0 && dow !== 6) {
         allDates.push(`${year}-${String(month).padStart(2, '0')}-${String(d).padStart(2, '0')}`);
       }
     }
 
     // Fetch non-school days (holidays, suspended) for the month
-    const nonSchoolDaysSet = await this.calendar.getNonSchoolDays(
-      course.schoolId,
-      from,
-      new Date(year, month, 0),
-    );
+    const nonSchoolDaysSet = await this.calendar.getNonSchoolDays(course.schoolId, from, to);
 
-    // Also fetch full calendar day records for descriptions
-    const calendarDays = await this.prisma.schoolCalendarDay.findMany({
-      where: {
-        schoolId: course.schoolId,
-        date: { gte: from, lte: new Date(year, month, 0) },
-        type: { in: ['HOLIDAY', 'SUSPENDED'] },
-      },
-      select: { date: true, type: true, description: true },
-    });
-
-    const nonSchoolDays: Record<string, { type: string; description: string }> = {};
-    for (const cd of calendarDays) {
-      const key = this.schoolConfig.formatDate(cd.date);
-      nonSchoolDays[key] = { type: cd.type, description: cd.description };
-    }
+    const nonSchoolDays = await this.calendar.getNonSchoolDayDetails(course.schoolId, from, to);
 
     // School days = weekdays minus non-school days
     const schoolDays = allDates.filter((d) => !nonSchoolDaysSet.has(d));
@@ -616,13 +659,14 @@ export class AttendanceService {
     const matrix: Record<string, Record<string, string>> = {};
     records.forEach((r) => {
       const date = this.schoolConfig.formatDate(r.date);
+      if (!allDates.includes(date)) return;
       if (!matrix[r.studentId]) matrix[r.studentId] = {};
       matrix[r.studentId]![date] = r.status;
     });
 
     const studentStats = course.students.map((s) => {
       for (const dateKey of dates) {
-        const date = this.startOfDay(new Date(`${dateKey}T00:00:00`));
+        const date = parseDateOnlyUtc(dateKey);
         if (s.withdrawnAt && this.startOfDay(s.withdrawnAt) <= date) {
           if (!matrix[s.id]) matrix[s.id] = {};
           matrix[s.id]![dateKey] = 'WITHDRAWN';
@@ -639,7 +683,7 @@ export class AttendanceService {
       const counts = emptyAttendanceCounts();
       for (const [dateKey, status] of Object.entries(matrix[s.id] ?? {})) {
         if (!effectiveSchoolDays.has(dateKey) || status === 'WITHDRAWN') continue;
-        const date = this.startOfDay(new Date(`${dateKey}T00:00:00`));
+        const date = parseDateOnlyUtc(dateKey);
         if (date < this.startOfDay(s.enrolledAt)) continue;
         if (s.withdrawnAt && date > this.startOfDay(s.withdrawnAt)) continue;
         addAttendanceStatus(counts, status);
@@ -1021,8 +1065,9 @@ export class AttendanceService {
   }
 
   async getMissingAttendance(schoolId: string, from: string, to: string) {
-    const fromDate = new Date(from);
-    const toDate = new Date(to);
+    const fromDate = parseDateOnlyUtc(from);
+    const toDate = parseDateOnlyUtc(to);
+    const queryRange = expandDateOnlyRange(fromDate, toDate);
 
     const [courses, nonSchoolDays] = await Promise.all([
       this.prisma.course.findMany({
@@ -1038,7 +1083,7 @@ export class AttendanceService {
     const records = await this.prisma.attendanceRecord.findMany({
       where: {
         courseId: { in: courseIds },
-        date: { gte: fromDate, lte: toDate },
+        date: { gte: queryRange.from, lte: queryRange.to },
       },
       select: { courseId: true, date: true },
     });
@@ -1046,6 +1091,7 @@ export class AttendanceService {
     const recordsByCourse = new Map<string, Set<string>>();
     for (const r of records) {
       const dateKey = this.schoolConfig.formatDate(r.date);
+      if (dateKey < from || dateKey > to) continue;
       if (!recordsByCourse.has(r.courseId)) {
         recordsByCourse.set(r.courseId, new Set());
       }
@@ -1055,14 +1101,14 @@ export class AttendanceService {
     const schoolDays: string[] = [];
     const current = new Date(fromDate);
     while (current <= toDate) {
-      const dayOfWeek = current.getDay();
+      const dayOfWeek = current.getUTCDay();
       if (dayOfWeek !== 0 && dayOfWeek !== 6) {
         const dateKey = this.schoolConfig.formatDate(current);
         if (!nonSchoolDays.has(dateKey)) {
           schoolDays.push(dateKey);
         }
       }
-      current.setDate(current.getDate() + 1);
+      current.setUTCDate(current.getUTCDate() + 1);
     }
 
     const today = new Date();
@@ -1125,8 +1171,12 @@ export class AttendanceService {
   }
 
   private startOfDay(date: Date): Date {
-    const d = new Date(date);
-    d.setHours(0, 0, 0, 0);
-    return d;
+    return parseDateOnlyUtc(this.schoolConfig.formatDate(date));
+  }
+
+  private endOfDateOnly(value: string): Date {
+    const date = parseDateOnlyUtc(value);
+    date.setUTCHours(23, 59, 59, 999);
+    return date;
   }
 }

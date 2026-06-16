@@ -38,7 +38,9 @@ function makeWeeklyService() {
   };
   const audit = { log: vi.fn().mockResolvedValue(undefined) };
   const calendar = { getNonSchoolDays: vi.fn().mockResolvedValue(new Set<string>()) };
-  const schoolConfig = {};
+  const schoolConfig = {
+    formatDate: vi.fn((date: Date) => date.toISOString().slice(0, 10)),
+  };
 
   return {
     service: new ReportsService(

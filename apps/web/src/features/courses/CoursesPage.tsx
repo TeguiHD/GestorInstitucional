@@ -153,6 +153,7 @@ export function CoursesPage() {
                   <Link
                     to="/cursos/$courseId"
                     params={{ courseId: item.courseId }}
+                    search={{ focusDate: item.missingDates[0]! }}
                     className="flex-shrink-0 flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg bg-amber-200 dark:bg-amber-800/50 text-amber-900 dark:text-amber-200 hover:bg-amber-300 dark:hover:bg-amber-700/50 transition"
                   >
                     <ClipboardList className="size-3" />

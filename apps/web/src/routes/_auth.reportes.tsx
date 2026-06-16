@@ -139,7 +139,7 @@ function snapToMonday(date: Date): string {
   const day = d.getDay();
   const diff = day === 0 ? -6 : 1 - day;
   d.setDate(d.getDate() + diff);
-  return d.toISOString().split('T')[0]!;
+  return formatDateLocal(d);
 }
 
 function formatWeekLabel(mondayIso: string): string {
@@ -154,7 +154,7 @@ function formatWeekLabel(mondayIso: string): string {
 function shiftWeek(mondayIso: string, delta: number): string {
   const d = new Date(mondayIso + 'T12:00:00');
   d.setDate(d.getDate() + delta * 7);
-  return d.toISOString().split('T')[0]!;
+  return formatDateLocal(d);
 }
 
 const MONTH_NAMES = [

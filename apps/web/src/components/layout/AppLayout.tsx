@@ -25,6 +25,7 @@ import {
 import { toast } from 'sonner';
 
 import { cn } from '@/lib/cn';
+import { formatDateLocal } from '@/lib/date';
 import { SchoolSelector } from '@/components/ui/SchoolSelector';
 import { ThemeToggle } from '@/components/ui/ThemeToggle';
 import { useAuthStore, useUser } from '@/stores/auth.store';
@@ -136,7 +137,7 @@ function NotificationBell({ schoolId, roles }: { schoolId?: string; roles: strin
       const from = new Date(today);
       from.setDate(from.getDate() - 14);
       return api.get(
-        `/attendance/school/${schoolId}/missing?from=${from.toISOString().split('T')[0]}&to=${today.toISOString().split('T')[0]}`,
+        `/attendance/school/${schoolId}/missing?from=${formatDateLocal(from)}&to=${formatDateLocal(today)}`,
       );
     },
     enabled: !!schoolId && canReadMissing,
@@ -147,6 +148,7 @@ function NotificationBell({ schoolId, roles }: { schoolId?: string; roles: strin
 
   const last24h = fired.filter((f) => Date.now() - new Date(f.firedAt).getTime() < 86_400_000);
   const totalMissingDays = missingAttendance.reduce((sum, m) => sum + m.missingDates.length, 0);
+  const firstMissing = missingAttendance.find((item) => item.missingDates[0]);
 
   const hasNewMissing = totalMissingDays > lastSeenMissing;
   const hasAlerts = last24h.length > 0 || hasNewMissing;
@@ -194,9 +196,11 @@ function NotificationBell({ schoolId, roles }: { schoolId?: string; roles: strin
                 )}
               </div>
 
-              {totalMissingDays > 0 && (
+              {totalMissingDays > 0 && firstMissing && (
                 <Link
-                  to="/cursos"
+                  to="/cursos/$courseId"
+                  params={{ courseId: firstMissing.courseId }}
+                  search={{ focusDate: firstMissing.missingDates[0]! }}
                   onClick={handleMissingClick}
                   className="flex items-start gap-3 px-4 py-3 bg-amber-50 dark:bg-amber-950/20 border-b border-amber-200 dark:border-amber-800/50 hover:bg-amber-100 dark:hover:bg-amber-900/30 transition"
                 >

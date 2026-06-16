@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Link, useParams } from '@tanstack/react-router';
+import { Link, useParams, useSearch } from '@tanstack/react-router';
 import {
   ArrowLeft,
   Download,
@@ -121,6 +121,7 @@ function normalizeRut(raw: string): string {
 
 export function CourseDetailPage() {
   const { courseId } = useParams({ from: '/_auth/cursos/$courseId' });
+  const { focusDate } = useSearch({ from: '/_auth/cursos/$courseId' });
   const qc = useQueryClient();
   const user = useUser();
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -415,7 +416,7 @@ export function CourseDetailPage() {
           )}
 
           {/* Monthly attendance grid */}
-          <MonthlyAttendanceGrid courseId={courseId} />
+          <MonthlyAttendanceGrid courseId={courseId} focusDate={focusDate} />
 
           {/* Insights */}
           {insights && insights.insights.length > 0 && (

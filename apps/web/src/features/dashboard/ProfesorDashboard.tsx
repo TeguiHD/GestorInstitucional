@@ -10,6 +10,7 @@ import {
 } from 'lucide-react';
 
 import { api } from '@/lib/api';
+import { formatDateLocal } from '@/lib/date';
 import { useUser } from '@/stores/auth.store';
 import { useEffectiveSchoolId } from '@/stores/school.store';
 import { ATTENDANCE_THRESHOLDS } from '@asistencia/shared';
@@ -57,7 +58,7 @@ export function ProfesorDashboard() {
   const userId = user?.sub ?? '';
 
   const today = new Date();
-  const todayStr = today.toISOString().split('T')[0]!;
+  const todayStr = formatDateLocal(today);
   const year = today.getFullYear();
   const month = today.getMonth() + 1;
 
@@ -82,7 +83,7 @@ export function ProfesorDashboard() {
       const from = new Date(today);
       from.setDate(from.getDate() - 30);
       return api.get(
-        `/attendance/school/${schoolId}/missing?from=${from.toISOString().split('T')[0]}&to=${today.toISOString().split('T')[0]}`,
+        `/attendance/school/${schoolId}/missing?from=${formatDateLocal(from)}&to=${formatDateLocal(today)}`,
       );
     },
     enabled: !!schoolId,
@@ -193,6 +194,7 @@ export function ProfesorDashboard() {
                 <Link
                   to="/cursos/$courseId"
                   params={{ courseId: item.courseId }}
+                  search={{ focusDate: item.missingDates[0]! }}
                   className="flex-shrink-0 flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg bg-amber-200 dark:bg-amber-800/50 text-amber-900 dark:text-amber-200 hover:bg-amber-300 dark:hover:bg-amber-700/50 transition"
                 >
                   <ClipboardList className="size-3" />

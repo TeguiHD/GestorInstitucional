@@ -47,6 +47,7 @@ services:
       DB_HOST: db
     volumes:
       - uploads:/app/uploads
+      - backups:/app/backups
     networks:
       - internal
       - caddy-shared
@@ -74,6 +75,8 @@ volumes:
     name: asistencia_db_prod
   uploads:
     name: asistencia_uploads
+  backups:
+    name: asistencia_backups
 
 networks:
   internal:

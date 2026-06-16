@@ -92,8 +92,19 @@ export function getDateCompletion(
   };
 }
 
-export function attendanceDraftStorageKey(courseId: string, year: number, month: number): string {
-  return `cssp:attendance-draft:${courseId}:${year}-${String(month).padStart(2, '0')}`;
+function keyPart(value: string): string {
+  return encodeURIComponent(value || 'anonymous');
+}
+
+export function attendanceDraftStorageKey(
+  ownerId: string,
+  courseId: string,
+  year: number,
+  month: number,
+): string {
+  return `cssp:attendance-draft:${keyPart(ownerId)}:${keyPart(courseId)}:${year}-${String(
+    month,
+  ).padStart(2, '0')}`;
 }
 
 export function serializeAttendanceDirty(

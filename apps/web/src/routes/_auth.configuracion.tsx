@@ -4,6 +4,7 @@ import {
   CalendarDays,
   CheckCircle2,
   Database,
+  Download,
   Eye,
   EyeOff,
   Save,
@@ -14,7 +15,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { toast } from 'sonner';
 
 import { SchoolSelector } from '@/components/ui/SchoolSelector';
-import { ApiError, api } from '@/lib/api';
+import { ApiError, api, downloadBlob } from '@/lib/api';
 import { useAuthStore, useUser } from '@/stores/auth.store';
 import { useEffectiveSchoolId } from '@/stores/school.store';
 
@@ -354,7 +355,45 @@ type BackupConfig = {
   time: string;
   hasPassword: boolean;
   active: boolean;
+  lastSuccessAt: string | null;
+  lastAttemptAt: string | null;
+  lastStatus: 'idle' | 'running' | 'success' | 'failed';
+  lastError: string | null;
+  running: boolean;
+  lastMessageId: string | null;
+  lastDeliveryMode: 'attachment' | 'download_link' | null;
+  lastFileName: string | null;
+  lastFileSizeBytes: number | null;
+  lastDownloadExpiresAt: string | null;
+  latestDownloadAvailable: boolean;
+  latestDownloadFileName: string | null;
+  latestDownloadFileSizeBytes: number | null;
+  latestDownloadExpiresAt: string | null;
 };
+
+function formatBackupTimestamp(value: string | null): string {
+  if (!value) return 'Sin registro';
+  const parsed = new Date(`${value.replace(' ', 'T')}Z`);
+  if (Number.isNaN(parsed.getTime())) return value;
+  return parsed.toLocaleString('es-CL', {
+    day: '2-digit',
+    month: 'short',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+}
+
+function formatBytes(value: number | null): string {
+  if (!value || value <= 0) return 'Sin registro';
+  const units = ['B', 'KB', 'MB', 'GB'];
+  let size = value;
+  let unit = 0;
+  while (size >= 1024 && unit < units.length - 1) {
+    size /= 1024;
+    unit++;
+  }
+  return `${size.toFixed(unit === 0 ? 0 : 1)} ${units[unit]}`;
+}
 
 function BackupConfigPanel() {
   const qc = useQueryClient();
@@ -394,8 +433,25 @@ function BackupConfigPanel() {
   const testBackup = useMutation({
     mutationFn: () => api.post('/system-config/backup/test', {}),
     onSuccess: () => {
-      toast.success('Prueba de backup iniciada. Recibirás un correo en unos momentos.');
+      toast.success('Backup iniciado. Revisa el estado en este panel.');
+      void qc.invalidateQueries({ queryKey: ['system-backup-config'] });
     },
+    onError: (error: Error) => {
+      if (error instanceof ApiError && error.status === 409) {
+        toast.warning('Ya hay un backup en ejecución');
+        void qc.invalidateQueries({ queryKey: ['system-backup-config'] });
+        return;
+      }
+      toast.error(error.message);
+    },
+  });
+
+  const downloadLatest = useMutation({
+    mutationFn: () =>
+      downloadBlob(
+        '/system-config/backup/latest-download',
+        config?.latestDownloadFileName ?? 'backup_asistencia.sql.zip',
+      ),
     onError: (error: Error) => toast.error(error.message),
   });
 
@@ -415,6 +471,7 @@ function BackupConfigPanel() {
       time !== config.time ||
       password !== '' ||
       active !== config.active);
+  const lastConfirmed = !!config?.lastMessageId && config.lastStatus === 'success';
 
   return (
     <form
@@ -449,7 +506,7 @@ function BackupConfigPanel() {
               Habilitar Copias por Cambios de Asistencia
             </label>
             <p className="text-xs text-muted-foreground">
-              Si no hay cambios desde el último respaldo exitoso, no se enviará correo.
+              Se enviará un respaldo completo diario a la hora configurada.
             </p>
           </div>
           <input
@@ -478,7 +535,7 @@ function BackupConfigPanel() {
               disabled={!active}
             />
             <p className="text-[10px] text-muted-foreground">
-              Solo se enviará correo cuando existan cambios de asistencia pendientes de respaldar.
+              El respaldo diario llegará a todos los correos configurados.
             </p>
           </div>
 
@@ -497,7 +554,7 @@ function BackupConfigPanel() {
               disabled={!active}
             />
             <p className="text-[10px] text-muted-foreground">
-              A esta hora se revisarán cambios de asistencia y, si existen, se enviará respaldo.
+              A esta hora se enviará el respaldo completo de la base de datos.
             </p>
           </div>
         </div>
@@ -545,14 +602,111 @@ function BackupConfigPanel() {
               <p className="mt-1">
                 La prueba fuerza un respaldo y valida que el servidor pueda enviar los correos.
               </p>
+              {hasChanges && (
+                <p className="mt-2 rounded-md border border-amber-300 bg-amber-50 px-2 py-1 text-amber-800 dark:border-amber-500/40 dark:bg-amber-500/10 dark:text-amber-200">
+                  Guarda la configuración antes de probar el envío.
+                </p>
+              )}
+              {config && (
+                <div className="mt-3 space-y-1 rounded-lg border border-border bg-background/70 p-3">
+                  <p>
+                    <span className="font-medium text-foreground">Estado:</span>{' '}
+                    {config.running
+                      ? 'Ejecutando'
+                      : lastConfirmed
+                        ? 'Enviado correctamente'
+                        : config.lastStatus === 'success'
+                          ? 'Terminado sin confirmación de correo'
+                          : config.lastStatus === 'failed'
+                            ? 'Último respaldo falló'
+                            : 'Sin ejecución reciente'}
+                  </p>
+                  <p>
+                    <span className="font-medium text-foreground">Último intento:</span>{' '}
+                    {formatBackupTimestamp(config.lastAttemptAt)}
+                  </p>
+                  <p>
+                    <span className="font-medium text-foreground">Último éxito:</span>{' '}
+                    {formatBackupTimestamp(config.lastSuccessAt)}
+                  </p>
+                  <p>
+                    <span className="font-medium text-foreground">Entrega:</span>{' '}
+                    {config.lastDeliveryMode === 'download_link'
+                      ? 'Link temporal seguro'
+                      : config.lastDeliveryMode === 'attachment'
+                        ? 'Adjunto'
+                        : 'Sin registro'}
+                  </p>
+                  <p>
+                    <span className="font-medium text-foreground">Archivo:</span>{' '}
+                    {config.lastFileName ?? 'Sin registro'}
+                  </p>
+                  <p>
+                    <span className="font-medium text-foreground">Tamaño:</span>{' '}
+                    {formatBytes(config.lastFileSizeBytes)}
+                  </p>
+                  <p>
+                    <span className="font-medium text-foreground">Descarga completa:</span>{' '}
+                    {config.latestDownloadAvailable
+                      ? `${config.latestDownloadFileName ?? 'Disponible'} (${formatBytes(
+                          config.latestDownloadFileSizeBytes,
+                        )})`
+                      : 'No disponible'}
+                  </p>
+                  {config.latestDownloadExpiresAt && (
+                    <p>
+                      <span className="font-medium text-foreground">Descarga expira:</span>{' '}
+                      {formatBackupTimestamp(config.latestDownloadExpiresAt)}
+                    </p>
+                  )}
+                  {config.lastDownloadExpiresAt && (
+                    <p>
+                      <span className="font-medium text-foreground">Link expira:</span>{' '}
+                      {formatBackupTimestamp(config.lastDownloadExpiresAt)}
+                    </p>
+                  )}
+                  {config.lastMessageId && (
+                    <p>
+                      <span className="font-medium text-foreground">Brevo messageId:</span>{' '}
+                      {config.lastMessageId}
+                    </p>
+                  )}
+                  {config.lastError && (
+                    <p className="text-red-600 dark:text-red-400">
+                      <span className="font-medium">Error:</span> {config.lastError}
+                    </p>
+                  )}
+                </div>
+              )}
             </div>
+            {config?.latestDownloadAvailable && (
+              <button
+                type="button"
+                onClick={() => downloadLatest.mutate()}
+                disabled={downloadLatest.isPending || config.running}
+                className="mt-3 w-full inline-flex justify-center items-center gap-2 rounded-lg border border-border bg-background px-3 py-2 text-xs font-medium hover:bg-muted transition-colors disabled:opacity-50"
+              >
+                <Download className="size-4" />
+                {downloadLatest.isPending ? 'Descargando...' : 'Descargar último backup completo'}
+              </button>
+            )}
             <button
               type="button"
-              onClick={() => testBackup.mutate()}
-              disabled={testBackup.isPending || save.isPending || !active}
+              onClick={() => {
+                if (hasChanges) {
+                  toast.warning('Guarda la configuración antes de probar el envío');
+                  return;
+                }
+                testBackup.mutate();
+              }}
+              disabled={
+                testBackup.isPending || save.isPending || !active || config?.running || hasChanges
+              }
               className="mt-3 w-full inline-flex justify-center items-center gap-2 rounded-lg border border-border bg-background px-3 py-2 text-xs font-medium hover:bg-muted transition-colors disabled:opacity-50"
             >
-              {testBackup.isPending ? 'Ejecutando prueba...' : 'Probar Envío Ahora (Test)'}
+              {testBackup.isPending || config?.running
+                ? 'Backup en ejecución...'
+                : 'Probar Envío Ahora (Test)'}
             </button>
           </div>
         </div>
@@ -560,7 +714,7 @@ function BackupConfigPanel() {
 
       <div className="flex flex-wrap items-center justify-between gap-3 border-t border-border px-5 py-4 bg-muted/5">
         <div className="text-xs text-muted-foreground">
-          Los cambios se aplicarán en la próxima revisión al horario configurado.
+          Los cambios se aplicarán en la próxima revisión automática.
         </div>
         <button
           type="submit"

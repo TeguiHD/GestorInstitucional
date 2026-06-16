@@ -14,15 +14,22 @@ function dto(entries: RecordAttendanceDto['entries']): RecordAttendanceDto {
 }
 
 function makeService(params: { activeStudentIds: string[]; existingStudentIds?: string[] }) {
+  const existingRecords = (params.existingStudentIds ?? []).map((studentId) => ({
+    id: `record-${studentId}`,
+    studentId,
+    date: new Date('2026-05-12T00:00:00.000Z'),
+    status: AttendanceStatus.PRESENT,
+    lateMinutes: null,
+    note: null,
+  }));
   const prisma = {
     student: {
       findMany: vi.fn().mockResolvedValue(params.activeStudentIds.map((id) => ({ id }))),
     },
     attendanceRecord: {
-      findMany: vi
-        .fn()
-        .mockResolvedValue((params.existingStudentIds ?? []).map((studentId) => ({ studentId }))),
-      upsert: vi.fn((args) => args),
+      findMany: vi.fn().mockResolvedValue(existingRecords),
+      update: vi.fn((args) => args),
+      create: vi.fn((args) => args),
     },
     course: {
       findUnique: vi.fn().mockResolvedValue({
@@ -45,7 +52,9 @@ function makeService(params: { activeStudentIds: string[]; existingStudentIds?: 
   const calendar = { getNonSchoolDays: vi.fn().mockResolvedValue(new Set<string>()) };
   const mail = { sendAbsenceDaily: vi.fn() };
   const whatsapp = { sendAbsenceAlert: vi.fn() };
-  const schoolConfig = {};
+  const schoolConfig = {
+    formatDate: vi.fn((date: Date) => date.toISOString().split('T')[0]!),
+  };
 
   return {
     service: new AttendanceService(

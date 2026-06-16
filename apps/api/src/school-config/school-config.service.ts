@@ -7,6 +7,7 @@ import {
 import { type Prisma } from '@prisma/client';
 
 import { AuditService } from '../audit/audit.service.js';
+import { formatDateOnlyKey } from '../common/date-only.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 
 export type AcademicYearSource = 'saved' | 'default';
@@ -223,10 +224,7 @@ export class SchoolConfigService {
   }
 
   formatDate(date: Date): string {
-    const year = date.getFullYear();
-    const month = String(date.getMonth() + 1).padStart(2, '0');
-    const day = String(date.getDate()).padStart(2, '0');
-    return `${year}-${month}-${day}`;
+    return formatDateOnlyKey(date);
   }
 
   private defaultRanges(year: number) {
@@ -342,7 +340,7 @@ export class SchoolConfigService {
 
   private parseDateForYear(value: string, year: number, field: string): Date {
     const date = this.parseDate(value, field);
-    if (date.getFullYear() !== year) {
+    if (!this.formatDate(date).startsWith(`${year}-`)) {
       throw new BadRequestException(`${field} debe pertenecer al año ${year}`);
     }
     return date;
@@ -356,7 +354,7 @@ export class SchoolConfigService {
     const month = Number(match[2]);
     const day = Number(match[3]);
     const date = this.makeDate(year, month, day);
-    if (date.getFullYear() !== year || date.getMonth() + 1 !== month || date.getDate() !== day) {
+    if (this.formatDate(date) !== value) {
       throw new BadRequestException(`${field} no es una fecha válida`);
     }
     return date;
@@ -364,16 +362,18 @@ export class SchoolConfigService {
 
   private makeDate(year: number, month: number, day: number, endOfDay = false): Date {
     return endOfDay
-      ? new Date(year, month - 1, day, 23, 59, 59, 999)
-      : new Date(year, month - 1, day);
+      ? new Date(Date.UTC(year, month - 1, day, 23, 59, 59, 999))
+      : new Date(Date.UTC(year, month - 1, day));
   }
 
   private startOfDay(date: Date): Date {
-    return new Date(date.getFullYear(), date.getMonth(), date.getDate());
+    const [year, month, day] = this.formatDate(date).split('-').map(Number);
+    return new Date(Date.UTC(year!, month! - 1, day!));
   }
 
   private endOfDay(date: Date): Date {
-    return new Date(date.getFullYear(), date.getMonth(), date.getDate(), 23, 59, 59, 999);
+    const [year, month, day] = this.formatDate(date).split('-').map(Number);
+    return new Date(Date.UTC(year!, month! - 1, day!, 23, 59, 59, 999));
   }
 
   private minDate(a: Date, b: Date): Date {
@@ -386,7 +386,7 @@ export class SchoolConfigService {
 
   private previousCalendarDay(date: Date): Date {
     const d = this.startOfDay(date);
-    d.setDate(d.getDate() - 1);
+    d.setUTCDate(d.getUTCDate() - 1);
     return d;
   }
 
@@ -406,9 +406,9 @@ export class SchoolConfigService {
     let days = 0;
     const cursor = new Date(start);
     while (cursor <= end) {
-      const dow = cursor.getDay();
+      const dow = cursor.getUTCDay();
       if (dow !== 0 && dow !== 6 && !nonSchoolDays.has(this.formatDate(cursor))) days++;
-      cursor.setDate(cursor.getDate() + 1);
+      cursor.setUTCDate(cursor.getUTCDate() + 1);
     }
     return days;
   }

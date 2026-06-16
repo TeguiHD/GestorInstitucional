@@ -4,12 +4,41 @@ set -euo pipefail
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd)"
 PROJECT_DIR="$(cd "$DIR/../.." && pwd)"
 
-LOCK_FILE="/tmp/run-backup.lock"
-if [ -f "$LOCK_FILE" ]; then
-  exit 0
-fi
-touch "$LOCK_FILE"
-trap 'rm -f "$LOCK_FILE"' EXIT
+LOCK_DIR="/tmp/run-backup.lock"
+LOCK_MAX_AGE_SECONDS="${BACKUP_LOCK_MAX_AGE_SECONDS:-21600}"
+
+cleanup_lock() {
+  rm -rf "$LOCK_DIR"
+}
+
+acquire_lock() {
+  if mkdir "$LOCK_DIR" 2>/dev/null; then
+    printf "%s\n" "$$" > "$LOCK_DIR/pid"
+    date +%s > "$LOCK_DIR/created_at"
+    return 0
+  fi
+
+  local created_at now age
+  created_at="$(cat "$LOCK_DIR/created_at" 2>/dev/null || echo 0)"
+  now="$(date +%s)"
+  age=$((now - created_at))
+
+  if [ "$created_at" -le 0 ] || [ "$age" -gt "$LOCK_MAX_AGE_SECONDS" ]; then
+    echo "[$(date)] Lock de backup obsoleto detectado; se limpiara."
+    rm -rf "$LOCK_DIR"
+    if mkdir "$LOCK_DIR" 2>/dev/null; then
+      printf "%s\n" "$$" > "$LOCK_DIR/pid"
+      date +%s > "$LOCK_DIR/created_at"
+      return 0
+    fi
+  fi
+
+  echo "[$(date)] Backup ya en ejecucion. Lock: $LOCK_DIR"
+  exit 75
+}
+
+acquire_lock
+trap cleanup_lock EXIT
 
 if [ -f "$PROJECT_DIR/.env.prod" ]; then
   export $(grep -v '^#' "$PROJECT_DIR/.env.prod" | xargs)
@@ -21,9 +50,9 @@ USE_DOCKER_DB=false
 if command -v docker >/dev/null 2>&1 && \
   [ "$(docker inspect -f '{{.State.Running}}' asistencia_db 2>/dev/null || echo false)" = "true" ]; then
   USE_DOCKER_DB=true
-elif ! command -v mariadb >/dev/null 2>&1; then
+elif ! command -v mariadb >/dev/null 2>&1 || ! command -v mariadb-dump >/dev/null 2>&1; then
   echo "[$(date)] No se encontro cliente MariaDB ni contenedor asistencia_db activo."
-  exit 0
+  exit 1
 fi
 
 db_query() {
@@ -71,6 +100,36 @@ upsert_setting() {
   value="$(sql_escape "$2")"
   db_query "INSERT INTO system_settings (\`key\`, value, updatedAt) VALUES ('$key', '$value', NOW(3)) ON DUPLICATE KEY UPDATE value = VALUES(value), updatedAt = NOW(3);"
 }
+
+RUN_STARTED=false
+LAST_ERROR_FILE="$(mktemp)"
+SEND_RESULT_FILE="$(mktemp)"
+
+fail() {
+  local message="$1"
+  echo "[$(date)] Error: $message" | tee -a "$LAST_ERROR_FILE" >&2
+  exit 1
+}
+
+mark_failed_on_exit() {
+  local code="$?"
+  if [ "$RUN_STARTED" = "true" ] && [ "$code" -ne 0 ]; then
+    local err
+    err="$(tail -c 1000 "$LAST_ERROR_FILE" 2>/dev/null || true)"
+    upsert_setting backup_last_status failed 2>/dev/null || true
+    upsert_setting backup_last_error "${err:-Proceso de backup fallido con codigo $code}" 2>/dev/null || true
+  fi
+  rm -f "$LAST_ERROR_FILE" "$SEND_RESULT_FILE"
+  cleanup_lock
+}
+
+trap mark_failed_on_exit EXIT
+
+if ! db_query "SELECT 1;" >/dev/null 2>"$LAST_ERROR_FILE"; then
+  cat "$LAST_ERROR_FILE" >&2
+  echo "[$(date)] No se pudo conectar a MariaDB para generar el respaldo." >&2
+  exit 1
+fi
 
 DB_EMAILS="$(get_setting backup_emails)"
 DB_TIME="$(get_setting backup_time)"
@@ -121,11 +180,6 @@ case "$CHANGE_COUNT" in
     ;;
 esac
 
-if [ "$FORCE_RUN" = "false" ] && [ "$CHANGE_COUNT" -eq 0 ]; then
-  echo "[$(date)] Sin cambios de asistencia desde el ultimo backup exitoso. No se envia correo."
-  exit 0
-fi
-
 BACKUP_DIR="$PROJECT_DIR/backups"
 mkdir -p "$BACKUP_DIR"
 
@@ -134,40 +188,126 @@ FILE_NAME="backup_asistencia_${DATE}.sql"
 SQL_PATH="${BACKUP_DIR}/${FILE_NAME}"
 ZIP_PATH="${SQL_PATH}.zip"
 
+RUN_STARTED=true
+ATTEMPT_AT="$(date -u '+%Y-%m-%d %H:%M:%S')"
+upsert_setting backup_last_attempt_at "$ATTEMPT_AT"
+upsert_setting backup_last_status running
+upsert_setting backup_last_error ""
+upsert_setting backup_last_message_id ""
+upsert_setting backup_last_delivery_mode ""
+upsert_setting backup_last_file_name ""
+upsert_setting backup_last_file_size_bytes ""
+upsert_setting backup_last_download_expires_at ""
+
 echo "[$(date)] Iniciando backup completo de la base de datos..."
-db_dump > "$SQL_PATH"
+if ! db_dump > "$SQL_PATH" 2>"$LAST_ERROR_FILE"; then
+  fail "mariadb-dump fallo; no se genero respaldo."
+fi
+
+if [ ! -s "$SQL_PATH" ]; then
+  fail "mariadb-dump genero un archivo vacio."
+fi
 
 if [ -n "$BACKUP_PASS_ZIP" ]; then
   SEVENZIP_BIN="$(command -v 7zz || command -v 7z || true)"
   if [ -z "$SEVENZIP_BIN" ]; then
-    echo "[$(date)] Error: se requiere 7z/7zz para cifrado ZIP AES-256."
-    exit 1
+    fail "se requiere 7z/7zz para cifrado ZIP AES-256."
   fi
   echo "[$(date)] Cifrando ZIP con AES-256..."
-  "$SEVENZIP_BIN" a -tzip -mem=AES256 -p"$BACKUP_PASS_ZIP" "$ZIP_PATH" "$SQL_PATH" >/dev/null
+  if ! "$SEVENZIP_BIN" a -tzip -mem=AES256 -p"$BACKUP_PASS_ZIP" "$ZIP_PATH" "$SQL_PATH" >/dev/null 2>"$LAST_ERROR_FILE"; then
+    fail "7z fallo al cifrar el respaldo."
+  fi
   rm -f "$SQL_PATH"
 else
   echo "[$(date)] Comprimiendo ZIP sin cifrado..."
-  zip -j -m "$ZIP_PATH" "$SQL_PATH" >/dev/null
+  if ! zip -j -m "$ZIP_PATH" "$SQL_PATH" >/dev/null 2>"$LAST_ERROR_FILE"; then
+    fail "zip fallo al comprimir el respaldo."
+  fi
+fi
+
+if [ ! -s "$ZIP_PATH" ]; then
+  fail "no se genero ZIP de respaldo."
 fi
 
 echo "[$(date)] Backup completado: $ZIP_PATH"
+
+ZIP_SIZE_BYTES="$(wc -c < "$ZIP_PATH" | tr -d ' ')"
+ATTACHMENT_LIMIT_BYTES="${BACKUP_ATTACHMENT_LIMIT_BYTES:-14680064}"
+DELIVERY_MODE="attachment"
+DOWNLOAD_URL=""
+DOWNLOAD_TOKEN_HASH=""
+DOWNLOAD_EXPIRES_AT="$(
+  node -e "console.log(new Date(Date.now()+7*24*60*60*1000).toISOString().slice(0,19).replace('T',' '));"
+)"
+
+if [ "$ZIP_SIZE_BYTES" -gt "$ATTACHMENT_LIMIT_BYTES" ]; then
+  if [ -z "$BACKUP_PASS_ZIP" ]; then
+    fail "el ZIP pesa ${ZIP_SIZE_BYTES} bytes y supera el limite de adjunto; configura una contrasena para habilitar descarga segura."
+  fi
+
+  PUBLIC_BASE_URL="${BACKUP_PUBLIC_BASE_URL:-${API_PUBLIC_URL:-}}"
+  if [ -z "$PUBLIC_BASE_URL" ]; then
+    fail "BACKUP_PUBLIC_BASE_URL o API_PUBLIC_URL requerido para enviar respaldo grande por link."
+  fi
+  PUBLIC_BASE_URL="${PUBLIC_BASE_URL%/}"
+
+  IFS=$'\t' read -r DOWNLOAD_TOKEN DOWNLOAD_TOKEN_HASH DOWNLOAD_EXPIRES_AT < <(
+    node -e "const crypto=require('crypto'); const token=crypto.randomBytes(32).toString('base64url'); const hash=crypto.createHash('sha256').update(token).digest('hex'); const expires=new Date(Date.now()+7*24*60*60*1000).toISOString().slice(0,19).replace('T',' '); console.log([token,hash,expires].join('\t'));"
+  )
+
+  if [[ "$PUBLIC_BASE_URL" == */api/v1 ]]; then
+    DOWNLOAD_URL="${PUBLIC_BASE_URL}/system-config/backup/download?token=${DOWNLOAD_TOKEN}"
+  else
+    DOWNLOAD_URL="${PUBLIC_BASE_URL}/api/v1/system-config/backup/download?token=${DOWNLOAD_TOKEN}"
+  fi
+
+  upsert_setting backup_download_token_hash "$DOWNLOAD_TOKEN_HASH"
+  upsert_setting backup_download_path "$ZIP_PATH"
+  upsert_setting backup_download_file_name "$(basename "$ZIP_PATH")"
+  upsert_setting backup_download_file_size_bytes "$ZIP_SIZE_BYTES"
+  upsert_setting backup_download_expires_at "$DOWNLOAD_EXPIRES_AT"
+
+  DELIVERY_MODE="download_link"
+  echo "[$(date)] ZIP supera limite de adjunto (${ZIP_SIZE_BYTES} > ${ATTACHMENT_LIMIT_BYTES}); se enviara link temporal."
+fi
 
 export BACKUP_EMAILS
 export BACKUP_LAST_SUCCESS_AT="$LAST_SUCCESS_AT"
 export BACKUP_CHANGE_COUNT="$CHANGE_COUNT"
 export BACKUP_FORCE_RUN="$FORCE_RUN"
 export BACKUP_USE_DOCKER_DB="$USE_DOCKER_DB"
+export BACKUP_DELIVERY_MODE="$DELIVERY_MODE"
+export BACKUP_DOWNLOAD_URL="$DOWNLOAD_URL"
+export BACKUP_DOWNLOAD_EXPIRES_AT="$DOWNLOAD_EXPIRES_AT"
+export BACKUP_SEND_RESULT_FILE="$SEND_RESULT_FILE"
 
-node "$DIR/send-backup.mjs" "$ZIP_PATH"
-
-if [ "$CHANGE_QUERY_FAILED" = "false" ]; then
-  SUCCESS_AT="$(date -u '+%Y-%m-%d %H:%M:%S')"
-  upsert_setting backup_last_success_at "$SUCCESS_AT"
-  echo "[$(date)] Marcado ultimo backup exitoso: $SUCCESS_AT"
-else
-  echo "[$(date)] No se actualiza ultimo backup exitoso porque fallo la consulta de cambios."
+if ! node "$DIR/send-backup.mjs" "$ZIP_PATH" 2> >(tee "$LAST_ERROR_FILE" >&2); then
+  fail "send-backup.mjs fallo; Brevo no confirmo el envio."
 fi
+
+IFS=$'\t' read -r MESSAGE_ID RESULT_DELIVERY_MODE RESULT_FILE_NAME RESULT_FILE_SIZE_BYTES RESULT_DOWNLOAD_EXPIRES_AT < <(
+  node -e "const fs=require('fs'); const file=process.argv[1]; const data=JSON.parse(fs.readFileSync(file,'utf8')); if (!data.messageId) process.exit(2); console.log([data.messageId, data.deliveryMode || '', data.fileName || '', String(data.fileSizeBytes || ''), data.downloadExpiresAt || ''].join('\t'));" "$SEND_RESULT_FILE" 2>>"$LAST_ERROR_FILE"
+) || fail "no se pudo leer confirmacion estructurada de Brevo."
+
+if [ -z "$MESSAGE_ID" ]; then
+  fail "Brevo no retorno messageId."
+fi
+
+SUCCESS_AT="$(date -u '+%Y-%m-%d %H:%M:%S')"
+upsert_setting backup_last_success_at "$SUCCESS_AT"
+upsert_setting backup_last_status success
+upsert_setting backup_last_error ""
+upsert_setting backup_last_message_id "$MESSAGE_ID"
+upsert_setting backup_last_delivery_mode "$RESULT_DELIVERY_MODE"
+upsert_setting backup_last_file_name "$RESULT_FILE_NAME"
+upsert_setting backup_last_file_size_bytes "$RESULT_FILE_SIZE_BYTES"
+upsert_setting backup_last_download_expires_at "$RESULT_DOWNLOAD_EXPIRES_AT"
+upsert_setting backup_download_token_hash "$DOWNLOAD_TOKEN_HASH"
+upsert_setting backup_download_path "$ZIP_PATH"
+upsert_setting backup_download_file_name "$(basename "$ZIP_PATH")"
+upsert_setting backup_download_file_size_bytes "$ZIP_SIZE_BYTES"
+upsert_setting backup_download_expires_at "$DOWNLOAD_EXPIRES_AT"
+echo "[$(date)] Marcado ultimo backup exitoso: $SUCCESS_AT"
 
 echo "[$(date)] Purgando backups locales antiguos..."
 find "$BACKUP_DIR" -type f -name "backup_asistencia_*.sql.zip" -mtime +30 -delete
