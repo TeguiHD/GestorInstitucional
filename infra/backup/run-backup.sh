@@ -215,7 +215,17 @@ if [ -n "$BACKUP_PASS_ZIP" ]; then
   fi
   echo "[$(date)] Cifrando ZIP con AES-256..."
   if ! "$SEVENZIP_BIN" a -tzip -mem=AES256 -p"$BACKUP_PASS_ZIP" "$ZIP_PATH" "$SQL_PATH" >/dev/null 2>"$LAST_ERROR_FILE"; then
-    fail "7z fallo al cifrar el respaldo."
+    if grep -q "E_INVALIDARG" "$LAST_ERROR_FILE"; then
+      FALLBACK_7Z_PATH="${SQL_PATH}.7z"
+      rm -f "$ZIP_PATH" "$FALLBACK_7Z_PATH"
+      echo "[$(date)] ZIP AES no acepto la contrasena; usando archivo 7z cifrado."
+      if ! "$SEVENZIP_BIN" a -t7z -mhe=on -p"$BACKUP_PASS_ZIP" "$FALLBACK_7Z_PATH" "$SQL_PATH" >/dev/null 2>"$LAST_ERROR_FILE"; then
+        fail "7z fallo al cifrar el respaldo en formato 7z."
+      fi
+      ZIP_PATH="$FALLBACK_7Z_PATH"
+    else
+      fail "7z fallo al cifrar el respaldo."
+    fi
   fi
   rm -f "$SQL_PATH"
 else
@@ -310,6 +320,6 @@ upsert_setting backup_download_expires_at "$DOWNLOAD_EXPIRES_AT"
 echo "[$(date)] Marcado ultimo backup exitoso: $SUCCESS_AT"
 
 echo "[$(date)] Purgando backups locales antiguos..."
-find "$BACKUP_DIR" -type f -name "backup_asistencia_*.sql.zip" -mtime +30 -delete
+find "$BACKUP_DIR" -type f \( -name "backup_asistencia_*.sql.zip" -o -name "backup_asistencia_*.sql.7z" \) -mtime +30 -delete
 
 echo "[$(date)] Proceso de backup finalizado con exito."

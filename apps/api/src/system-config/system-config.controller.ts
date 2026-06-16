@@ -30,7 +30,7 @@ export class SystemConfigController {
   @ApiOperation({ summary: 'Descargar el último respaldo completo confirmado' })
   async downloadLatestBackup(@Res() res: FastifyReply) {
     const download = await this.systemConfig.getLatestBackupDownload();
-    void res.header('Content-Type', 'application/zip');
+    void res.header('Content-Type', this.backupContentType(download.fileName));
     void res.header('Content-Length', String(download.size));
     void res.header(
       'Content-Disposition',
@@ -45,7 +45,7 @@ export class SystemConfigController {
   @ApiOperation({ summary: 'Descargar respaldo cifrado con token temporal' })
   async downloadBackup(@Query('token') token: string | undefined, @Res() res: FastifyReply) {
     const download = await this.systemConfig.getBackupDownload(token);
-    void res.header('Content-Type', 'application/zip');
+    void res.header('Content-Type', this.backupContentType(download.fileName));
     void res.header('Content-Length', String(download.size));
     void res.header(
       'Content-Disposition',
@@ -64,5 +64,9 @@ export class SystemConfigController {
   @ApiOperation({ summary: 'Ejecutar una prueba manual del backup ahora' })
   testBackup() {
     return this.systemConfig.testBackup();
+  }
+
+  private backupContentType(fileName: string): string {
+    return fileName.endsWith('.zip') ? 'application/zip' : 'application/octet-stream';
   }
 }

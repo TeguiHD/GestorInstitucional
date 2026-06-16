@@ -563,7 +563,7 @@ function BackupConfigPanel() {
           {/* Contraseña ZIP */}
           <div className="space-y-1">
             <label className="text-xs font-medium text-muted-foreground" htmlFor="backup-password">
-              Contraseña de Cifrado del archivo ZIP (Recomendado)
+              Contraseña de Cifrado del archivo de respaldo (Recomendado)
             </label>
             <div className="relative">
               <input

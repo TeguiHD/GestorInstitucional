@@ -214,7 +214,7 @@ function renderChangesSummary(changes, error, deliveryMode) {
 async function main() {
   const filePath = process.argv[2];
   if (!filePath) {
-    console.error('Uso: node send-backup.mjs <ruta_al_archivo_zip>');
+    console.error('Uso: node send-backup.mjs <ruta_al_archivo_respaldo>');
     process.exit(1);
   }
 
