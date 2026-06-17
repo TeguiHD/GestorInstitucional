@@ -193,9 +193,10 @@ const password = process.argv[2] || '';
 for (const char of password) {
   const code = char.codePointAt(0) || 0;
   if (code < 0x20 || code > 0x7e) {
-    throw new Error(
-      'La contraseña del backup contiene caracteres no compatibles con ZIP AES. Usa solo caracteres ASCII imprimibles.',
+    console.error(
+      'La contrasena del backup contiene caracteres no compatibles con ZIP AES. Usa solo caracteres ASCII imprimibles.',
     );
+    process.exit(1);
   }
 }
 NODE
