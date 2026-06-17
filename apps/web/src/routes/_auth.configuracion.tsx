@@ -478,7 +478,9 @@ function BackupConfigPanel() {
   const lastFileIsZip = lastFileName.endsWith('.zip');
   const lastFileIsLegacy7z = lastFileName.endsWith('.7z');
   const zipVerified =
-    lastConfirmed && lastFileIsZip && config?.lastDownloadVerifiedStatus === '200';
+    lastConfirmed &&
+    lastFileIsZip &&
+    (config?.lastDeliveryMode === 'attachment' || config?.lastDownloadVerifiedStatus === '200');
 
   return (
     <form
