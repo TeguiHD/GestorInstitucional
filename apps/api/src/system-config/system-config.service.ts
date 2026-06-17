@@ -26,6 +26,8 @@ const BACKUP_KEYS = [
   'backup_last_file_name',
   'backup_last_file_size_bytes',
   'backup_last_download_expires_at',
+  'backup_last_download_verified_at',
+  'backup_last_download_verified_status',
   'backup_download_token_hash',
   'backup_download_path',
   'backup_download_file_name',
@@ -54,6 +56,8 @@ type BackupConfigResponse = {
   lastFileName: string | null;
   lastFileSizeBytes: number | null;
   lastDownloadExpiresAt: string | null;
+  lastDownloadVerifiedAt: string | null;
+  lastDownloadVerifiedStatus: string | null;
   latestDownloadAvailable: boolean;
   latestDownloadFileName: string | null;
   latestDownloadFileSizeBytes: number | null;
@@ -128,6 +132,8 @@ export class SystemConfigService {
       lastFileName: configMap.get('backup_last_file_name') || null,
       lastFileSizeBytes: Number.isFinite(lastFileSizeBytes) ? lastFileSizeBytes : null,
       lastDownloadExpiresAt: configMap.get('backup_last_download_expires_at') || null,
+      lastDownloadVerifiedAt: configMap.get('backup_last_download_verified_at') || null,
+      lastDownloadVerifiedStatus: configMap.get('backup_last_download_verified_status') || null,
       latestDownloadAvailable,
       latestDownloadFileName: latestDownload?.fileName ?? null,
       latestDownloadFileSizeBytes: latestDownload?.size ?? null,
@@ -234,6 +240,8 @@ export class SystemConfigService {
       backup_last_file_name: '',
       backup_last_file_size_bytes: '',
       backup_last_download_expires_at: '',
+      backup_last_download_verified_at: '',
+      backup_last_download_verified_status: '',
     });
 
     this.inProcessBackupRunning = true;

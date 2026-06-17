@@ -67,6 +67,8 @@ export class SystemConfigController {
   }
 
   private backupContentType(fileName: string): string {
-    return fileName.endsWith('.zip') ? 'application/zip' : 'application/octet-stream';
+    if (fileName.endsWith('.zip')) return 'application/zip';
+    if (fileName.endsWith('.7z')) return 'application/x-7z-compressed';
+    return 'application/octet-stream';
   }
 }

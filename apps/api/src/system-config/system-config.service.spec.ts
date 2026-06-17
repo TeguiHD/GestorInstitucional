@@ -118,6 +118,8 @@ describe('SystemConfigService backup scheduler', () => {
         backup_download_file_name: 'backup_asistencia_test.sql.zip',
         backup_download_file_size_bytes: '3',
         backup_download_expires_at: '2999-01-01 00:00:00',
+        backup_last_download_verified_at: '2026-06-17 03:00:00',
+        backup_last_download_verified_status: '200',
       }),
     );
 
@@ -127,6 +129,8 @@ describe('SystemConfigService backup scheduler', () => {
     expect(config.latestDownloadAvailable).toBe(true);
     expect(config.latestDownloadFileName).toBe('backup_asistencia_test.sql.zip');
     expect(config.latestDownloadFileSizeBytes).toBe(3);
+    expect(config.lastDownloadVerifiedAt).toBe('2026-06-17 03:00:00');
+    expect(config.lastDownloadVerifiedStatus).toBe('200');
     expect(download.filePath).toBe(filePath);
     expect(download.size).toBe(3);
 

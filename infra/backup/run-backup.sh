@@ -147,6 +147,7 @@ const timeout = setTimeout(() => controller.abort(), 15000);
 fetch(url, { signal: controller.signal })
   .then((res) => {
     clearTimeout(timeout);
+    console.log(res.status);
     if (!res.ok) {
       throw new Error(`HTTP ${res.status}`);
     }
@@ -261,6 +262,8 @@ upsert_setting backup_last_delivery_mode ""
 upsert_setting backup_last_file_name ""
 upsert_setting backup_last_file_size_bytes ""
 upsert_setting backup_last_download_expires_at ""
+upsert_setting backup_last_download_verified_at ""
+upsert_setting backup_last_download_verified_status ""
 
 echo "[$(date)] Iniciando backup completo de la base de datos..."
 if ! db_dump > "$SQL_PATH" 2>"$LAST_ERROR_FILE"; then
@@ -311,6 +314,8 @@ ATTACHMENT_LIMIT_BYTES="${BACKUP_ATTACHMENT_LIMIT_BYTES:-14680064}"
 DELIVERY_MODE="attachment"
 DOWNLOAD_URL=""
 DOWNLOAD_TOKEN_HASH=""
+DOWNLOAD_VERIFIED_AT=""
+DOWNLOAD_VERIFIED_STATUS=""
 DOWNLOAD_EXPIRES_AT="$(
   node -e "console.log(new Date(Date.now()+7*24*60*60*1000).toISOString().slice(0,19).replace('T',' '));"
 )"
@@ -355,9 +360,15 @@ if [ "$ZIP_SIZE_BYTES" -gt "$ATTACHMENT_LIMIT_BYTES" ] || [ "$FORCE_DOWNLOAD_LIN
     echo "[$(date)] ZIP supera limite de adjunto (${ZIP_SIZE_BYTES} > ${ATTACHMENT_LIMIT_BYTES}); se enviara link temporal."
   fi
   echo "[$(date)] Verificando link temporal antes del envio..."
-  if ! verify_download_link "$DOWNLOAD_URL" 2>"$LAST_ERROR_FILE"; then
+  if ! DOWNLOAD_VERIFIED_STATUS="$(verify_download_link "$DOWNLOAD_URL" 2>"$LAST_ERROR_FILE")"; then
+    DOWNLOAD_VERIFIED_AT="$(date -u '+%Y-%m-%d %H:%M:%S')"
+    upsert_setting backup_last_download_verified_at "$DOWNLOAD_VERIFIED_AT" 2>/dev/null || true
+    upsert_setting backup_last_download_verified_status "${DOWNLOAD_VERIFIED_STATUS:-failed}" 2>/dev/null || true
     fail "el link temporal de descarga no responde correctamente."
   fi
+  DOWNLOAD_VERIFIED_AT="$(date -u '+%Y-%m-%d %H:%M:%S')"
+  upsert_setting backup_last_download_verified_at "$DOWNLOAD_VERIFIED_AT"
+  upsert_setting backup_last_download_verified_status "$DOWNLOAD_VERIFIED_STATUS"
 fi
 
 export BACKUP_EMAILS
@@ -391,6 +402,8 @@ upsert_setting backup_last_delivery_mode "$RESULT_DELIVERY_MODE"
 upsert_setting backup_last_file_name "$RESULT_FILE_NAME"
 upsert_setting backup_last_file_size_bytes "$RESULT_FILE_SIZE_BYTES"
 upsert_setting backup_last_download_expires_at "$RESULT_DOWNLOAD_EXPIRES_AT"
+upsert_setting backup_last_download_verified_at "$DOWNLOAD_VERIFIED_AT"
+upsert_setting backup_last_download_verified_status "$DOWNLOAD_VERIFIED_STATUS"
 upsert_setting backup_download_token_hash "$DOWNLOAD_TOKEN_HASH"
 upsert_setting backup_download_path "$ZIP_PATH"
 upsert_setting backup_download_file_name "$(basename "$ZIP_PATH")"

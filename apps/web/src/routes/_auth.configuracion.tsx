@@ -365,6 +365,8 @@ type BackupConfig = {
   lastFileName: string | null;
   lastFileSizeBytes: number | null;
   lastDownloadExpiresAt: string | null;
+  lastDownloadVerifiedAt: string | null;
+  lastDownloadVerifiedStatus: string | null;
   latestDownloadAvailable: boolean;
   latestDownloadFileName: string | null;
   latestDownloadFileSizeBytes: number | null;
@@ -663,6 +665,15 @@ function BackupConfigPanel() {
                     <p>
                       <span className="font-medium text-foreground">Link expira:</span>{' '}
                       {formatBackupTimestamp(config.lastDownloadExpiresAt)}
+                    </p>
+                  )}
+                  {config.lastDeliveryMode === 'download_link' && config.lastDownloadVerifiedAt && (
+                    <p>
+                      <span className="font-medium text-foreground">Link público:</span>{' '}
+                      {config.lastDownloadVerifiedStatus === '200'
+                        ? 'Verificado correctamente'
+                        : `Verificación ${config.lastDownloadVerifiedStatus ?? 'sin estado'}`}{' '}
+                      · {formatBackupTimestamp(config.lastDownloadVerifiedAt)}
                     </p>
                   )}
                   {config.lastMessageId && (
