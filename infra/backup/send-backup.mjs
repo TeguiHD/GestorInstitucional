@@ -281,8 +281,12 @@ async function main() {
         </a>
       </p>
       <p style="font-size:12px;color:#555;word-break:break-all;">
-        Si el boton no abre, copia este enlace completo:<br>
+        Si el boton no abre, copia este enlace completo sin modificarlo:<br>
         <a href="${escapeHtml(downloadUrl)}">${escapeHtml(downloadUrl)}</a>
+      </p>
+      <pre style="white-space:pre-wrap;word-break:break-all;background:#f3f4f6;border:1px solid #d1d5db;border-radius:6px;padding:10px;font-size:12px;color:#111827;">${escapeHtml(downloadUrl)}</pre>
+      <p style="font-size:12px;color:#555;">
+        Tambien puedes descargar el ultimo backup completo desde Configuracion del sistema.
       </p>
       <p><strong>Expira:</strong> ${escapeHtml(downloadExpiresAt || '7 dias')}</p>
       `

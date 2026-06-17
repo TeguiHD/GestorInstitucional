@@ -161,6 +161,31 @@ fetch(url, { signal: controller.signal })
 NODE
 }
 
+assert_zip_archive() {
+  local archive="$1"
+  local password="${2:-}"
+
+  if ! node - "$archive" <<'NODE' 2>"$LAST_ERROR_FILE"; then
+const fs = require('fs');
+const file = process.argv[2];
+const fd = fs.openSync(file, 'r');
+const header = Buffer.alloc(4);
+fs.readSync(fd, header, 0, 4, 0);
+fs.closeSync(fd);
+if (header[0] !== 0x50 || header[1] !== 0x4b) {
+  throw new Error('El archivo generado no tiene cabecera ZIP valida.');
+}
+NODE
+    return 1
+  fi
+
+  if [ -n "$password" ]; then
+    "$SEVENZIP_BIN" t -p"$password" "$archive" >/dev/null 2>"$LAST_ERROR_FILE"
+  else
+    zip -T "$archive" >/dev/null 2>"$LAST_ERROR_FILE"
+  fi
+}
+
 RUN_STARTED=false
 LAST_ERROR_FILE="$(mktemp)"
 SEND_RESULT_FILE="$(mktemp)"
@@ -250,7 +275,6 @@ DATE="$(date +%Y-%m-%d_%H%M%S)"
 FILE_NAME="backup_asistencia_${DATE}.sql"
 SQL_PATH="${BACKUP_DIR}/${FILE_NAME}"
 ZIP_PATH="${SQL_PATH}.zip"
-FORCE_DOWNLOAD_LINK=false
 
 RUN_STARTED=true
 ATTEMPT_AT="$(date -u '+%Y-%m-%d %H:%M:%S')"
@@ -281,25 +305,21 @@ if [ -n "$BACKUP_PASS_ZIP" ]; then
   fi
   echo "[$(date)] Cifrando ZIP con AES-256..."
   if ! "$SEVENZIP_BIN" a -tzip -mem=AES256 -p"$BACKUP_PASS_ZIP" "$ZIP_PATH" "$SQL_PATH" >/dev/null 2>"$LAST_ERROR_FILE"; then
-    if grep -q "E_INVALIDARG" "$LAST_ERROR_FILE"; then
-      FALLBACK_7Z_PATH="${SQL_PATH}.7z"
-      rm -f "$ZIP_PATH" "$FALLBACK_7Z_PATH"
-      echo "[$(date)] ZIP AES no acepto la contrasena; usando archivo 7z cifrado."
-      if ! "$SEVENZIP_BIN" a -t7z -mhe=on -p"$BACKUP_PASS_ZIP" "$FALLBACK_7Z_PATH" "$SQL_PATH" >/dev/null 2>"$LAST_ERROR_FILE"; then
-        fail "7z fallo al cifrar el respaldo en formato 7z."
-      fi
-      ZIP_PATH="$FALLBACK_7Z_PATH"
-      FORCE_DOWNLOAD_LINK=true
-    else
-      fail "7z fallo al cifrar el respaldo."
-    fi
+    fail "7z fallo al crear el ZIP cifrado AES-256; no se enviara respaldo en formato alternativo."
+  fi
+  if ! assert_zip_archive "$ZIP_PATH" "$BACKUP_PASS_ZIP"; then
+    fail "el ZIP cifrado generado no pudo validarse con la contrasena configurada."
   fi
   rm -f "$SQL_PATH"
 else
   echo "[$(date)] Comprimiendo ZIP sin cifrado..."
-  if ! zip -j -m "$ZIP_PATH" "$SQL_PATH" >/dev/null 2>"$LAST_ERROR_FILE"; then
+  if ! zip -j "$ZIP_PATH" "$SQL_PATH" >/dev/null 2>"$LAST_ERROR_FILE"; then
     fail "zip fallo al comprimir el respaldo."
   fi
+  if ! assert_zip_archive "$ZIP_PATH"; then
+    fail "el ZIP generado no pudo validarse."
+  fi
+  rm -f "$SQL_PATH"
 fi
 
 if [ ! -s "$ZIP_PATH" ]; then
@@ -320,7 +340,7 @@ DOWNLOAD_EXPIRES_AT="$(
   node -e "console.log(new Date(Date.now()+7*24*60*60*1000).toISOString().slice(0,19).replace('T',' '));"
 )"
 
-if [ "$ZIP_SIZE_BYTES" -gt "$ATTACHMENT_LIMIT_BYTES" ] || [ "$FORCE_DOWNLOAD_LINK" = "true" ]; then
+if [ "$ZIP_SIZE_BYTES" -gt "$ATTACHMENT_LIMIT_BYTES" ]; then
   if [ -z "$BACKUP_PASS_ZIP" ]; then
     fail "el ZIP pesa ${ZIP_SIZE_BYTES} bytes y supera el limite de adjunto; configura una contrasena para habilitar descarga segura."
   fi
@@ -332,7 +352,7 @@ if [ "$ZIP_SIZE_BYTES" -gt "$ATTACHMENT_LIMIT_BYTES" ] || [ "$FORCE_DOWNLOAD_LIN
   PUBLIC_BASE_URL="${PUBLIC_BASE_URL%/}"
 
   IFS=$'\t' read -r DOWNLOAD_TOKEN DOWNLOAD_TOKEN_HASH DOWNLOAD_EXPIRES_AT < <(
-    node -e "const crypto=require('crypto'); const token=crypto.randomBytes(32).toString('base64url'); const hash=crypto.createHash('sha256').update(token).digest('hex'); const expires=new Date(Date.now()+7*24*60*60*1000).toISOString().slice(0,19).replace('T',' '); console.log([token,hash,expires].join('\t'));"
+    node -e "const crypto=require('crypto'); const token=crypto.randomBytes(32).toString('hex'); const hash=crypto.createHash('sha256').update(token).digest('hex'); const expires=new Date(Date.now()+7*24*60*60*1000).toISOString().slice(0,19).replace('T',' '); console.log([token,hash,expires].join('\t'));"
   )
 
   if [[ "$PUBLIC_BASE_URL" == */api/v1 ]]; then
@@ -354,11 +374,7 @@ if [ "$ZIP_SIZE_BYTES" -gt "$ATTACHMENT_LIMIT_BYTES" ] || [ "$FORCE_DOWNLOAD_LIN
     "$DOWNLOAD_EXPIRES_AT"
 
   DELIVERY_MODE="download_link"
-  if [ "$FORCE_DOWNLOAD_LINK" = "true" ]; then
-    echo "[$(date)] Archivo cifrado requiere entrega por link temporal."
-  else
-    echo "[$(date)] ZIP supera limite de adjunto (${ZIP_SIZE_BYTES} > ${ATTACHMENT_LIMIT_BYTES}); se enviara link temporal."
-  fi
+  echo "[$(date)] ZIP supera limite de adjunto (${ZIP_SIZE_BYTES} > ${ATTACHMENT_LIMIT_BYTES}); se enviara link temporal."
   echo "[$(date)] Verificando link temporal antes del envio..."
   if ! DOWNLOAD_VERIFIED_STATUS="$(verify_download_link "$DOWNLOAD_URL" 2>"$LAST_ERROR_FILE")"; then
     DOWNLOAD_VERIFIED_AT="$(date -u '+%Y-%m-%d %H:%M:%S')"
@@ -412,6 +428,6 @@ upsert_setting backup_download_expires_at "$DOWNLOAD_EXPIRES_AT"
 echo "[$(date)] Marcado ultimo backup exitoso: $SUCCESS_AT"
 
 echo "[$(date)] Purgando backups locales antiguos..."
-find "$BACKUP_DIR" -type f \( -name "backup_asistencia_*.sql.zip" -o -name "backup_asistencia_*.sql.7z" \) -mtime +30 -delete
+find "$BACKUP_DIR" -type f -name "backup_asistencia_*.sql.zip" -mtime +30 -delete
 
 echo "[$(date)] Proceso de backup finalizado con exito."

@@ -474,6 +474,11 @@ function BackupConfigPanel() {
       password !== '' ||
       active !== config.active);
   const lastConfirmed = !!config?.lastMessageId && config.lastStatus === 'success';
+  const lastFileName = config?.lastFileName?.toLowerCase() ?? '';
+  const lastFileIsZip = lastFileName.endsWith('.zip');
+  const lastFileIsLegacy7z = lastFileName.endsWith('.7z');
+  const zipVerified =
+    lastConfirmed && lastFileIsZip && config?.lastDownloadVerifiedStatus === '200';
 
   return (
     <form
@@ -643,6 +648,17 @@ function BackupConfigPanel() {
                     <span className="font-medium text-foreground">Archivo:</span>{' '}
                     {config.lastFileName ?? 'Sin registro'}
                   </p>
+                  {zipVerified && (
+                    <p className="text-emerald-700 dark:text-emerald-300">
+                      <span className="font-medium">ZIP cifrado verificado:</span> listo para
+                      descargar.
+                    </p>
+                  )}
+                  {lastFileIsLegacy7z && (
+                    <p className="rounded-md border border-amber-300 bg-amber-50 px-2 py-1 text-amber-800 dark:border-amber-500/40 dark:bg-amber-500/10 dark:text-amber-200">
+                      Formato antiguo .7z no recomendado; ejecuta un nuevo backup para generar ZIP.
+                    </p>
+                  )}
                   <p>
                     <span className="font-medium text-foreground">Tamaño:</span>{' '}
                     {formatBytes(config.lastFileSizeBytes)}
