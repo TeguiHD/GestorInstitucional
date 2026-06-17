@@ -186,6 +186,21 @@ NODE
   fi
 }
 
+validate_zip_password() {
+  local password="$1"
+  node - "$password" <<'NODE' 2>"$LAST_ERROR_FILE"
+const password = process.argv[2] || '';
+for (const char of password) {
+  const code = char.codePointAt(0) || 0;
+  if (code < 0x20 || code > 0x7e) {
+    throw new Error(
+      'La contraseña del backup contiene caracteres no compatibles con ZIP AES. Usa solo caracteres ASCII imprimibles.',
+    );
+  }
+}
+NODE
+}
+
 RUN_STARTED=false
 LAST_ERROR_FILE="$(mktemp)"
 SEND_RESULT_FILE="$(mktemp)"
@@ -288,6 +303,10 @@ upsert_setting backup_last_file_size_bytes ""
 upsert_setting backup_last_download_expires_at ""
 upsert_setting backup_last_download_verified_at ""
 upsert_setting backup_last_download_verified_status ""
+
+if [ -n "$BACKUP_PASS_ZIP" ] && ! validate_zip_password "$BACKUP_PASS_ZIP"; then
+  fail "la contrasena actual del backup no es compatible con ZIP AES; cambia la contrasena por una con caracteres ASCII imprimibles."
+fi
 
 echo "[$(date)] Iniciando backup completo de la base de datos..."
 if ! db_dump > "$SQL_PATH" 2>"$LAST_ERROR_FILE"; then

@@ -354,6 +354,7 @@ type BackupConfig = {
   emails: string;
   time: string;
   hasPassword: boolean;
+  passwordCompatible: boolean;
   active: boolean;
   lastSuccessAt: string | null;
   lastAttemptAt: string | null;
@@ -481,6 +482,7 @@ function BackupConfigPanel() {
     lastConfirmed &&
     lastFileIsZip &&
     (config?.lastDeliveryMode === 'attachment' || config?.lastDownloadVerifiedStatus === '200');
+  const passwordIncompatible = !!config?.hasPassword && !config.passwordCompatible;
 
   return (
     <form
@@ -616,6 +618,12 @@ function BackupConfigPanel() {
                   Guarda la configuración antes de probar el envío.
                 </p>
               )}
+              {passwordIncompatible && (
+                <p className="mt-2 rounded-md border border-red-300 bg-red-50 px-2 py-1 text-red-800 dark:border-red-500/40 dark:bg-red-500/10 dark:text-red-200">
+                  La contraseña actual no es compatible con ZIP cifrado. Cambiala usando solo
+                  letras, números y símbolos ASCII.
+                </p>
+              )}
               {config && (
                 <div className="mt-3 space-y-1 rounded-lg border border-border bg-background/70 p-3">
                   <p>
@@ -729,7 +737,12 @@ function BackupConfigPanel() {
                 testBackup.mutate();
               }}
               disabled={
-                testBackup.isPending || save.isPending || !active || config?.running || hasChanges
+                testBackup.isPending ||
+                save.isPending ||
+                !active ||
+                config?.running ||
+                hasChanges ||
+                passwordIncompatible
               }
               className="mt-3 w-full inline-flex justify-center items-center gap-2 rounded-lg border border-border bg-background px-3 py-2 text-xs font-medium hover:bg-muted transition-colors disabled:opacity-50"
             >

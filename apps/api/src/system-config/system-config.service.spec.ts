@@ -31,6 +31,7 @@ function config(
     emails: 'admin@colegio.cl',
     time: '23:00',
     hasPassword: false,
+    passwordCompatible: true,
     active: true,
     lastSuccessAt: null,
     lastAttemptAt: null,
@@ -135,6 +136,25 @@ describe('SystemConfigService backup scheduler', () => {
     expect(download.size).toBe(3);
 
     await rm(backupDir, { recursive: true, force: true });
+  });
+
+  it('marca como incompatible una contrasena con caracteres fuera de ASCII', async () => {
+    const service = makeService();
+    const prisma = (
+      service as unknown as {
+        prisma: { systemSetting: { findMany: ReturnType<typeof vi.fn> } };
+      }
+    ).prisma;
+    prisma.systemSetting.findMany.mockResolvedValue(
+      settings({
+        backup_password: 'clave-con-ñ',
+      }),
+    );
+
+    const config = await service.getBackupConfig();
+
+    expect(config.hasPassword).toBe(true);
+    expect(config.passwordCompatible).toBe(false);
   });
 
   it('bloquea descarga si la ruta sale del directorio de backups', async () => {

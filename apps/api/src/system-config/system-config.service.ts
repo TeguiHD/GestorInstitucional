@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   ConflictException,
   ForbiddenException,
   Injectable,
@@ -45,6 +46,7 @@ type BackupConfigResponse = {
   emails: string;
   time: string;
   hasPassword: boolean;
+  passwordCompatible: boolean;
   active: boolean;
   lastSuccessAt: string | null;
   lastAttemptAt: string | null;
@@ -103,6 +105,7 @@ export class SystemConfigService {
       : true;
 
     const hasPassword = !!configMap.get('backup_password');
+    const passwordCompatible = this.isZipPasswordCompatible(configMap.get('backup_password') || '');
     const lastStatus = (configMap.get('backup_last_status') || 'idle') as BackupStatus;
     const lastDeliveryModeRaw = configMap.get('backup_last_delivery_mode') || '';
     const lastDeliveryMode =
@@ -121,6 +124,7 @@ export class SystemConfigService {
       emails,
       time,
       hasPassword,
+      passwordCompatible,
       active,
       lastSuccessAt: configMap.get('backup_last_success_at') || null,
       lastAttemptAt: configMap.get('backup_last_attempt_at') || null,
@@ -154,6 +158,11 @@ export class SystemConfigService {
     ];
 
     if (data.encryptPassword && data.encryptPassword.trim() !== '') {
+      if (!this.isZipPasswordCompatible(data.encryptPassword)) {
+        throw new BadRequestException(
+          'La contraseña del backup debe usar solo caracteres ASCII imprimibles para generar ZIP cifrado.',
+        );
+      }
       updates.push({ key: 'backup_password', value: data.encryptPassword });
     }
 
@@ -227,6 +236,17 @@ export class SystemConfigService {
     const configMap = await this.getBackupSettings();
     if (this.isBackupRunning(configMap)) {
       throw new ConflictException('Ya hay un backup en ejecución');
+    }
+    const currentPassword = configMap.get('backup_password') || '';
+    if (currentPassword && !this.isZipPasswordCompatible(currentPassword)) {
+      const message =
+        'La contraseña actual del backup contiene caracteres no compatibles con ZIP AES. Cambia la contraseña por una con caracteres ASCII imprimibles.';
+      await this.upsertSettings({
+        backup_last_attempt_at: this.utcSqlNow(),
+        backup_last_status: 'failed',
+        backup_last_error: message,
+      });
+      throw new BadRequestException(message);
     }
 
     const scriptPath = path.resolve(process.cwd(), 'infra/backup/run-backup.sh');
@@ -385,6 +405,15 @@ export class SystemConfigService {
     } catch {
       return false;
     }
+  }
+
+  private isZipPasswordCompatible(password: string): boolean {
+    if (!password) return true;
+    for (const char of password) {
+      const code = char.codePointAt(0) ?? 0;
+      if (code < 0x20 || code > 0x7e) return false;
+    }
+    return true;
   }
 
   private isBackupRunning(configMap: Map<string, string>): boolean {
