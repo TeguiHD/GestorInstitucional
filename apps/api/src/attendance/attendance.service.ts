@@ -13,7 +13,8 @@ import { WhatsAppService } from '../mail/whatsapp.service.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { AuditService } from '../audit/audit.service.js';
 import {
-  dateOnlyCandidateKeys,
+  chileTodayEndUtc,
+  chileTodayKey,
   expandDateOnlyRange,
   parseDateOnlyUtc,
 } from '../common/date-only.js';
@@ -167,7 +168,7 @@ export class AttendanceService {
 
     const byStudent = new Map<string, ExistingAttendanceRecord>();
     for (const record of candidates) {
-      if (!dateOnlyCandidateKeys(record.date).includes(dateKey)) continue;
+      if (this.schoolConfig.formatDate(record.date) !== dateKey) continue;
       if (!byStudent.has(record.studentId)) byStudent.set(record.studentId, record);
     }
     return Array.from(byStudent.values());
@@ -334,8 +335,8 @@ export class AttendanceService {
         },
       },
     });
-    const recordsForDate = records.filter((record) =>
-      dateOnlyCandidateKeys(record.date).includes(dateKey),
+    const recordsForDate = records.filter(
+      (record) => this.schoolConfig.formatDate(record.date) === dateKey,
     );
 
     const now = new Date();
@@ -408,7 +409,7 @@ export class AttendanceService {
       },
       orderBy: { student: { enrollmentNumber: 'asc' } },
     });
-    return records.filter((record) => dateOnlyCandidateKeys(record.date).includes(date));
+    return records.filter((record) => this.schoolConfig.formatDate(record.date) === date);
   }
 
   async getByStudent(studentId: string, from?: string, to?: string) {
@@ -478,8 +479,7 @@ export class AttendanceService {
   async getSchoolStats(schoolId: string, from: string, to: string) {
     const fromDate = parseDateOnlyUtc(from);
     const toDate = this.endOfDateOnly(to);
-    const today = new Date();
-    today.setHours(23, 59, 59, 999);
+    const today = chileTodayEndUtc();
     const cappedToDate = toDate < today ? toDate : today;
 
     const [courses, nonSchool] = await Promise.all([
@@ -598,8 +598,7 @@ export class AttendanceService {
     const from = new Date(Date.UTC(year, month - 1, 1));
     const to = new Date(Date.UTC(year, month, 0, 23, 59, 59, 999));
     const queryRange = expandDateOnlyRange(from, to);
-    const today = new Date();
-    today.setHours(23, 59, 59, 999);
+    const today = chileTodayEndUtc();
     const cappedTo = to < today ? to : today;
 
     const [course, records] = await Promise.all([
@@ -713,8 +712,7 @@ export class AttendanceService {
   async getCourseSummary(courseId: string, from: string, to: string) {
     const fromDate = new Date(from + 'T00:00:00.000Z');
     const toDate = new Date(to + 'T23:59:59.999Z');
-    const today = new Date();
-    today.setHours(23, 59, 59, 999);
+    const today = chileTodayEndUtc();
     const cappedToDate = toDate < today ? toDate : today;
 
     const [course, records] = await Promise.all([
@@ -854,8 +852,7 @@ export class AttendanceService {
       statsByStudent.set(student.id, emptyAttendanceCounts());
     }
 
-    const today = new Date();
-    today.setHours(23, 59, 59, 999);
+    const today = chileTodayEndUtc();
     for (const record of records) {
       const stats = statsByStudent.get(record.studentId);
       if (!stats || record.status === 'WITHDRAWN') continue;
@@ -973,8 +970,7 @@ export class AttendanceService {
       recordsByStudentAndDate.get(r.studentId)!.set(dateKey, r.status);
     }
 
-    const today = new Date();
-    today.setHours(23, 59, 59, 999);
+    const today = chileTodayEndUtc();
 
     const months = monthRanges.map((mr) => {
       const cappedTo = mr.to < today ? mr.to : today;
@@ -1111,9 +1107,7 @@ export class AttendanceService {
       current.setUTCDate(current.getUTCDate() + 1);
     }
 
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    const todayKey = this.schoolConfig.formatDate(today);
+    const todayKey = chileTodayKey();
     const pastSchoolDays = schoolDays.filter((d) => d < todayKey);
 
     if (pastSchoolDays.length === 0) return [];

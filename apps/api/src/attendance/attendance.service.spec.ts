@@ -2,6 +2,7 @@ import { BadRequestException } from '@nestjs/common';
 import { AttendanceStatus } from '@prisma/client';
 import { describe, expect, it, vi } from 'vitest';
 
+import { formatDateOnlyKey } from '../common/date-only.js';
 import { AttendanceService } from './attendance.service.js';
 import type { RecordAttendanceDto } from './dto/record-attendance.dto.js';
 
@@ -13,12 +14,29 @@ function dto(entries: RecordAttendanceDto['entries']): RecordAttendanceDto {
   };
 }
 
-function makeService(params: { activeStudentIds: string[]; existingStudentIds?: string[] }) {
-  const existingRecords = (params.existingStudentIds ?? []).map((studentId) => ({
-    id: `record-${studentId}`,
-    studentId,
-    date: new Date('2026-05-12T00:00:00.000Z'),
-    status: AttendanceStatus.PRESENT,
+type RawExisting = {
+  studentId: string;
+  date: Date;
+  status?: AttendanceStatus;
+};
+
+function makeService(params: {
+  activeStudentIds: string[];
+  existingStudentIds?: string[];
+  /** Registros existentes con fecha arbitraria (para probar contaminación entre días). */
+  existingRecords?: RawExisting[];
+}) {
+  const rawExisting: RawExisting[] =
+    params.existingRecords ??
+    (params.existingStudentIds ?? []).map((studentId) => ({
+      studentId,
+      date: new Date('2026-05-12T00:00:00.000Z'),
+    }));
+  const existingRecords = rawExisting.map((r) => ({
+    id: `record-${r.studentId}-${r.date.toISOString().slice(0, 10)}`,
+    studentId: r.studentId,
+    date: r.date,
+    status: r.status ?? AttendanceStatus.PRESENT,
     lateMinutes: null,
     note: null,
   }));
@@ -53,7 +71,8 @@ function makeService(params: { activeStudentIds: string[]; existingStudentIds?: 
   const mail = { sendAbsenceDaily: vi.fn() };
   const whatsapp = { sendAbsenceAlert: vi.fn() };
   const schoolConfig = {
-    formatDate: vi.fn((date: Date) => date.toISOString().split('T')[0]!),
+    // Usa la clave canónica real (UTC), no un atajo, para ejercer el contrato real.
+    formatDate: vi.fn((date: Date) => formatDateOnlyKey(date)),
   };
 
   return {
@@ -111,5 +130,68 @@ describe('AttendanceService.recordBulk', () => {
     ).rejects.toBeInstanceOf(BadRequestException);
     expect(prisma.attendanceRecord.findMany).not.toHaveBeenCalled();
     expect(prisma.$transaction).not.toHaveBeenCalled();
+  });
+
+  it('NO cuenta registros del día siguiente como cobertura del día objetivo', async () => {
+    // Regresión: bajo TZ Chile, keyFromLocal de un @db.Date medianoche-UTC del 13
+    // devolvía "2026-05-12" y contaminaba la cobertura del día 12.
+    const { service, prisma } = makeService({
+      activeStudentIds: ['s1', 's2'],
+      existingRecords: [
+        { studentId: 's1', date: new Date('2026-05-12T00:00:00.000Z') },
+        { studentId: 's2', date: new Date('2026-05-13T00:00:00.000Z') },
+      ],
+    });
+
+    await expect(
+      service.recordBulk(dto([{ studentId: 's1', status: AttendanceStatus.PRESENT }]), 'user-1'),
+    ).rejects.toBeInstanceOf(BadRequestException);
+    expect(prisma.$transaction).not.toHaveBeenCalled();
+  });
+
+  it('permite justificar a un alumno en un día completo y actualiza SU registro', async () => {
+    // Síntoma reportado: 'A' (ABSENT) que no se deja pasar a JUSTIFIED.
+    const { service, prisma } = makeService({
+      activeStudentIds: ['s1', 's2'],
+      existingRecords: [
+        {
+          studentId: 's1',
+          date: new Date('2026-05-12T00:00:00.000Z'),
+          status: AttendanceStatus.ABSENT,
+        },
+        {
+          studentId: 's2',
+          date: new Date('2026-05-12T00:00:00.000Z'),
+          status: AttendanceStatus.PRESENT,
+        },
+      ],
+    });
+
+    await expect(
+      service.recordBulk(dto([{ studentId: 's1', status: AttendanceStatus.JUSTIFIED }]), 'user-1'),
+    ).resolves.toEqual({ upserted: 1 });
+    expect(prisma.attendanceRecord.update).toHaveBeenCalledTimes(1);
+    const arg = prisma.attendanceRecord.update.mock.calls[0]![0] as {
+      where: { id: string };
+      data: { status: AttendanceStatus };
+    };
+    expect(arg.where.id).toBe('record-s1-2026-05-12');
+    expect(arg.data.status).toBe(AttendanceStatus.JUSTIFIED);
+  });
+
+  it('escribe la fecha como medianoche UTC del día, sin corrimiento por TZ', async () => {
+    const { service, prisma } = makeService({ activeStudentIds: ['s1', 's2'] });
+
+    await service.recordBulk(
+      dto([
+        { studentId: 's1', status: AttendanceStatus.PRESENT },
+        { studentId: 's2', status: AttendanceStatus.PRESENT },
+      ]),
+      'user-1',
+    );
+
+    expect(prisma.attendanceRecord.create).toHaveBeenCalledTimes(2);
+    const created = prisma.attendanceRecord.create.mock.calls[0]![0] as { data: { date: Date } };
+    expect(created.data.date.toISOString()).toBe('2026-05-12T00:00:00.000Z');
   });
 });

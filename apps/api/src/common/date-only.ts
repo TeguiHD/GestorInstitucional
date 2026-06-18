@@ -1,5 +1,24 @@
 import { BadRequestException } from '@nestjs/common';
 
+/**
+ * Capa date-only canonica.
+ *
+ * Las fechas de asistencia/calendario viven en columnas MariaDB `@db.Date`
+ * (sin hora, sin zona). El ancla canonica es **medianoche UTC** del dia
+ * calendario: `parseDateOnlyUtc('2026-06-16')` -> `2026-06-16T00:00:00.000Z`.
+ *
+ * Reglas:
+ *  - Para LEER la clave de un valor almacenado usar `formatDateOnlyKey`
+ *    (siempre UTC, deterministica, independiente de la TZ del proceso).
+ *  - Para saber "que dia es hoy en Chile" usar `chileTodayKey` / `dateKeyInTz`,
+ *    que NO dependen de `process.env.TZ`.
+ *
+ * No se usan heuristicas de "recuperacion" (+1/-1) en runtime: los valores
+ * historicos corridos se corrigen una sola vez por migracion de datos.
+ */
+
+export const CHILE_TZ = 'America/Santiago';
+
 function assertCalendarDate(year: number, month: number, day: number): Date {
   const date = new Date(Date.UTC(year, month - 1, day));
   if (
@@ -38,47 +57,54 @@ function keyFromUtc(date: Date): string {
   ).padStart(2, '0')}`;
 }
 
-function keyFromLocal(date: Date): string {
-  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(
-    date.getDate(),
-  ).padStart(2, '0')}`;
-}
-
-function addUtcDays(date: Date, days: number): Date {
-  const next = new Date(date);
-  next.setUTCDate(next.getUTCDate() + days);
-  return next;
-}
-
+/**
+ * Clave `YYYY-MM-DD` de un valor date-only almacenado.
+ *
+ * Un `@db.Date` se materializa anclado a medianoche (UTC o local segun el
+ * motor), nunca a una hora de tarde, por lo que tomar la fecha en UTC siempre
+ * devuelve el dia calendario correcto sin importar la TZ del proceso.
+ */
 export function formatDateOnlyKey(date: Date): string {
-  const isUtcMidnight =
-    date.getUTCHours() === 0 &&
-    date.getUTCMinutes() === 0 &&
-    date.getUTCSeconds() === 0 &&
-    date.getUTCMilliseconds() === 0;
-  if (isUtcMidnight) return keyFromUtc(date);
-
-  // Compatibility guard for date-only values accidentally persisted as the
-  // previous UTC evening after Chile timezone conversion.
-  if (
-    date.getUTCHours() >= 18 &&
-    date.getUTCMinutes() === 0 &&
-    date.getUTCSeconds() === 0 &&
-    date.getUTCMilliseconds() === 0
-  ) {
-    return keyFromUtc(addUtcDays(date, 1));
-  }
-
-  return keyFromLocal(date);
+  return keyFromUtc(date);
 }
 
-export function dateOnlyCandidateKeys(date: Date): string[] {
-  const keys = new Set<string>([formatDateOnlyKey(date), keyFromUtc(date), keyFromLocal(date)]);
-  if (date.getUTCHours() >= 18) keys.add(keyFromUtc(addUtcDays(date, 1)));
-  if (date.getUTCHours() <= 5) keys.add(keyFromUtc(addUtcDays(date, -1)));
-  return Array.from(keys);
+/** Dia calendario `YYYY-MM-DD` de un instante en una zona horaria dada. */
+export function dateKeyInTz(instant: Date, timeZone: string): string {
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).formatToParts(instant);
+  const get = (type: string) => parts.find((p) => p.type === type)?.value ?? '';
+  return `${get('year')}-${get('month')}-${get('day')}`;
 }
 
+/** Hoy en hora de Chile, independiente de `process.env.TZ`. */
+export function chileTodayKey(now: Date = new Date()): string {
+  return dateKeyInTz(now, CHILE_TZ);
+}
+
+/** Medianoche UTC del dia de hoy en Chile (para comparaciones contra @db.Date). */
+export function chileTodayUtc(now: Date = new Date()): Date {
+  return parseDateOnlyUtc(chileTodayKey(now));
+}
+
+/**
+ * Fin del dia de hoy en Chile, anclado en terminos UTC (`23:59:59.999Z` del
+ * dia chileno). Sirve como cota superior inclusiva al comparar contra valores
+ * `@db.Date` (que vienen a medianoche UTC), separando hoy de mañana sin
+ * depender de `process.env.TZ`.
+ */
+export function chileTodayEndUtc(now: Date = new Date()): Date {
+  return new Date(chileTodayUtc(now).getTime() + 86_400_000 - 1);
+}
+
+/**
+ * Ventana UTC inclusiva que cubre con holgura un rango de dias date-only,
+ * para acotar consultas Prisma. El filtrado exacto se hace luego comparando
+ * `formatDateOnlyKey(record.date)`.
+ */
 export function expandDateOnlyRange(from: Date, to: Date): { from: Date; to: Date } {
   const expandedFrom = new Date(from);
   expandedFrom.setUTCDate(expandedFrom.getUTCDate() - 1);
