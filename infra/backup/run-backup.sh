@@ -294,7 +294,15 @@ UPLOADS_DIR="${BACKUP_UPLOADS_DIR:-$PROJECT_DIR/uploads}"
 DATE="$(date +%Y-%m-%d_%H%M%S)"
 FILE_NAME="backup_asistencia_${DATE}.sql"
 SQL_PATH="${BACKUP_DIR}/${FILE_NAME}"
-ZIP_PATH="${BACKUP_DIR}/backup_asistencia_${DATE}.zip"
+# Con contraseña usamos .7z (AES-256 + cabecera cifrada; acepta CUALQUIER
+# carácter, incluidos acentos/ñ — el ZIP-AES de 7-Zip falla con no-ASCII).
+# Sin contraseña, .zip plano que abre Windows directo.
+if [ -n "$BACKUP_PASS_ZIP" ]; then
+  ARCHIVE_EXT="7z"
+else
+  ARCHIVE_EXT="zip"
+fi
+ZIP_PATH="${BACKUP_DIR}/backup_asistencia_${DATE}.${ARCHIVE_EXT}"
 
 RUN_STARTED=true
 ATTEMPT_AT="$(date -u '+%Y-%m-%d %H:%M:%S')"
@@ -331,14 +339,14 @@ fi
 if [ -n "$BACKUP_PASS_ZIP" ]; then
   SEVENZIP_BIN="$(command -v 7zz || command -v 7z || true)"
   if [ -z "$SEVENZIP_BIN" ]; then
-    fail "se requiere 7z/7zz para cifrado ZIP AES-256."
+    fail "se requiere 7z/7zz para el respaldo cifrado AES-256."
   fi
-  echo "[$(date)] Cifrando ZIP (BD + archivos) con AES-256..."
-  if ! ( cd "$PROJECT_DIR" && "$SEVENZIP_BIN" a -tzip -mem=AES256 -p"$BACKUP_PASS_ZIP" "$ZIP_PATH" "${ARCHIVE_ITEMS[@]}" ) >/dev/null 2>"$LAST_ERROR_FILE"; then
-    fail "7z fallo al crear el ZIP cifrado AES-256; no se enviara respaldo en formato alternativo."
+  echo "[$(date)] Cifrando .7z (BD + archivos) con AES-256 + cabecera..."
+  if ! ( cd "$PROJECT_DIR" && "$SEVENZIP_BIN" a -t7z -m0=lzma2 -mhe=on -p"$BACKUP_PASS_ZIP" "$ZIP_PATH" "${ARCHIVE_ITEMS[@]}" ) >/dev/null 2>"$LAST_ERROR_FILE"; then
+    fail "7z fallo al crear el archivo cifrado AES-256."
   fi
-  if ! assert_zip_archive "$ZIP_PATH" "$BACKUP_PASS_ZIP"; then
-    fail "el ZIP cifrado generado no pudo validarse con la contrasena configurada."
+  if ! "$SEVENZIP_BIN" t -p"$BACKUP_PASS_ZIP" "$ZIP_PATH" >/dev/null 2>"$LAST_ERROR_FILE"; then
+    fail "el archivo cifrado generado no pudo validarse con la contrasena configurada."
   fi
   rm -f "$SQL_PATH"
 else
@@ -370,7 +378,9 @@ DOWNLOAD_EXPIRES_AT="$(
   node -e "console.log(new Date(Date.now()+7*24*60*60*1000).toISOString().slice(0,19).replace('T',' '));"
 )"
 
-if [ "$ZIP_SIZE_BYTES" -gt "$ATTACHMENT_LIMIT_BYTES" ]; then
+# Se entrega por enlace seguro cuando: (a) supera el límite de adjunto, o
+# (b) es .7z — Brevo rechaza adjuntar .7z ("Unsupported file format: 7z").
+if [ "$ZIP_SIZE_BYTES" -gt "$ATTACHMENT_LIMIT_BYTES" ] || [ "$ARCHIVE_EXT" = "7z" ]; then
   if [ -z "$BACKUP_PASS_ZIP" ]; then
     fail "el ZIP pesa ${ZIP_SIZE_BYTES} bytes y supera el limite de adjunto; configura una contrasena para habilitar descarga segura."
   fi
@@ -404,7 +414,11 @@ if [ "$ZIP_SIZE_BYTES" -gt "$ATTACHMENT_LIMIT_BYTES" ]; then
     "$DOWNLOAD_EXPIRES_AT"
 
   DELIVERY_MODE="download_link"
-  echo "[$(date)] ZIP supera limite de adjunto (${ZIP_SIZE_BYTES} > ${ATTACHMENT_LIMIT_BYTES}); se enviara link temporal."
+  if [ "$ARCHIVE_EXT" = "7z" ]; then
+    echo "[$(date)] Respaldo .7z (${ZIP_SIZE_BYTES} bytes): Brevo no adjunta .7z, se enviara por link temporal."
+  else
+    echo "[$(date)] ZIP supera limite de adjunto (${ZIP_SIZE_BYTES} > ${ATTACHMENT_LIMIT_BYTES}); se enviara link temporal."
+  fi
   echo "[$(date)] Verificando link temporal antes del envio..."
   if ! DOWNLOAD_VERIFIED_STATUS="$(verify_download_link "$DOWNLOAD_URL" 2>"$LAST_ERROR_FILE")"; then
     DOWNLOAD_VERIFIED_AT="$(date -u '+%Y-%m-%d %H:%M:%S')"

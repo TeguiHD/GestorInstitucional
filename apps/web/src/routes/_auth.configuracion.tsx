@@ -645,9 +645,10 @@ function BackupConfigPanel() {
                 </div>
               </div>
               <p className="text-[10px] text-muted-foreground">
-                Es la clave para abrir el ZIP con <strong>7-Zip o WinRAR</strong> (un ZIP cifrado
-                AES-256 no se abre con el Explorador de Windows). Acepta cualquier carácter. No se
-                envía por correo: guárdala en un lugar seguro.
+                Con contraseña, el respaldo se genera como <strong>.7z cifrado (AES-256)</strong> y
+                se abre con <strong>7-Zip o WinRAR</strong>; acepta cualquier carácter (acentos, ñ).
+                Sin contraseña, queda en .zip normal. No se envía por correo: guárdala en un lugar
+                seguro.
               </p>
             </div>
 
@@ -664,9 +665,9 @@ function BackupConfigPanel() {
                   </p>
                 )}
                 {passwordIncompatible && (
-                  <p className="mt-2 rounded-md border border-amber-300 bg-amber-50 px-2 py-1 text-amber-800 dark:border-amber-500/40 dark:bg-amber-500/10 dark:text-amber-200">
-                    Tu contraseña tiene caracteres especiales (acentos/ñ). Funciona, pero ábrela con
-                    7-Zip o WinRAR. Si prefieres máxima compatibilidad, usa solo letras y números.
+                  <p className="mt-2 rounded-md border border-sky-300 bg-sky-50 px-2 py-1 text-sky-800 dark:border-sky-500/40 dark:bg-sky-500/10 dark:text-sky-200">
+                    Tu contraseña tiene acentos/ñ: el respaldo se genera como .7z cifrado (ábrelo
+                    con 7-Zip o WinRAR). Funciona sin problemas.
                   </p>
                 )}
                 {config && (
