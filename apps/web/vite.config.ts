@@ -24,7 +24,16 @@ export default defineConfig(({ mode }) => {
           cleanupOutdatedCaches: true,
           skipWaiting: false,
           globPatterns: ['**/*.{js,css,html,svg,png,ico,woff2}'],
+          // No servir el app-shell para navegaciones a la API: abrir un enlace
+          // /api/... (p.ej. descarga de respaldo) debe ir a la red, no al SPA
+          // (de lo contrario el router muestra "Not Found").
+          navigateFallbackDenylist: [/^\/api\//],
           runtimeCaching: [
+            {
+              // Descargas/admin: siempre a la red, sin cache ni intercepción.
+              urlPattern: /^https:\/\/asistencia\.nicoholas\.dev\/api\/v1\/system-config\//,
+              handler: 'NetworkOnly',
+            },
             {
               urlPattern: /^https:\/\/asistencia\.nicoholas\.dev\/api\/v1\/attendance/,
               handler: 'NetworkFirst',
