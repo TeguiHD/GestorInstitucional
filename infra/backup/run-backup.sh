@@ -391,8 +391,10 @@ if [ "$ZIP_SIZE_BYTES" -gt "$ATTACHMENT_LIMIT_BYTES" ] || [ "$ARCHIVE_EXT" = "7z
   fi
   PUBLIC_BASE_URL="${PUBLIC_BASE_URL%/}"
 
+  # Token de 16 bytes (128-bit, hex=32 chars): URL mas corta para que los
+  # clientes de correo no la partan en dos lineas (un token cortado da 404).
   IFS=$'\t' read -r DOWNLOAD_TOKEN DOWNLOAD_TOKEN_HASH DOWNLOAD_EXPIRES_AT < <(
-    node -e "const crypto=require('crypto'); const token=crypto.randomBytes(32).toString('hex'); const hash=crypto.createHash('sha256').update(token).digest('hex'); const expires=new Date(Date.now()+7*24*60*60*1000).toISOString().slice(0,19).replace('T',' '); console.log([token,hash,expires].join('\t'));"
+    node -e "const crypto=require('crypto'); const token=crypto.randomBytes(16).toString('hex'); const hash=crypto.createHash('sha256').update(token).digest('hex'); const expires=new Date(Date.now()+7*24*60*60*1000).toISOString().slice(0,19).replace('T',' '); console.log([token,hash,expires].join('\t'));"
   )
 
   if [[ "$PUBLIC_BASE_URL" == */api/v1 ]]; then

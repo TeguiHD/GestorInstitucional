@@ -300,11 +300,18 @@ async function main() {
           </a>
         </td></tr>
       </table>
-      <p style="margin:0 0 6px;font-size:12px;color:#6b7280;">Si el botón no funciona, copia este enlace:</p>
+      <p style="margin:0 0 6px;font-size:12px;color:#6b7280;">
+        Usa el botón de arriba (haz clic, no copies el texto: algunos correos parten el enlace).
+        Enlace directo:
+      </p>
       <p style="margin:0 0 16px;padding:10px 12px;background:#f3f4f6;border:1px solid #e5e7eb;border-radius:8px;font-size:12px;color:#111827;word-break:break-all;">
         <a href="${escapeHtml(downloadUrl)}" style="color:#0f766e;text-decoration:none;">${escapeHtml(downloadUrl)}</a>
       </p>
-      <p style="margin:0;font-size:13px;color:#b45309;"><strong>El enlace expira:</strong> ${escapeHtml(downloadExpiresAt || '7 días')}</p>
+      <p style="margin:0 0 10px;font-size:13px;color:#b45309;"><strong>El enlace expira:</strong> ${escapeHtml(downloadExpiresAt || '7 días')}</p>
+      <p style="margin:0;font-size:12px;color:#6b7280;">
+        ¿Problemas con el enlace? Descárgalo siempre desde el sistema:
+        <strong>Configuración → Copias de Seguridad → "Descargar último" / Historial</strong>.
+      </p>
     `
     : `
       <p style="margin:0;font-size:14px;line-height:1.6;color:#374151;">
