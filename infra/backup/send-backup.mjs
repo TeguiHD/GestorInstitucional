@@ -60,6 +60,19 @@ function statusLabel(status) {
   return STATUS_LABELS[status] ?? String(status);
 }
 
+function formatSize(bytes) {
+  const n = Number(bytes) || 0;
+  if (n < 1024) return `${n} B`;
+  const units = ['KB', 'MB', 'GB'];
+  let size = n / 1024;
+  let unit = 0;
+  while (size >= 1024 && unit < units.length - 1) {
+    size /= 1024;
+    unit++;
+  }
+  return `${size.toFixed(1)} ${units[unit]}`;
+}
+
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -269,46 +282,86 @@ async function main() {
 
   const fileName = path.basename(filePath);
   const fileSizeBytes = fs.statSync(filePath).size;
+  const fileSizeLabel = formatSize(fileSizeBytes);
   const today = new Date().toISOString().split('T')[0];
   const changeCount = process.env.BACKUP_CHANGE_COUNT || String(changes.length);
-  const deliveryBlock =
-    deliveryMode === 'download_link'
-      ? `
-      <p>El respaldo se entrega por enlace temporal seguro por tamano o compatibilidad del proveedor de correo. Por seguridad queda cifrado y disponible temporalmente en el servidor.</p>
-      <p>
-        <a href="${escapeHtml(downloadUrl)}" style="display:inline-block;padding:10px 14px;background:#0f766e;color:#fff;text-decoration:none;border-radius:6px;">
-          Descargar respaldo cifrado
-        </a>
+  const isLink = deliveryMode === 'download_link';
+
+  const deliveryBlock = isLink
+    ? `
+      <p style="margin:0 0 16px;font-size:14px;line-height:1.6;color:#374151;">
+        Por su tamaño, el respaldo se entrega mediante un <strong>enlace temporal seguro</strong>.
+        El archivo está cifrado y disponible en el servidor por tiempo limitado.
       </p>
-      <p style="font-size:12px;color:#555;word-break:break-all;">
-        Si el boton no abre, copia este enlace completo sin modificarlo:<br>
-        <a href="${escapeHtml(downloadUrl)}">${escapeHtml(downloadUrl)}</a>
+      <table role="presentation" cellpadding="0" cellspacing="0" style="margin:0 0 16px;">
+        <tr><td style="border-radius:8px;background:#0f766e;">
+          <a href="${escapeHtml(downloadUrl)}" style="display:inline-block;padding:12px 22px;font-size:14px;font-weight:600;color:#ffffff;text-decoration:none;">
+            ⬇ Descargar respaldo cifrado
+          </a>
+        </td></tr>
+      </table>
+      <p style="margin:0 0 6px;font-size:12px;color:#6b7280;">Si el botón no funciona, copia este enlace:</p>
+      <p style="margin:0 0 16px;padding:10px 12px;background:#f3f4f6;border:1px solid #e5e7eb;border-radius:8px;font-size:12px;color:#111827;word-break:break-all;">
+        <a href="${escapeHtml(downloadUrl)}" style="color:#0f766e;text-decoration:none;">${escapeHtml(downloadUrl)}</a>
       </p>
-      <pre style="white-space:pre-wrap;word-break:break-all;background:#f3f4f6;border:1px solid #d1d5db;border-radius:6px;padding:10px;font-size:12px;color:#111827;">${escapeHtml(downloadUrl)}</pre>
-      <p style="font-size:12px;color:#555;">
-        Tambien puedes descargar el ultimo backup completo desde Configuracion del sistema.
+      <p style="margin:0;font-size:13px;color:#b45309;"><strong>El enlace expira:</strong> ${escapeHtml(downloadExpiresAt || '7 días')}</p>
+    `
+    : `
+      <p style="margin:0;font-size:14px;line-height:1.6;color:#374151;">
+        El respaldo completo (base de datos + archivos) viaja <strong>adjunto</strong> a este correo,
+        comprimido y cifrado con AES-256.
       </p>
-      <p><strong>Expira:</strong> ${escapeHtml(downloadExpiresAt || '7 dias')}</p>
-      `
-      : '<p>Se adjunta el respaldo SQL completo de la base de datos del sistema de asistencia.</p>';
+    `;
+
+  const infoRow = (label, value) => `
+    <tr>
+      <td style="padding:8px 0;font-size:13px;color:#6b7280;border-bottom:1px solid #f1f5f9;width:40%;">${escapeHtml(label)}</td>
+      <td style="padding:8px 0;font-size:13px;color:#111827;font-weight:600;border-bottom:1px solid #f1f5f9;">${value}</td>
+    </tr>`;
 
   const payload = {
     sender: { name: fromName, email: fromEmail },
     to: recipients.map((email) => ({ email })),
-    subject: `Respaldo Completo de Asistencia - CSSP [${today}]`,
+    subject: `Respaldo de Asistencia · CSSP — ${today}`,
     htmlContent: `
-      <h2>Respaldo Completo de Asistencia</h2>
-      ${deliveryBlock}
-      <ul>
-        <li><strong>Fecha:</strong> ${escapeHtml(today)}</li>
-        <li><strong>Archivo:</strong> ${escapeHtml(fileName)}</li>
-        <li><strong>Tamano:</strong> ${escapeHtml(fileSizeBytes)} bytes</li>
-        <li><strong>Modo de entrega:</strong> ${deliveryMode === 'download_link' ? 'link temporal seguro' : 'adjunto'}</li>
-        <li><strong>Cambios detectados:</strong> ${escapeHtml(changeCount)}</li>
-      </ul>
-      ${renderChangesSummary(changes, summaryError, deliveryMode)}
-      <p>Si el archivo esta cifrado, la clave debe mantenerse fuera del correo.</p>
-      <p>Este es un correo automatico de seguridad.</p>
+<!doctype html>
+<html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
+<body style="margin:0;padding:0;background:#f1f5f9;">
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#f1f5f9;padding:24px 0;">
+    <tr><td align="center">
+      <table role="presentation" width="600" cellpadding="0" cellspacing="0" style="width:600px;max-width:92%;background:#ffffff;border-radius:14px;overflow:hidden;box-shadow:0 1px 3px rgba(0,0,0,0.08);font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">
+        <tr><td style="background:#0f766e;padding:22px 28px;">
+          <h1 style="margin:0;font-size:18px;font-weight:700;color:#ffffff;">Respaldo de Asistencia</h1>
+          <p style="margin:4px 0 0;font-size:13px;color:#bae6e0;">Colegio San Sebastián · respaldo automático</p>
+        </td></tr>
+        <tr><td style="padding:24px 28px;">
+          <span style="display:inline-block;padding:4px 10px;border-radius:999px;background:#ecfdf5;color:#047857;font-size:12px;font-weight:600;">✓ Respaldo generado correctamente</span>
+          <h2 style="margin:16px 0 12px;font-size:16px;color:#111827;">Detalles del respaldo</h2>
+          <table role="presentation" width="100%" cellpadding="0" cellspacing="0">
+            ${infoRow('Fecha', escapeHtml(today))}
+            ${infoRow('Archivo', escapeHtml(fileName))}
+            ${infoRow('Tamaño', escapeHtml(fileSizeLabel))}
+            ${infoRow('Contenido', 'Base de datos + archivos subidos')}
+            ${infoRow('Entrega', isLink ? 'Enlace temporal seguro' : 'Adjunto cifrado (AES-256)')}
+            ${infoRow('Cambios de asistencia', escapeHtml(changeCount))}
+          </table>
+          <div style="margin:22px 0 4px;padding:18px;background:#f8fafc;border:1px solid #e5e7eb;border-radius:10px;">
+            ${deliveryBlock}
+          </div>
+          <div style="margin:22px 0 0;font-size:14px;color:#374151;line-height:1.6;">
+            ${renderChangesSummary(changes, summaryError, deliveryMode)}
+          </div>
+        </td></tr>
+        <tr><td style="padding:18px 28px;background:#f8fafc;border-top:1px solid #e5e7eb;">
+          <p style="margin:0;font-size:12px;color:#6b7280;line-height:1.6;">
+            El archivo está cifrado: la contraseña se administra en el panel del sistema y nunca se envía por correo.
+            Ábrelo con 7-Zip o WinRAR. Este es un correo automático de seguridad; no es necesario responder.
+          </p>
+        </td></tr>
+      </table>
+    </td></tr>
+  </table>
+</body></html>
     `,
   };
 

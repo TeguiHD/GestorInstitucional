@@ -1,5 +1,4 @@
 import {
-  BadRequestException,
   ConflictException,
   ForbiddenException,
   Injectable,
@@ -170,11 +169,9 @@ export class SystemConfigService {
     ];
 
     if (data.encryptPassword && data.encryptPassword.trim() !== '') {
-      if (!this.isZipPasswordCompatible(data.encryptPassword)) {
-        throw new BadRequestException(
-          'La contraseña del backup debe usar solo caracteres ASCII imprimibles para generar ZIP cifrado.',
-        );
-      }
+      // Se acepta cualquier contraseña: 7-Zip/WinRAR (necesarios para abrir un
+      // ZIP AES) manejan UTF-8. El campo `passwordCompatible` queda como aviso
+      // suave de compatibilidad, no como bloqueo.
       updates.push({ key: 'backup_password', value: data.encryptPassword });
     }
 
@@ -382,20 +379,19 @@ export class SystemConfigService {
   }
 
   /**
-   * Garantiza que exista una contraseña de backup compatible con ZIP AES.
-   * Si falta o tiene caracteres no-ASCII, genera una nueva y la persiste.
-   * Devuelve la contraseña vigente.
+   * Garantiza que exista una contraseña de backup. Respeta cualquier
+   * contraseña ya configurada por el usuario (incluida no-ASCII); sólo genera
+   * una cuando no hay ninguna, para que el ZIP siempre quede cifrado por
+   * defecto. Devuelve la contraseña vigente.
    */
   private async ensureUsableBackupPassword(): Promise<string> {
     const configMap = await this.getBackupSettings();
     const current = configMap.get('backup_password') || '';
-    if (current && this.isZipPasswordCompatible(current)) return current;
+    if (current) return current;
 
     const generated = this.generateAsciiBackupPassword(24);
     await this.upsertSettings({ backup_password: generated });
-    this.log.warn(
-      'Contraseña de backup ausente o incompatible con ZIP AES; se generó una nueva (visible en el panel).',
-    );
+    this.log.warn('No había contraseña de backup; se generó una (visible en el panel).');
     return generated;
   }
 

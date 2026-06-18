@@ -424,6 +424,7 @@ function BackupConfigPanel() {
     setEmails(config.emails);
     setTime(config.time);
     setActive(config.active);
+    setPassword(config.passwordPlain ?? '');
   }, [config]);
 
   const save = useMutation({
@@ -436,7 +437,6 @@ function BackupConfigPanel() {
     onSuccess: (saved) => {
       toast.success('Configuración de backup guardada');
       void qc.setQueryData(['system-backup-config'], saved);
-      setPassword('');
     },
     onError: (error: Error) => toast.error(error.message),
   });
@@ -478,11 +478,10 @@ function BackupConfigPanel() {
     onError: (error: Error) => toast.error(error.message),
   });
 
-  const [showCurrentKey, setShowCurrentKey] = useState(false);
   const copyKey = () => {
-    if (!config?.passwordPlain) return;
+    if (!password) return;
     void navigator.clipboard
-      .writeText(config.passwordPlain)
+      .writeText(password)
       .then(() => toast.success('Contraseña copiada'))
       .catch(() => toast.error('No se pudo copiar'));
   };
@@ -501,7 +500,7 @@ function BackupConfigPanel() {
     !!config &&
     (emails !== config.emails ||
       time !== config.time ||
-      password !== '' ||
+      password !== (config.passwordPlain ?? '') ||
       active !== config.active);
   const lastConfirmed = !!config?.lastMessageId && config.lastStatus === 'success';
   const lastFileName = config?.lastFileName?.toLowerCase() ?? '';
@@ -513,8 +512,10 @@ function BackupConfigPanel() {
     (config?.lastDeliveryMode === 'attachment' || config?.lastDownloadVerifiedStatus === '200');
   const passwordIncompatible = !!config?.hasPassword && !config.passwordCompatible;
 
+  const passwordChanged = password !== (config?.passwordPlain ?? '');
+
   return (
-    <div className="space-y-4">
+    <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_380px] xl:items-start">
       <form
         onSubmit={(e) => {
           e.preventDefault();
@@ -522,7 +523,7 @@ function BackupConfigPanel() {
             emails,
             time,
             active,
-            ...(password.trim() !== '' ? { encryptPassword: password } : {}),
+            ...(passwordChanged && password.trim() !== '' ? { encryptPassword: password } : {}),
           });
         }}
         className="rounded-xl border border-border bg-background overflow-hidden"
@@ -601,74 +602,53 @@ function BackupConfigPanel() {
           </div>
 
           <div className="grid gap-4 md:grid-cols-2">
-            {/* Contraseña ZIP */}
+            {/* Contraseña de cifrado (único campo: ver / editar / copiar) */}
             <div className="space-y-1">
               <label
                 className="text-xs font-medium text-muted-foreground"
                 htmlFor="backup-password"
               >
-                Contraseña de Cifrado del archivo de respaldo (Recomendado)
+                Contraseña de cifrado del respaldo
               </label>
               <div className="relative">
                 <input
                   id="backup-password"
                   type={showPassword ? 'text' : 'password'}
-                  placeholder={
-                    config?.hasPassword
-                      ? '•••••••• (Establecida - escribe para cambiarla)'
-                      : 'Sin contraseña de encriptación (No recomendado)'
-                  }
+                  placeholder="Sin contraseña (no recomendado)"
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
-                  className="block w-full rounded-lg border border-border bg-background pl-3 pr-10 py-2 text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-primary focus:border-primary disabled:opacity-50"
+                  className="block w-full rounded-lg border border-border bg-background pl-3 pr-24 py-2 text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-primary focus:border-primary disabled:opacity-50"
                   disabled={!active}
+                  autoComplete="off"
+                  spellCheck={false}
                 />
-                <button
-                  type="button"
-                  onClick={() => setShowPassword((v) => !v)}
-                  className="absolute inset-y-0 right-0 flex items-center px-3 text-muted-foreground hover:text-foreground transition disabled:opacity-50"
-                  disabled={!active}
-                  tabIndex={-1}
-                  aria-label={showPassword ? 'Ocultar contraseña' : 'Mostrar contraseña'}
-                >
-                  {showPassword ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
-                </button>
-              </div>
-              <p className="text-[10px] text-muted-foreground text-amber-600 dark:text-amber-400">
-                Cifra el archivo adjunto con AES-256. La clave no se envía por correo.
-              </p>
-
-              {config?.passwordPlain && (
-                <div className="mt-2 rounded-lg border border-border bg-muted/20 p-3 space-y-1.5">
-                  <p className="text-[11px] font-medium text-foreground">
-                    Contraseña actual para abrir los respaldos
-                  </p>
-                  <div className="flex items-center gap-2">
-                    <code className="flex-1 truncate rounded-md border border-border bg-background px-2 py-1.5 font-mono text-xs">
-                      {showCurrentKey ? config.passwordPlain : '•'.repeat(16)}
-                    </code>
-                    <button
-                      type="button"
-                      onClick={() => setShowCurrentKey((v) => !v)}
-                      className="rounded-md border border-border bg-background p-1.5 text-muted-foreground hover:text-foreground transition"
-                      aria-label={showCurrentKey ? 'Ocultar' : 'Mostrar'}
-                    >
-                      {showCurrentKey ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
-                    </button>
-                    <button
-                      type="button"
-                      onClick={copyKey}
-                      className="rounded-md border border-border bg-background px-2 py-1.5 text-xs font-medium text-muted-foreground hover:text-foreground transition"
-                    >
-                      Copiar
-                    </button>
-                  </div>
-                  <p className="text-[10px] text-muted-foreground">
-                    Úsala para abrir el ZIP cifrado. Guárdala en un lugar seguro; no se envía por
-                    correo.
-                  </p>
+                <div className="absolute inset-y-0 right-0 flex items-center gap-0.5 pr-1.5">
+                  <button
+                    type="button"
+                    onClick={() => setShowPassword((v) => !v)}
+                    className="rounded-md p-1.5 text-muted-foreground hover:text-foreground transition disabled:opacity-50"
+                    disabled={!active}
+                    tabIndex={-1}
+                    aria-label={showPassword ? 'Ocultar contraseña' : 'Mostrar contraseña'}
+                  >
+                    {showPassword ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={copyKey}
+                    className="rounded-md px-2 py-1 text-[11px] font-medium text-muted-foreground hover:text-foreground transition disabled:opacity-50"
+                    disabled={!active || !password}
+                    tabIndex={-1}
+                  >
+                    Copiar
+                  </button>
                 </div>
-              )}
+              </div>
+              <p className="text-[10px] text-muted-foreground">
+                Es la clave para abrir el ZIP con <strong>7-Zip o WinRAR</strong> (un ZIP cifrado
+                AES-256 no se abre con el Explorador de Windows). Acepta cualquier carácter. No se
+                envía por correo: guárdala en un lugar seguro.
+              </p>
             </div>
 
             {/* Información y Test */}
@@ -685,9 +665,8 @@ function BackupConfigPanel() {
                 )}
                 {passwordIncompatible && (
                   <p className="mt-2 rounded-md border border-amber-300 bg-amber-50 px-2 py-1 text-amber-800 dark:border-amber-500/40 dark:bg-amber-500/10 dark:text-amber-200">
-                    La contraseña actual tenía caracteres no compatibles con ZIP cifrado. El sistema
-                    generará una compatible automáticamente en el próximo respaldo y la mostrará
-                    aquí.
+                    Tu contraseña tiene caracteres especiales (acentos/ñ). Funciona, pero ábrela con
+                    7-Zip o WinRAR. Si prefieres máxima compatibilidad, usa solo letras y números.
                   </p>
                 )}
                 {config && (
@@ -784,17 +763,6 @@ function BackupConfigPanel() {
                   </div>
                 )}
               </div>
-              {config?.latestDownloadAvailable && (
-                <button
-                  type="button"
-                  onClick={() => downloadLatest.mutate()}
-                  disabled={downloadLatest.isPending || config.running}
-                  className="mt-3 w-full inline-flex justify-center items-center gap-2 rounded-lg border border-border bg-background px-3 py-2 text-xs font-medium hover:bg-muted transition-colors disabled:opacity-50"
-                >
-                  <Download className="size-4" />
-                  {downloadLatest.isPending ? 'Descargando...' : 'Descargar último backup completo'}
-                </button>
-              )}
               <button
                 type="button"
                 onClick={() => {

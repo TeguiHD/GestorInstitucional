@@ -302,9 +302,9 @@ upsert_setting backup_last_attempt_at "$ATTEMPT_AT"
 upsert_setting backup_last_status running
 upsert_setting backup_last_error ""
 
-if [ -n "$BACKUP_PASS_ZIP" ] && ! validate_zip_password "$BACKUP_PASS_ZIP"; then
-  fail "la contrasena actual del backup no es compatible con ZIP AES; cambia la contrasena por una con caracteres ASCII imprimibles."
-fi
+# Nota: se acepta cualquier contraseña. 7-Zip/WinRAR (requeridos para abrir un
+# ZIP AES) manejan UTF-8; la contraseña se pasa siempre entre comillas dobles,
+# por lo que su contenido no se reinterpreta en el shell.
 
 echo "[$(date)] Iniciando backup completo de la base de datos..."
 if ! db_dump > "$SQL_PATH" 2>"$LAST_ERROR_FILE"; then

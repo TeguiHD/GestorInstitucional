@@ -238,7 +238,7 @@ describe('SystemConfigService backup scheduler', () => {
     }
   });
 
-  it('repara la contrasena no-ASCII generando una compatible antes del backup', async () => {
+  it('respeta la contrasena elegida por el usuario aunque sea no-ASCII', async () => {
     const service = makeService();
     const prisma = (
       service as unknown as {
@@ -248,20 +248,17 @@ describe('SystemConfigService backup scheduler', () => {
         };
       }
     ).prisma;
-    prisma.systemSetting.findMany.mockResolvedValue(settings({ backup_password: 'clave-con-ñ' }));
-    prisma.$transaction.mockResolvedValue([]);
+    prisma.systemSetting.findMany.mockResolvedValue(settings({ backup_password: 'Clave-con-ñ' }));
 
     const healed = await (
       service as unknown as { ensureUsableBackupPassword: () => Promise<string> }
     ).ensureUsableBackupPassword();
 
-    expect(healed).not.toContain('ñ');
-    expect(/^[\x20-\x7e]+$/.test(healed)).toBe(true);
-    // persiste la nueva contrasena
-    expect(prisma.$transaction).toHaveBeenCalled();
+    expect(healed).toBe('Clave-con-ñ');
+    expect(prisma.$transaction).not.toHaveBeenCalled();
   });
 
-  it('conserva una contrasena ASCII existente sin regenerarla', async () => {
+  it('genera una contrasena solo cuando no hay ninguna configurada', async () => {
     const service = makeService();
     const prisma = (
       service as unknown as {
@@ -271,16 +268,16 @@ describe('SystemConfigService backup scheduler', () => {
         };
       }
     ).prisma;
-    prisma.systemSetting.findMany.mockResolvedValue(
-      settings({ backup_password: 'MiClaveASCII123' }),
-    );
+    prisma.systemSetting.findMany.mockResolvedValue(settings({}));
+    prisma.$transaction.mockResolvedValue([]);
 
-    const healed = await (
+    const generated = await (
       service as unknown as { ensureUsableBackupPassword: () => Promise<string> }
     ).ensureUsableBackupPassword();
 
-    expect(healed).toBe('MiClaveASCII123');
-    expect(prisma.$transaction).not.toHaveBeenCalled();
+    expect(generated).toHaveLength(24);
+    expect(/^[\x20-\x7e]+$/.test(generated)).toBe(true);
+    expect(prisma.$transaction).toHaveBeenCalled();
   });
 
   it('expone la contrasena en passwordPlain para mostrarla en el panel', async () => {
