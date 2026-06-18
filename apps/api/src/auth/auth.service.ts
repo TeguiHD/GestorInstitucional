@@ -1,9 +1,12 @@
 import {
   BadRequestException,
   ConflictException,
+  ForbiddenException,
   Injectable,
   UnauthorizedException,
 } from '@nestjs/common';
+import { SystemRole } from '@prisma/client';
+import type { JwtPayload } from '../common/decorators/current-user.decorator.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { AuditService } from '../audit/audit.service.js';
 import { PasswordService } from './services/password.service.js';
@@ -103,18 +106,29 @@ export class AuthService {
             requiresTotpSetup: false,
           };
         }
-        await this.totp.validateForLogin(user.id, dto.totpCode);
+        try {
+          await this.totp.validateForLogin(user.id, dto.totpCode);
+        } catch (err) {
+          // Un código TOTP inválido también cuenta para el bloqueo por intentos,
+          // para no dejar el segundo factor abierto a fuerza bruta.
+          await this.handleFailedLogin(user.id, ip);
+          throw err;
+        }
       }
     }
 
-    // Check if any role requires 2FA but user hasn't set it up
-    const userRoles = user.schoolRoles.map((r) => r.role);
+    // Sesión con UN colegio activo: el token lleva SOLO los roles de ese colegio,
+    // para que roles de otro colegio no se apliquen al colegio activo (cross-tenant).
+    const schoolId = user.schoolRoles[0]?.schoolId ?? '';
+    const userRoles = user.schoolRoles.filter((r) => r.schoolId === schoolId).map((r) => r.role);
+
+    // Check if any active-school role requires 2FA but user hasn't set it up
     const requires2fa = userRoles.some((r) => ROLES_REQUIRING_2FA.includes(r));
     if (requires2fa && !totpEnabled) {
       const setupToken = await this.tokens.issueSetupToken(
         user.id,
         user.email,
-        user.schoolRoles[0]?.schoolId ?? '',
+        schoolId,
         userRoles,
       );
       return { setupToken, requiresTotp: false, requiresTotpSetup: true };
@@ -132,7 +146,6 @@ export class AuthService {
       await this.prisma.user.update({ where: { id: user.id }, data: { passwordHash: newHash } });
     }
 
-    const schoolId = user.schoolRoles[0]?.schoolId ?? '';
     const pair = await this.tokens.issueTokenPair(
       { sub: user.id, email: user.email, schoolId, roles: userRoles, totpVerified: totpEnabled },
       ip,
@@ -209,15 +222,32 @@ export class AuthService {
     return this.tokens.rotateRefreshToken(rawToken, ip, ua);
   }
 
-  async unlockUser(targetUserId: string, actorId: string): Promise<{ unlocked: true }> {
-    const target = await this.prisma.user.findUnique({ where: { id: targetUserId } });
+  async unlockUser(targetUserId: string, actor: JwtPayload): Promise<{ unlocked: true }> {
+    const target = await this.prisma.user.findUnique({
+      where: { id: targetUserId },
+      include: { schoolRoles: { select: { schoolId: true, role: true } } },
+    });
     if (!target) throw new BadRequestException('Usuario no encontrado');
+
+    // SUPER_ADMIN desbloquea a cualquiera; el resto solo dentro de su colegio y
+    // nunca a un SUPER_ADMIN (evita IDOR cross-tenant / escalada).
+    if (!actor.roles.includes(SystemRole.SUPER_ADMIN)) {
+      const targetSchoolIds = target.schoolRoles.map((r) => r.schoolId);
+      const sameSchool = targetSchoolIds.length === 0 || targetSchoolIds.includes(actor.schoolId);
+      if (!sameSchool) {
+        throw new ForbiddenException('No puedes administrar usuarios de otro colegio');
+      }
+      if (target.schoolRoles.some((r) => r.role === SystemRole.SUPER_ADMIN)) {
+        throw new ForbiddenException('Solo SUPER_ADMIN puede administrar SUPER_ADMIN');
+      }
+    }
+
     await this.prisma.user.update({
       where: { id: targetUserId },
       data: { status: 'ACTIVE', failedLogins: 0, lockedUntil: null },
     });
     await this.audit.log({
-      userId: actorId,
+      userId: actor.sub,
       action: 'UPDATE',
       entity: 'User',
       entityId: targetUserId,

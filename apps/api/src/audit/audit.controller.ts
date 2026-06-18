@@ -15,7 +15,9 @@ export class AuditController {
   constructor(private readonly audit: AuditService) {}
 
   @Get()
-  @Roles(SystemRole.SUPER_ADMIN, SystemRole.DIRECTOR)
+  // Solo SUPER_ADMIN: el AuditEvent no tiene schoolId, así que no se puede acotar
+  // por colegio; permitir DIRECTOR filtraría auditoría de todos los colegios.
+  @Roles(SystemRole.SUPER_ADMIN)
   @ApiOperation({ summary: 'Historial de auditoría' })
   list(
     @Query('entity') entity?: string,

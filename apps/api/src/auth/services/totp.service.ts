@@ -61,16 +61,27 @@ export class TotpService {
     if (!record) throw new UnauthorizedException('2FA no configurado');
 
     const secret = this.decryptSecret(record.secret);
-    const isValid = authenticator.verify({ token, secret });
+    // checkDelta devuelve el desfase de ventana (o null) para conocer el timestep
+    // exacto que validó y poder rechazar su reuso (anti-replay, RFC 6238 §5.2).
+    const delta = authenticator.checkDelta(token, secret);
+    if (delta === null) return false;
 
-    if (isValid && !record.verified) {
-      await this.prisma.totpSecret.update({
-        where: { userId },
-        data: { verified: true, verifiedAt: new Date() },
-      });
+    const period = authenticator.options.step ?? 30;
+    const step = Math.floor(Date.now() / 1000 / period) + delta;
+    if (record.lastTotpStep != null && step <= record.lastTotpStep) {
+      // Código de un timestep ya consumido: replay.
+      return false;
     }
 
-    return isValid;
+    await this.prisma.totpSecret.update({
+      where: { userId },
+      data: {
+        lastTotpStep: step,
+        ...(record.verified ? {} : { verified: true, verifiedAt: new Date() }),
+      },
+    });
+
+    return true;
   }
 
   async verifyBackupCode(userId: string, code: string): Promise<boolean> {

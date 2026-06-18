@@ -62,28 +62,32 @@ export class CalendarController {
   @Post()
   @Roles(SystemRole.SUPER_ADMIN, SystemRole.DIRECTOR, SystemRole.UTP)
   @ApiOperation({ summary: 'Crear/actualizar día especial' })
-  create(@Body() dto: CreateCalendarDayDto) {
+  create(@Body() dto: CreateCalendarDayDto, @CurrentUser() user: JwtPayload) {
+    this.courses.assertSchoolAccess(dto.schoolId, user);
     return this.calendar.create(dto);
   }
 
   @Post('seed-chile')
   @Roles(SystemRole.SUPER_ADMIN, SystemRole.DIRECTOR)
   @ApiOperation({ summary: 'Poblar feriados oficiales fijos Chile (año completo)' })
-  seedChile(@Body() dto: SeedHolidaysDto) {
+  seedChile(@Body() dto: SeedHolidaysDto, @CurrentUser() user: JwtPayload) {
+    this.courses.assertSchoolAccess(dto.schoolId, user);
     return this.calendar.seedChileHolidays(dto.schoolId, dto.year);
   }
 
   @Delete(':id')
   @Roles(SystemRole.SUPER_ADMIN, SystemRole.DIRECTOR, SystemRole.UTP)
   @ApiOperation({ summary: 'Eliminar día especial' })
-  remove(@Param('id') id: string) {
+  async remove(@Param('id') id: string, @CurrentUser() user: JwtPayload) {
+    this.courses.assertSchoolAccess(await this.calendar.getDaySchoolId(id), user);
     return this.calendar.remove(id);
   }
 
   @Post(':id/notify')
   @Roles(SystemRole.SUPER_ADMIN, SystemRole.DIRECTOR)
   @ApiOperation({ summary: 'Reenviar aviso masivo a apoderados sobre este día' })
-  notify(@Param('id') id: string) {
+  async notify(@Param('id') id: string, @CurrentUser() user: JwtPayload) {
+    this.courses.assertSchoolAccess(await this.calendar.getDaySchoolId(id), user);
     return this.calendar.broadcastDay(id);
   }
 }

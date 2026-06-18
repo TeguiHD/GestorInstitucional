@@ -109,6 +109,16 @@ export class CalendarService {
     });
   }
 
+  /** schoolId del día, para validar acceso por colegio en el controlador. */
+  async getDaySchoolId(id: string): Promise<string> {
+    const day = await this.prisma.schoolCalendarDay.findUnique({
+      where: { id },
+      select: { schoolId: true },
+    });
+    if (!day) throw new NotFoundException('Día no encontrado');
+    return day.schoolId;
+  }
+
   async remove(id: string) {
     const day = await this.prisma.schoolCalendarDay.findUnique({ where: { id } });
     if (!day) throw new NotFoundException('Día no encontrado');

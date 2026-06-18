@@ -139,6 +139,7 @@ export class AuthController {
 
   @Post('2fa/verify')
   @HttpCode(HttpStatus.OK)
+  @Throttle({ default: { ttl: seconds(300), limit: 5 } })
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Verificar y activar TOTP' })
   async verify2fa(
@@ -179,6 +180,7 @@ export class AuthController {
 
   @Post('2fa/backup-codes')
   @HttpCode(HttpStatus.OK)
+  @Throttle({ default: { ttl: seconds(300), limit: 5 } })
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Regenerar códigos de respaldo 2FA (requiere TOTP)' })
   async regenerateBackupCodes(@CurrentUser() user: JwtPayload, @Body('code') code: string) {
@@ -189,6 +191,7 @@ export class AuthController {
 
   @Delete('2fa')
   @HttpCode(HttpStatus.OK)
+  @Throttle({ default: { ttl: seconds(300), limit: 5 } })
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Desactivar 2FA (requiere código TOTP vigente)' })
   async disable2fa(
@@ -207,7 +210,7 @@ export class AuthController {
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Desbloquear cuenta de usuario (SUPER_ADMIN/DIRECTOR)' })
   unlock(@Param('userId') userId: string, @CurrentUser() actor: JwtPayload) {
-    return this.auth.unlockUser(userId, actor.sub);
+    return this.auth.unlockUser(userId, actor);
   }
 
   @Get('me')

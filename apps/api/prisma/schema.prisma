@@ -237,13 +237,14 @@ model SchoolPermission {
 // =============================================================================
 
 model TotpSecret {
-  id          String    @id @default(uuid()) @db.Char(36)
-  userId      String    @db.Char(36)
-  secret      String    @db.VarChar(300) // encrypted at rest
-  verified    Boolean   @default(false)
-  backupCodes Json // hashed backup codes
-  createdAt   DateTime  @default(now())
-  verifiedAt  DateTime?
+  id           String    @id @default(uuid()) @db.Char(36)
+  userId       String    @db.Char(36)
+  secret       String    @db.VarChar(300) // encrypted at rest
+  verified     Boolean   @default(false)
+  backupCodes  Json // hashed backup codes
+  createdAt    DateTime  @default(now())
+  verifiedAt   DateTime?
+  lastTotpStep Int? // último timestep TOTP consumido (anti-replay)
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
