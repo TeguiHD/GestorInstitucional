@@ -165,16 +165,26 @@ async function request<T>(path: string, opts: RequestOptions = {}): Promise<T> {
   return res.json() as Promise<T>;
 }
 
-export async function downloadBlob(path: string, filename: string): Promise<void> {
-  const res = await fetchWithAuth(path, { contentType: 'none' });
+export async function downloadBlob(
+  path: string,
+  filename: string,
+  method: 'GET' | 'POST' = 'GET',
+): Promise<void> {
+  const res = await fetchWithAuth(path, { method, contentType: 'none' });
   if (!res.ok) {
     throw await apiErrorFromResponse(res);
   }
 
+  // Prefer the server-provided filename (Content-Disposition) so the extension
+  // (.7z / .zip) is always correct.
+  const disposition = res.headers.get('content-disposition');
+  const match = disposition && /filename\*?=(?:UTF-8'')?"?([^";]+)"?/i.exec(disposition);
+  const resolvedName = match?.[1] ? decodeURIComponent(match[1]) : filename;
+
   const url = URL.createObjectURL(await res.blob());
   const a = document.createElement('a');
   a.href = url;
-  a.download = filename;
+  a.download = resolvedName;
   document.body.appendChild(a);
   a.click();
   a.remove();

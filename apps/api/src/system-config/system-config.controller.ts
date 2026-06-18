@@ -85,6 +85,19 @@ export class SystemConfigController {
     return this.systemConfig.testBackup();
   }
 
+  @Post('backup/generate-download')
+  @ApiOperation({ summary: 'Generar un respaldo fresco y descargarlo al instante (sin correo)' })
+  async generateAndDownload(@Res() res: FastifyReply) {
+    const download = await this.systemConfig.generateAndDownload();
+    void res.header('Content-Type', this.backupContentType(download.fileName));
+    void res.header('Content-Length', String(download.size));
+    void res.header(
+      'Content-Disposition',
+      `attachment; filename="${encodeURIComponent(download.fileName)}"`,
+    );
+    void res.send(createReadStream(download.filePath));
+  }
+
   private backupContentType(fileName: string): string {
     if (fileName.endsWith('.zip')) return 'application/zip';
     if (fileName.endsWith('.7z')) return 'application/x-7z-compressed';

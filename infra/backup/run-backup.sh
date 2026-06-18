@@ -341,8 +341,11 @@ if [ -n "$BACKUP_PASS_ZIP" ]; then
   if [ -z "$SEVENZIP_BIN" ]; then
     fail "se requiere 7z/7zz para el respaldo cifrado AES-256."
   fi
-  echo "[$(date)] Cifrando .7z (BD + archivos) con AES-256 + cabecera..."
-  if ! ( cd "$PROJECT_DIR" && "$SEVENZIP_BIN" a -t7z -m0=lzma2 -mhe=on -p"$BACKUP_PASS_ZIP" "$ZIP_PATH" "${ARCHIVE_ITEMS[@]}" ) >/dev/null 2>"$LAST_ERROR_FILE"; then
+  # AES-256 en el CONTENIDO (sin -mhe): la cabecera queda legible para que los
+  # extractores estándar (GNOME Files/libarchive, macOS, etc.) pidan la clave.
+  # Con -mhe=on GNOME falla: "archive header is encrypted, not supported".
+  echo "[$(date)] Cifrando .7z (BD + archivos) con AES-256..."
+  if ! ( cd "$PROJECT_DIR" && "$SEVENZIP_BIN" a -t7z -m0=lzma2 -p"$BACKUP_PASS_ZIP" "$ZIP_PATH" "${ARCHIVE_ITEMS[@]}" ) >/dev/null 2>"$LAST_ERROR_FILE"; then
     fail "7z fallo al crear el archivo cifrado AES-256."
   fi
   if ! "$SEVENZIP_BIN" t -p"$BACKUP_PASS_ZIP" "$ZIP_PATH" >/dev/null 2>"$LAST_ERROR_FILE"; then
@@ -377,6 +380,25 @@ DOWNLOAD_VERIFIED_STATUS=""
 DOWNLOAD_EXPIRES_AT="$(
   node -e "console.log(new Date(Date.now()+7*24*60*60*1000).toISOString().slice(0,19).replace('T',' '));"
 )"
+
+# Modo "Generar y descargar ahora": deja el respaldo listo para descarga directa
+# desde el panel, SIN enviar correo ni generar enlace temporal.
+if [ "${BACKUP_SKIP_SEND:-false}" = "true" ]; then
+  SUCCESS_AT="$(date -u '+%Y-%m-%d %H:%M:%S')"
+  upsert_setting backup_last_success_at "$SUCCESS_AT"
+  upsert_setting backup_last_status success
+  upsert_setting backup_last_error ""
+  upsert_setting backup_last_message_id ""
+  upsert_setting backup_last_delivery_mode "manual_download"
+  upsert_setting backup_last_file_name "$(basename "$ZIP_PATH")"
+  upsert_setting backup_last_file_size_bytes "$ZIP_SIZE_BYTES"
+  upsert_setting backup_download_path "$ZIP_PATH"
+  upsert_setting backup_download_file_name "$(basename "$ZIP_PATH")"
+  upsert_setting backup_download_file_size_bytes "$ZIP_SIZE_BYTES"
+  upsert_setting backup_download_expires_at "$DOWNLOAD_EXPIRES_AT"
+  echo "[$(date)] Respaldo listo para descarga directa: $ZIP_PATH"
+  exit 0
+fi
 
 # Se entrega por enlace seguro cuando: (a) supera el límite de adjunto, o
 # (b) es .7z — Brevo rechaza adjuntar .7z ("Unsupported file format: 7z").

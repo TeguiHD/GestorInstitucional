@@ -2,6 +2,7 @@ import {
   ConflictException,
   ForbiddenException,
   Injectable,
+  InternalServerErrorException,
   Logger,
   NotFoundException,
 } from '@nestjs/common';
@@ -40,7 +41,7 @@ const BACKUP_TZ = 'America/Santiago';
 const RUNNING_TTL_MS = 2 * 60 * 60 * 1000;
 
 type BackupStatus = 'idle' | 'running' | 'success' | 'failed';
-type BackupDeliveryMode = 'attachment' | 'download_link';
+type BackupDeliveryMode = 'attachment' | 'download_link' | 'manual_download';
 type BackupConfigResponse = {
   emails: string;
   time: string;
@@ -120,7 +121,9 @@ export class SystemConfigService {
     const lastStatus = (configMap.get('backup_last_status') || 'idle') as BackupStatus;
     const lastDeliveryModeRaw = configMap.get('backup_last_delivery_mode') || '';
     const lastDeliveryMode =
-      lastDeliveryModeRaw === 'attachment' || lastDeliveryModeRaw === 'download_link'
+      lastDeliveryModeRaw === 'attachment' ||
+      lastDeliveryModeRaw === 'download_link' ||
+      lastDeliveryModeRaw === 'manual_download'
         ? lastDeliveryModeRaw
         : null;
     const lastFileSizeRaw = configMap.get('backup_last_file_size_bytes') || '';
@@ -204,6 +207,53 @@ export class SystemConfigService {
 
   async testBackup() {
     return this.startBackup('manual');
+  }
+
+  /**
+   * Genera un respaldo fresco de forma SÍNCRONA (sin correo ni enlace) y
+   * devuelve el archivo para descargarlo al instante desde el panel.
+   */
+  async generateAndDownload(): Promise<BackupFileDownload> {
+    const configMap = await this.getBackupSettings();
+    if (this.isBackupRunning(configMap)) {
+      throw new ConflictException('Ya hay un backup en ejecución');
+    }
+    await this.ensureUsableBackupPassword();
+
+    const scriptPath = path.resolve(process.cwd(), 'infra/backup/run-backup.sh');
+    await this.upsertSettings({
+      backup_last_attempt_at: this.utcSqlNow(),
+      backup_last_status: 'running',
+      backup_last_error: '',
+    });
+
+    this.inProcessBackupRunning = true;
+    const result = await new Promise<{ code: number; output: string }>((resolve) => {
+      const child = spawn('bash', [scriptPath, 'force'], {
+        cwd: process.cwd(),
+        env: { ...process.env, BACKUP_TRIGGER: 'manual', BACKUP_SKIP_SEND: 'true' },
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
+      let output = '';
+      child.stdout.on('data', (chunk: Buffer) => (output += chunk.toString()));
+      child.stderr.on('data', (chunk: Buffer) => (output += chunk.toString()));
+      child.on('error', (error) => resolve({ code: -1, output: error.message }));
+      child.on('close', (code) => resolve({ code: code ?? -1, output }));
+    });
+    this.inProcessBackupRunning = false;
+
+    if (result.code !== 0) {
+      await this.upsertSettings({
+        backup_last_status: 'failed',
+        backup_last_error: result.output.slice(-1000) || 'No se pudo generar el respaldo',
+      });
+      this.log.error(
+        `generateAndDownload failed (code ${result.code}): ${result.output.slice(-500)}`,
+      );
+      throw new InternalServerErrorException('No se pudo generar el respaldo');
+    }
+
+    return this.resolveLatestBackupFile(await this.getBackupSettings());
   }
 
   async getBackupDownload(token: string | undefined) {
