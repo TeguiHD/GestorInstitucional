@@ -503,12 +503,8 @@ function BackupConfigPanel() {
       password !== (config.passwordPlain ?? '') ||
       active !== config.active);
   const lastConfirmed = !!config?.lastMessageId && config.lastStatus === 'success';
-  const lastFileName = config?.lastFileName?.toLowerCase() ?? '';
-  const lastFileIsZip = lastFileName.endsWith('.zip');
-  const lastFileIsLegacy7z = lastFileName.endsWith('.7z');
-  const zipVerified =
+  const backupVerified =
     lastConfirmed &&
-    lastFileIsZip &&
     (config?.lastDeliveryMode === 'attachment' || config?.lastDownloadVerifiedStatus === '200');
   const passwordIncompatible = !!config?.hasPassword && !config.passwordCompatible;
 
@@ -704,16 +700,10 @@ function BackupConfigPanel() {
                       <span className="font-medium text-foreground">Archivo:</span>{' '}
                       {config.lastFileName ?? 'Sin registro'}
                     </p>
-                    {zipVerified && (
+                    {backupVerified && (
                       <p className="text-emerald-700 dark:text-emerald-300">
-                        <span className="font-medium">ZIP cifrado verificado:</span> listo para
+                        <span className="font-medium">Respaldo cifrado verificado:</span> listo para
                         descargar.
-                      </p>
-                    )}
-                    {lastFileIsLegacy7z && (
-                      <p className="rounded-md border border-amber-300 bg-amber-50 px-2 py-1 text-amber-800 dark:border-amber-500/40 dark:bg-amber-500/10 dark:text-amber-200">
-                        Formato antiguo .7z no recomendado; ejecuta un nuevo backup para generar
-                        ZIP.
                       </p>
                     )}
                     <p>
