@@ -75,7 +75,11 @@ db_dump() {
   if [ -n "${DB_PASSWORD:-}" ]; then
     args+=("-p${DB_PASSWORD}")
   fi
-  args+=("${DB_NAME:-asistencia}")
+  # --single-transaction: snapshot consistente sin bloquear (InnoDB).
+  # --default-character-set=utf8mb4: preserva ñ/acentos en nombres.
+  # Sin --routines/--events para no requerir privilegios extra del usuario app
+  # (el esquema Prisma no usa procedimientos/eventos).
+  args+=(--single-transaction --quick --default-character-set=utf8mb4 "${DB_NAME:-asistencia}")
 
   if [ "$USE_DOCKER_DB" = "true" ]; then
     docker exec asistencia_db mariadb-dump "${args[@]}"
