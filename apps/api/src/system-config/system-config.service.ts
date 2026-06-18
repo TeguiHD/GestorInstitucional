@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   ConflictException,
   ForbiddenException,
   Injectable,
@@ -172,9 +173,12 @@ export class SystemConfigService {
     ];
 
     if (data.encryptPassword && data.encryptPassword.trim() !== '') {
-      // Se acepta cualquier contraseña: 7-Zip/WinRAR (necesarios para abrir un
-      // ZIP AES) manejan UTF-8. El campo `passwordCompatible` queda como aviso
-      // suave de compatibilidad, no como bloqueo.
+      // ZIP cifrado AES exige clave ASCII (para que abra nativo en GNOME/Windows).
+      if (!this.isZipPasswordCompatible(data.encryptPassword)) {
+        throw new BadRequestException(
+          'La contraseña del respaldo debe usar solo caracteres ASCII (letras, números y símbolos comunes; sin acentos ni ñ).',
+        );
+      }
       updates.push({ key: 'backup_password', value: data.encryptPassword });
     }
 
@@ -429,19 +433,20 @@ export class SystemConfigService {
   }
 
   /**
-   * Garantiza que exista una contraseña de backup. Respeta cualquier
-   * contraseña ya configurada por el usuario (incluida no-ASCII); sólo genera
-   * una cuando no hay ninguna, para que el ZIP siempre quede cifrado por
-   * defecto. Devuelve la contraseña vigente.
+   * Garantiza una contraseña de backup compatible con ZIP AES (ASCII). Si falta
+   * o es no-ASCII (p.ej. tenía ñ/acentos, que el ZIP AES no admite), genera una
+   * ASCII fuerte y la persiste; queda visible en el panel. Devuelve la vigente.
    */
   private async ensureUsableBackupPassword(): Promise<string> {
     const configMap = await this.getBackupSettings();
     const current = configMap.get('backup_password') || '';
-    if (current) return current;
+    if (current && this.isZipPasswordCompatible(current)) return current;
 
     const generated = this.generateAsciiBackupPassword(24);
     await this.upsertSettings({ backup_password: generated });
-    this.log.warn('No había contraseña de backup; se generó una (visible en el panel).');
+    this.log.warn(
+      'Contraseña de backup ausente o no-ASCII; se generó una ASCII compatible con ZIP cifrado (visible en el panel).',
+    );
     return generated;
   }
 

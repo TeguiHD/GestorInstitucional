@@ -238,7 +238,7 @@ describe('SystemConfigService backup scheduler', () => {
     }
   });
 
-  it('respeta la contrasena elegida por el usuario aunque sea no-ASCII', async () => {
+  it('repara una contrasena no-ASCII generando una ASCII compatible con ZIP AES', async () => {
     const service = makeService();
     const prisma = (
       service as unknown as {
@@ -249,12 +249,36 @@ describe('SystemConfigService backup scheduler', () => {
       }
     ).prisma;
     prisma.systemSetting.findMany.mockResolvedValue(settings({ backup_password: 'Clave-con-ñ' }));
+    prisma.$transaction.mockResolvedValue([]);
 
     const healed = await (
       service as unknown as { ensureUsableBackupPassword: () => Promise<string> }
     ).ensureUsableBackupPassword();
 
-    expect(healed).toBe('Clave-con-ñ');
+    expect(healed).not.toContain('ñ');
+    expect(/^[\x20-\x7e]+$/.test(healed)).toBe(true);
+    expect(prisma.$transaction).toHaveBeenCalled();
+  });
+
+  it('conserva una contrasena ASCII existente sin regenerarla', async () => {
+    const service = makeService();
+    const prisma = (
+      service as unknown as {
+        prisma: {
+          systemSetting: { findMany: ReturnType<typeof vi.fn> };
+          $transaction: ReturnType<typeof vi.fn>;
+        };
+      }
+    ).prisma;
+    prisma.systemSetting.findMany.mockResolvedValue(
+      settings({ backup_password: 'MiClaveASCII123' }),
+    );
+
+    const healed = await (
+      service as unknown as { ensureUsableBackupPassword: () => Promise<string> }
+    ).ensureUsableBackupPassword();
+
+    expect(healed).toBe('MiClaveASCII123');
     expect(prisma.$transaction).not.toHaveBeenCalled();
   });
 

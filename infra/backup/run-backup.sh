@@ -294,14 +294,11 @@ UPLOADS_DIR="${BACKUP_UPLOADS_DIR:-$PROJECT_DIR/uploads}"
 DATE="$(date +%Y-%m-%d_%H%M%S)"
 FILE_NAME="backup_asistencia_${DATE}.sql"
 SQL_PATH="${BACKUP_DIR}/${FILE_NAME}"
-# Con contraseña usamos .7z (AES-256 + cabecera cifrada; acepta CUALQUIER
-# carácter, incluidos acentos/ñ — el ZIP-AES de 7-Zip falla con no-ASCII).
-# Sin contraseña, .zip plano que abre Windows directo.
-if [ -n "$BACKUP_PASS_ZIP" ]; then
-  ARCHIVE_EXT="7z"
-else
-  ARCHIVE_EXT="zip"
-fi
+# Siempre .zip: con contraseña = ZIP AES-256 (WinZip), que abre NATIVO en el
+# Gestor de Archivos de GNOME/Fedora, Windows (7-Zip) y macOS. Requiere clave
+# ASCII (7-Zip no acepta ñ/acentos en ZIP); la capa de servicio garantiza una
+# contraseña ASCII antes de ejecutar. Sin contraseña = .zip plano.
+ARCHIVE_EXT="zip"
 ZIP_PATH="${BACKUP_DIR}/backup_asistencia_${DATE}.${ARCHIVE_EXT}"
 
 RUN_STARTED=true
@@ -341,15 +338,18 @@ if [ -n "$BACKUP_PASS_ZIP" ]; then
   if [ -z "$SEVENZIP_BIN" ]; then
     fail "se requiere 7z/7zz para el respaldo cifrado AES-256."
   fi
-  # AES-256 en el CONTENIDO (sin -mhe): la cabecera queda legible para que los
-  # extractores estándar (GNOME Files/libarchive, macOS, etc.) pidan la clave.
-  # Con -mhe=on GNOME falla: "archive header is encrypted, not supported".
-  echo "[$(date)] Cifrando .7z (BD + archivos) con AES-256..."
-  if ! ( cd "$PROJECT_DIR" && "$SEVENZIP_BIN" a -t7z -m0=lzma2 -p"$BACKUP_PASS_ZIP" "$ZIP_PATH" "${ARCHIVE_ITEMS[@]}" ) >/dev/null 2>"$LAST_ERROR_FILE"; then
-    fail "7z fallo al crear el archivo cifrado AES-256."
+  # ZIP AES-256 (WinZip): abre nativo en GNOME Files/libarchive, Windows y macOS
+  # (con 7-Zip). 7-Zip exige clave ASCII para ZIP; la capa de servicio ya la
+  # garantiza, pero validamos por seguridad para no generar un .zip inválido.
+  if ! validate_zip_password "$BACKUP_PASS_ZIP"; then
+    fail "la contrasena del backup debe ser ASCII (sin acentos/ñ) para ZIP cifrado AES."
+  fi
+  echo "[$(date)] Cifrando ZIP (BD + archivos) con AES-256..."
+  if ! ( cd "$PROJECT_DIR" && "$SEVENZIP_BIN" a -tzip -mem=AES256 -p"$BACKUP_PASS_ZIP" "$ZIP_PATH" "${ARCHIVE_ITEMS[@]}" ) >/dev/null 2>"$LAST_ERROR_FILE"; then
+    fail "7z fallo al crear el ZIP cifrado AES-256."
   fi
   if ! "$SEVENZIP_BIN" t -p"$BACKUP_PASS_ZIP" "$ZIP_PATH" >/dev/null 2>"$LAST_ERROR_FILE"; then
-    fail "el archivo cifrado generado no pudo validarse con la contrasena configurada."
+    fail "el ZIP cifrado generado no pudo validarse con la contrasena configurada."
   fi
   rm -f "$SQL_PATH"
 else
@@ -400,9 +400,9 @@ if [ "${BACKUP_SKIP_SEND:-false}" = "true" ]; then
   exit 0
 fi
 
-# Se entrega por enlace seguro cuando: (a) supera el límite de adjunto, o
-# (b) es .7z — Brevo rechaza adjuntar .7z ("Unsupported file format: 7z").
-if [ "$ZIP_SIZE_BYTES" -gt "$ATTACHMENT_LIMIT_BYTES" ] || [ "$ARCHIVE_EXT" = "7z" ]; then
+# Se entrega por enlace seguro solo cuando supera el límite de adjunto de correo;
+# si no, el .zip cifrado viaja adjunto (Brevo acepta .zip).
+if [ "$ZIP_SIZE_BYTES" -gt "$ATTACHMENT_LIMIT_BYTES" ]; then
   if [ -z "$BACKUP_PASS_ZIP" ]; then
     fail "el ZIP pesa ${ZIP_SIZE_BYTES} bytes y supera el limite de adjunto; configura una contrasena para habilitar descarga segura."
   fi
@@ -438,11 +438,7 @@ if [ "$ZIP_SIZE_BYTES" -gt "$ATTACHMENT_LIMIT_BYTES" ] || [ "$ARCHIVE_EXT" = "7z
     "$DOWNLOAD_EXPIRES_AT"
 
   DELIVERY_MODE="download_link"
-  if [ "$ARCHIVE_EXT" = "7z" ]; then
-    echo "[$(date)] Respaldo .7z (${ZIP_SIZE_BYTES} bytes): Brevo no adjunta .7z, se enviara por link temporal."
-  else
-    echo "[$(date)] ZIP supera limite de adjunto (${ZIP_SIZE_BYTES} > ${ATTACHMENT_LIMIT_BYTES}); se enviara link temporal."
-  fi
+  echo "[$(date)] ZIP supera limite de adjunto (${ZIP_SIZE_BYTES} > ${ATTACHMENT_LIMIT_BYTES}); se enviara link temporal."
   echo "[$(date)] Verificando link temporal antes del envio..."
   if ! DOWNLOAD_VERIFIED_STATUS="$(verify_download_link "$DOWNLOAD_URL" 2>"$LAST_ERROR_FILE")"; then
     DOWNLOAD_VERIFIED_AT="$(date -u '+%Y-%m-%d %H:%M:%S')"

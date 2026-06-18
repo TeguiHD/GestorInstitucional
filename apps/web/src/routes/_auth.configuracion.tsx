@@ -481,7 +481,7 @@ function BackupConfigPanel() {
 
   const generateNow = useMutation({
     mutationFn: () =>
-      downloadBlob('/system-config/backup/generate-download', 'backup_asistencia.7z', 'POST'),
+      downloadBlob('/system-config/backup/generate-download', 'backup_asistencia.zip', 'POST'),
     onSuccess: () => {
       toast.success('Respaldo generado y descargado');
       void qc.invalidateQueries({ queryKey: ['system-backup-config'] });
@@ -661,10 +661,10 @@ function BackupConfigPanel() {
                 </div>
               </div>
               <p className="text-[10px] text-muted-foreground">
-                Con contraseña, el respaldo se genera como <strong>.7z cifrado (AES-256)</strong> y
-                se abre con <strong>7-Zip o WinRAR</strong>; acepta cualquier carácter (acentos, ñ).
-                Sin contraseña, queda en .zip normal. No se envía por correo: guárdala en un lugar
-                seguro.
+                Con contraseña, el respaldo es un <strong>ZIP cifrado (AES-256)</strong> que abre
+                con doble clic en Fedora/GNOME, Windows y macOS. La clave debe ser{' '}
+                <strong>ASCII</strong> (letras, números y símbolos comunes; sin acentos ni ñ). No se
+                envía por correo: guárdala en un lugar seguro.
               </p>
             </div>
 
@@ -737,10 +737,10 @@ function BackupConfigPanel() {
                   )}
 
                   {passwordIncompatible && (
-                    <p className="rounded-md border border-sky-300 bg-sky-50 px-2 py-1.5 text-xs text-sky-800 dark:border-sky-500/40 dark:bg-sky-500/10 dark:text-sky-200">
-                      Con acentos/ñ el respaldo es <strong>.7z cifrado (AES-256)</strong>: ábrelo
-                      con el Gestor de Archivos (Fedora/GNOME), 7-Zip o WinRAR e ingresa la
-                      contraseña.
+                    <p className="rounded-md border border-amber-300 bg-amber-50 px-2 py-1.5 text-xs text-amber-800 dark:border-amber-500/40 dark:bg-amber-500/10 dark:text-amber-200">
+                      Tu contraseña tiene acentos/ñ, que el ZIP cifrado no admite. El sistema generó
+                      una clave ASCII automática (visible arriba); cámbiala por una propia solo con
+                      letras y números si quieres.
                     </p>
                   )}
 
