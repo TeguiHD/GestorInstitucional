@@ -355,6 +355,7 @@ type BackupConfig = {
   time: string;
   hasPassword: boolean;
   passwordCompatible: boolean;
+  passwordPlain: string | null;
   active: boolean;
   lastSuccessAt: string | null;
   lastAttemptAt: string | null;
@@ -372,6 +373,13 @@ type BackupConfig = {
   latestDownloadFileName: string | null;
   latestDownloadFileSizeBytes: number | null;
   latestDownloadExpiresAt: string | null;
+};
+
+type BackupHistoryItem = {
+  fileName: string;
+  sizeBytes: number;
+  createdAt: string;
+  encrypted: boolean;
 };
 
 function formatBackupTimestamp(value: string | null): string {
@@ -453,10 +461,31 @@ function BackupConfigPanel() {
     mutationFn: () =>
       downloadBlob(
         '/system-config/backup/latest-download',
-        config?.latestDownloadFileName ?? 'backup_asistencia.sql.zip',
+        config?.latestDownloadFileName ?? 'backup_asistencia.zip',
       ),
     onError: (error: Error) => toast.error(error.message),
   });
+
+  const { data: history } = useQuery<BackupHistoryItem[]>({
+    queryKey: ['system-backup-history'],
+    queryFn: () => api.get('/system-config/backup/history'),
+    refetchInterval: 60_000,
+  });
+
+  const downloadFromHistory = useMutation({
+    mutationFn: (fileName: string) =>
+      downloadBlob(`/system-config/backup/file?name=${encodeURIComponent(fileName)}`, fileName),
+    onError: (error: Error) => toast.error(error.message),
+  });
+
+  const [showCurrentKey, setShowCurrentKey] = useState(false);
+  const copyKey = () => {
+    if (!config?.passwordPlain) return;
+    void navigator.clipboard
+      .writeText(config.passwordPlain)
+      .then(() => toast.success('Contraseña copiada'))
+      .catch(() => toast.error('No se pudo copiar'));
+  };
 
   if (isLoading) {
     return (
@@ -485,288 +514,383 @@ function BackupConfigPanel() {
   const passwordIncompatible = !!config?.hasPassword && !config.passwordCompatible;
 
   return (
-    <form
-      onSubmit={(e) => {
-        e.preventDefault();
-        save.mutate({
-          emails,
-          time,
-          active,
-          ...(password.trim() !== '' ? { encryptPassword: password } : {}),
-        });
-      }}
-      className="rounded-xl border border-border bg-background overflow-hidden"
-    >
-      <div className="border-b border-border px-5 py-4 flex items-center gap-3">
-        <div className="size-10 rounded-lg bg-muted flex items-center justify-center">
-          <Database className="size-5 text-muted-foreground" />
-        </div>
-        <div>
-          <h2 className="text-sm font-semibold">Respaldo Automático de Base de Datos</h2>
-          <p className="text-xs text-muted-foreground">
-            Configure el envío por cambios de asistencia al horario definido.
-          </p>
-        </div>
-      </div>
-
-      <div className="p-5 space-y-5">
-        {/* Habilitar */}
-        <div className="flex items-center justify-between rounded-lg border border-border bg-muted/10 p-4">
-          <div className="space-y-0.5">
-            <label className="text-sm font-semibold cursor-pointer" htmlFor="backup-active">
-              Habilitar Copias por Cambios de Asistencia
-            </label>
+    <div className="space-y-4">
+      <form
+        onSubmit={(e) => {
+          e.preventDefault();
+          save.mutate({
+            emails,
+            time,
+            active,
+            ...(password.trim() !== '' ? { encryptPassword: password } : {}),
+          });
+        }}
+        className="rounded-xl border border-border bg-background overflow-hidden"
+      >
+        <div className="border-b border-border px-5 py-4 flex items-center gap-3">
+          <div className="size-10 rounded-lg bg-muted flex items-center justify-center">
+            <Database className="size-5 text-muted-foreground" />
+          </div>
+          <div>
+            <h2 className="text-sm font-semibold">Respaldo Automático de Base de Datos</h2>
             <p className="text-xs text-muted-foreground">
-              Se enviará un respaldo completo diario a la hora configurada.
-            </p>
-          </div>
-          <input
-            id="backup-active"
-            type="checkbox"
-            checked={active}
-            onChange={(e) => setActive(e.target.checked)}
-            className="size-5 cursor-pointer rounded border-border accent-primary"
-          />
-        </div>
-
-        <div className="grid gap-4 md:grid-cols-2">
-          {/* Correos */}
-          <div className="space-y-1">
-            <label className="text-xs font-medium text-muted-foreground" htmlFor="backup-emails">
-              Correos de Destinatarios (separados por coma)
-            </label>
-            <input
-              id="backup-emails"
-              type="text"
-              placeholder="ejemplo@correo.com, admin@correo.com"
-              value={emails}
-              onChange={(e) => setEmails(e.target.value)}
-              className="block w-full rounded-lg border border-border bg-background px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-primary focus:border-primary disabled:opacity-50"
-              required
-              disabled={!active}
-            />
-            <p className="text-[10px] text-muted-foreground">
-              El respaldo diario llegará a todos los correos configurados.
-            </p>
-          </div>
-
-          {/* Hora */}
-          <div className="space-y-1">
-            <label className="text-xs font-medium text-muted-foreground" htmlFor="backup-time">
-              Hora de Envío (Hora local de Chile)
-            </label>
-            <input
-              id="backup-time"
-              type="time"
-              value={time}
-              onChange={(e) => setTime(e.target.value)}
-              className="block w-full rounded-lg border border-border bg-background px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-primary focus:border-primary disabled:opacity-50"
-              required
-              disabled={!active}
-            />
-            <p className="text-[10px] text-muted-foreground">
-              A esta hora se enviará el respaldo completo de la base de datos.
+              Configure el envío por cambios de asistencia al horario definido.
             </p>
           </div>
         </div>
 
-        <div className="grid gap-4 md:grid-cols-2">
-          {/* Contraseña ZIP */}
-          <div className="space-y-1">
-            <label className="text-xs font-medium text-muted-foreground" htmlFor="backup-password">
-              Contraseña de Cifrado del archivo de respaldo (Recomendado)
-            </label>
-            <div className="relative">
+        <div className="p-5 space-y-5">
+          {/* Habilitar */}
+          <div className="flex items-center justify-between rounded-lg border border-border bg-muted/10 p-4">
+            <div className="space-y-0.5">
+              <label className="text-sm font-semibold cursor-pointer" htmlFor="backup-active">
+                Habilitar Copias por Cambios de Asistencia
+              </label>
+              <p className="text-xs text-muted-foreground">
+                Se enviará un respaldo completo diario a la hora configurada.
+              </p>
+            </div>
+            <input
+              id="backup-active"
+              type="checkbox"
+              checked={active}
+              onChange={(e) => setActive(e.target.checked)}
+              className="size-5 cursor-pointer rounded border-border accent-primary"
+            />
+          </div>
+
+          <div className="grid gap-4 md:grid-cols-2">
+            {/* Correos */}
+            <div className="space-y-1">
+              <label className="text-xs font-medium text-muted-foreground" htmlFor="backup-emails">
+                Correos de Destinatarios (separados por coma)
+              </label>
               <input
-                id="backup-password"
-                type={showPassword ? 'text' : 'password'}
-                placeholder={
-                  config?.hasPassword
-                    ? '•••••••• (Establecida - escribe para cambiarla)'
-                    : 'Sin contraseña de encriptación (No recomendado)'
-                }
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                className="block w-full rounded-lg border border-border bg-background pl-3 pr-10 py-2 text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-primary focus:border-primary disabled:opacity-50"
+                id="backup-emails"
+                type="text"
+                placeholder="ejemplo@correo.com, admin@correo.com"
+                value={emails}
+                onChange={(e) => setEmails(e.target.value)}
+                className="block w-full rounded-lg border border-border bg-background px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-primary focus:border-primary disabled:opacity-50"
+                required
                 disabled={!active}
               />
-              <button
-                type="button"
-                onClick={() => setShowPassword((v) => !v)}
-                className="absolute inset-y-0 right-0 flex items-center px-3 text-muted-foreground hover:text-foreground transition disabled:opacity-50"
-                disabled={!active}
-                tabIndex={-1}
-                aria-label={showPassword ? 'Ocultar contraseña' : 'Mostrar contraseña'}
-              >
-                {showPassword ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
-              </button>
+              <p className="text-[10px] text-muted-foreground">
+                El respaldo diario llegará a todos los correos configurados.
+              </p>
             </div>
-            <p className="text-[10px] text-muted-foreground text-amber-600 dark:text-amber-400">
-              Cifra el archivo adjunto con AES-256. La clave no se envía por correo.
-            </p>
+
+            {/* Hora */}
+            <div className="space-y-1">
+              <label className="text-xs font-medium text-muted-foreground" htmlFor="backup-time">
+                Hora de Envío (Hora local de Chile)
+              </label>
+              <input
+                id="backup-time"
+                type="time"
+                value={time}
+                onChange={(e) => setTime(e.target.value)}
+                className="block w-full rounded-lg border border-border bg-background px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-primary focus:border-primary disabled:opacity-50"
+                required
+                disabled={!active}
+              />
+              <p className="text-[10px] text-muted-foreground">
+                A esta hora se enviará el respaldo completo de la base de datos.
+              </p>
+            </div>
           </div>
 
-          {/* Información y Test */}
-          <div className="rounded-lg border border-border bg-muted/20 p-4 flex flex-col justify-between">
-            <div className="text-xs text-muted-foreground">
-              <span className="font-semibold text-foreground">Seguridad e Integridad:</span>
-              <p className="mt-1">
-                La prueba fuerza un respaldo y valida que el servidor pueda enviar los correos.
+          <div className="grid gap-4 md:grid-cols-2">
+            {/* Contraseña ZIP */}
+            <div className="space-y-1">
+              <label
+                className="text-xs font-medium text-muted-foreground"
+                htmlFor="backup-password"
+              >
+                Contraseña de Cifrado del archivo de respaldo (Recomendado)
+              </label>
+              <div className="relative">
+                <input
+                  id="backup-password"
+                  type={showPassword ? 'text' : 'password'}
+                  placeholder={
+                    config?.hasPassword
+                      ? '•••••••• (Establecida - escribe para cambiarla)'
+                      : 'Sin contraseña de encriptación (No recomendado)'
+                  }
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  className="block w-full rounded-lg border border-border bg-background pl-3 pr-10 py-2 text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-primary focus:border-primary disabled:opacity-50"
+                  disabled={!active}
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowPassword((v) => !v)}
+                  className="absolute inset-y-0 right-0 flex items-center px-3 text-muted-foreground hover:text-foreground transition disabled:opacity-50"
+                  disabled={!active}
+                  tabIndex={-1}
+                  aria-label={showPassword ? 'Ocultar contraseña' : 'Mostrar contraseña'}
+                >
+                  {showPassword ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
+                </button>
+              </div>
+              <p className="text-[10px] text-muted-foreground text-amber-600 dark:text-amber-400">
+                Cifra el archivo adjunto con AES-256. La clave no se envía por correo.
               </p>
-              {hasChanges && (
-                <p className="mt-2 rounded-md border border-amber-300 bg-amber-50 px-2 py-1 text-amber-800 dark:border-amber-500/40 dark:bg-amber-500/10 dark:text-amber-200">
-                  Guarda la configuración antes de probar el envío.
-                </p>
-              )}
-              {passwordIncompatible && (
-                <p className="mt-2 rounded-md border border-red-300 bg-red-50 px-2 py-1 text-red-800 dark:border-red-500/40 dark:bg-red-500/10 dark:text-red-200">
-                  La contraseña actual no es compatible con ZIP cifrado. Cambiala usando solo
-                  letras, números y símbolos ASCII.
-                </p>
-              )}
-              {config && (
-                <div className="mt-3 space-y-1 rounded-lg border border-border bg-background/70 p-3">
-                  <p>
-                    <span className="font-medium text-foreground">Estado:</span>{' '}
-                    {config.running
-                      ? 'Ejecutando'
-                      : lastConfirmed
-                        ? 'Enviado correctamente'
-                        : config.lastStatus === 'success'
-                          ? 'Terminado sin confirmación de correo'
-                          : config.lastStatus === 'failed'
-                            ? 'Último respaldo falló'
-                            : 'Sin ejecución reciente'}
+
+              {config?.passwordPlain && (
+                <div className="mt-2 rounded-lg border border-border bg-muted/20 p-3 space-y-1.5">
+                  <p className="text-[11px] font-medium text-foreground">
+                    Contraseña actual para abrir los respaldos
                   </p>
-                  <p>
-                    <span className="font-medium text-foreground">Último intento:</span>{' '}
-                    {formatBackupTimestamp(config.lastAttemptAt)}
+                  <div className="flex items-center gap-2">
+                    <code className="flex-1 truncate rounded-md border border-border bg-background px-2 py-1.5 font-mono text-xs">
+                      {showCurrentKey ? config.passwordPlain : '•'.repeat(16)}
+                    </code>
+                    <button
+                      type="button"
+                      onClick={() => setShowCurrentKey((v) => !v)}
+                      className="rounded-md border border-border bg-background p-1.5 text-muted-foreground hover:text-foreground transition"
+                      aria-label={showCurrentKey ? 'Ocultar' : 'Mostrar'}
+                    >
+                      {showCurrentKey ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={copyKey}
+                      className="rounded-md border border-border bg-background px-2 py-1.5 text-xs font-medium text-muted-foreground hover:text-foreground transition"
+                    >
+                      Copiar
+                    </button>
+                  </div>
+                  <p className="text-[10px] text-muted-foreground">
+                    Úsala para abrir el ZIP cifrado. Guárdala en un lugar seguro; no se envía por
+                    correo.
                   </p>
-                  <p>
-                    <span className="font-medium text-foreground">Último éxito:</span>{' '}
-                    {formatBackupTimestamp(config.lastSuccessAt)}
-                  </p>
-                  <p>
-                    <span className="font-medium text-foreground">Entrega:</span>{' '}
-                    {config.lastDeliveryMode === 'download_link'
-                      ? 'Link temporal seguro'
-                      : config.lastDeliveryMode === 'attachment'
-                        ? 'Adjunto'
-                        : 'Sin registro'}
-                  </p>
-                  <p>
-                    <span className="font-medium text-foreground">Archivo:</span>{' '}
-                    {config.lastFileName ?? 'Sin registro'}
-                  </p>
-                  {zipVerified && (
-                    <p className="text-emerald-700 dark:text-emerald-300">
-                      <span className="font-medium">ZIP cifrado verificado:</span> listo para
-                      descargar.
-                    </p>
-                  )}
-                  {lastFileIsLegacy7z && (
-                    <p className="rounded-md border border-amber-300 bg-amber-50 px-2 py-1 text-amber-800 dark:border-amber-500/40 dark:bg-amber-500/10 dark:text-amber-200">
-                      Formato antiguo .7z no recomendado; ejecuta un nuevo backup para generar ZIP.
-                    </p>
-                  )}
-                  <p>
-                    <span className="font-medium text-foreground">Tamaño:</span>{' '}
-                    {formatBytes(config.lastFileSizeBytes)}
-                  </p>
-                  <p>
-                    <span className="font-medium text-foreground">Descarga completa:</span>{' '}
-                    {config.latestDownloadAvailable
-                      ? `${config.latestDownloadFileName ?? 'Disponible'} (${formatBytes(
-                          config.latestDownloadFileSizeBytes,
-                        )})`
-                      : 'No disponible'}
-                  </p>
-                  {config.latestDownloadExpiresAt && (
-                    <p>
-                      <span className="font-medium text-foreground">Descarga expira:</span>{' '}
-                      {formatBackupTimestamp(config.latestDownloadExpiresAt)}
-                    </p>
-                  )}
-                  {config.lastDownloadExpiresAt && (
-                    <p>
-                      <span className="font-medium text-foreground">Link expira:</span>{' '}
-                      {formatBackupTimestamp(config.lastDownloadExpiresAt)}
-                    </p>
-                  )}
-                  {config.lastDeliveryMode === 'download_link' && config.lastDownloadVerifiedAt && (
-                    <p>
-                      <span className="font-medium text-foreground">Link público:</span>{' '}
-                      {config.lastDownloadVerifiedStatus === '200'
-                        ? 'Verificado correctamente'
-                        : `Verificación ${config.lastDownloadVerifiedStatus ?? 'sin estado'}`}{' '}
-                      · {formatBackupTimestamp(config.lastDownloadVerifiedAt)}
-                    </p>
-                  )}
-                  {config.lastMessageId && (
-                    <p>
-                      <span className="font-medium text-foreground">Brevo messageId:</span>{' '}
-                      {config.lastMessageId}
-                    </p>
-                  )}
-                  {config.lastError && (
-                    <p className="text-red-600 dark:text-red-400">
-                      <span className="font-medium">Error:</span> {config.lastError}
-                    </p>
-                  )}
                 </div>
               )}
             </div>
-            {config?.latestDownloadAvailable && (
+
+            {/* Información y Test */}
+            <div className="rounded-lg border border-border bg-muted/20 p-4 flex flex-col justify-between">
+              <div className="text-xs text-muted-foreground">
+                <span className="font-semibold text-foreground">Seguridad e Integridad:</span>
+                <p className="mt-1">
+                  La prueba fuerza un respaldo y valida que el servidor pueda enviar los correos.
+                </p>
+                {hasChanges && (
+                  <p className="mt-2 rounded-md border border-amber-300 bg-amber-50 px-2 py-1 text-amber-800 dark:border-amber-500/40 dark:bg-amber-500/10 dark:text-amber-200">
+                    Guarda la configuración antes de probar el envío.
+                  </p>
+                )}
+                {passwordIncompatible && (
+                  <p className="mt-2 rounded-md border border-amber-300 bg-amber-50 px-2 py-1 text-amber-800 dark:border-amber-500/40 dark:bg-amber-500/10 dark:text-amber-200">
+                    La contraseña actual tenía caracteres no compatibles con ZIP cifrado. El sistema
+                    generará una compatible automáticamente en el próximo respaldo y la mostrará
+                    aquí.
+                  </p>
+                )}
+                {config && (
+                  <div className="mt-3 space-y-1 rounded-lg border border-border bg-background/70 p-3">
+                    <p>
+                      <span className="font-medium text-foreground">Estado:</span>{' '}
+                      {config.running
+                        ? 'Ejecutando'
+                        : lastConfirmed
+                          ? 'Enviado correctamente'
+                          : config.lastStatus === 'success'
+                            ? 'Terminado sin confirmación de correo'
+                            : config.lastStatus === 'failed'
+                              ? 'Último respaldo falló'
+                              : 'Sin ejecución reciente'}
+                    </p>
+                    <p>
+                      <span className="font-medium text-foreground">Último intento:</span>{' '}
+                      {formatBackupTimestamp(config.lastAttemptAt)}
+                    </p>
+                    <p>
+                      <span className="font-medium text-foreground">Último éxito:</span>{' '}
+                      {formatBackupTimestamp(config.lastSuccessAt)}
+                    </p>
+                    <p>
+                      <span className="font-medium text-foreground">Entrega:</span>{' '}
+                      {config.lastDeliveryMode === 'download_link'
+                        ? 'Link temporal seguro'
+                        : config.lastDeliveryMode === 'attachment'
+                          ? 'Adjunto'
+                          : 'Sin registro'}
+                    </p>
+                    <p>
+                      <span className="font-medium text-foreground">Archivo:</span>{' '}
+                      {config.lastFileName ?? 'Sin registro'}
+                    </p>
+                    {zipVerified && (
+                      <p className="text-emerald-700 dark:text-emerald-300">
+                        <span className="font-medium">ZIP cifrado verificado:</span> listo para
+                        descargar.
+                      </p>
+                    )}
+                    {lastFileIsLegacy7z && (
+                      <p className="rounded-md border border-amber-300 bg-amber-50 px-2 py-1 text-amber-800 dark:border-amber-500/40 dark:bg-amber-500/10 dark:text-amber-200">
+                        Formato antiguo .7z no recomendado; ejecuta un nuevo backup para generar
+                        ZIP.
+                      </p>
+                    )}
+                    <p>
+                      <span className="font-medium text-foreground">Tamaño:</span>{' '}
+                      {formatBytes(config.lastFileSizeBytes)}
+                    </p>
+                    <p>
+                      <span className="font-medium text-foreground">Descarga completa:</span>{' '}
+                      {config.latestDownloadAvailable
+                        ? `${config.latestDownloadFileName ?? 'Disponible'} (${formatBytes(
+                            config.latestDownloadFileSizeBytes,
+                          )})`
+                        : 'No disponible'}
+                    </p>
+                    {config.latestDownloadExpiresAt && (
+                      <p>
+                        <span className="font-medium text-foreground">Descarga expira:</span>{' '}
+                        {formatBackupTimestamp(config.latestDownloadExpiresAt)}
+                      </p>
+                    )}
+                    {config.lastDownloadExpiresAt && (
+                      <p>
+                        <span className="font-medium text-foreground">Link expira:</span>{' '}
+                        {formatBackupTimestamp(config.lastDownloadExpiresAt)}
+                      </p>
+                    )}
+                    {config.lastDeliveryMode === 'download_link' &&
+                      config.lastDownloadVerifiedAt && (
+                        <p>
+                          <span className="font-medium text-foreground">Link público:</span>{' '}
+                          {config.lastDownloadVerifiedStatus === '200'
+                            ? 'Verificado correctamente'
+                            : `Verificación ${config.lastDownloadVerifiedStatus ?? 'sin estado'}`}{' '}
+                          · {formatBackupTimestamp(config.lastDownloadVerifiedAt)}
+                        </p>
+                      )}
+                    {config.lastMessageId && (
+                      <p>
+                        <span className="font-medium text-foreground">Brevo messageId:</span>{' '}
+                        {config.lastMessageId}
+                      </p>
+                    )}
+                    {config.lastError && (
+                      <p className="text-red-600 dark:text-red-400">
+                        <span className="font-medium">Error:</span> {config.lastError}
+                      </p>
+                    )}
+                  </div>
+                )}
+              </div>
+              {config?.latestDownloadAvailable && (
+                <button
+                  type="button"
+                  onClick={() => downloadLatest.mutate()}
+                  disabled={downloadLatest.isPending || config.running}
+                  className="mt-3 w-full inline-flex justify-center items-center gap-2 rounded-lg border border-border bg-background px-3 py-2 text-xs font-medium hover:bg-muted transition-colors disabled:opacity-50"
+                >
+                  <Download className="size-4" />
+                  {downloadLatest.isPending ? 'Descargando...' : 'Descargar último backup completo'}
+                </button>
+              )}
               <button
                 type="button"
-                onClick={() => downloadLatest.mutate()}
-                disabled={downloadLatest.isPending || config.running}
+                onClick={() => {
+                  if (hasChanges) {
+                    toast.warning('Guarda la configuración antes de probar el envío');
+                    return;
+                  }
+                  testBackup.mutate();
+                }}
+                disabled={
+                  testBackup.isPending || save.isPending || !active || config?.running || hasChanges
+                }
                 className="mt-3 w-full inline-flex justify-center items-center gap-2 rounded-lg border border-border bg-background px-3 py-2 text-xs font-medium hover:bg-muted transition-colors disabled:opacity-50"
               >
-                <Download className="size-4" />
-                {downloadLatest.isPending ? 'Descargando...' : 'Descargar último backup completo'}
+                {testBackup.isPending || config?.running
+                  ? 'Backup en ejecución...'
+                  : 'Probar Envío Ahora (Test)'}
               </button>
-            )}
-            <button
-              type="button"
-              onClick={() => {
-                if (hasChanges) {
-                  toast.warning('Guarda la configuración antes de probar el envío');
-                  return;
-                }
-                testBackup.mutate();
-              }}
-              disabled={
-                testBackup.isPending ||
-                save.isPending ||
-                !active ||
-                config?.running ||
-                hasChanges ||
-                passwordIncompatible
-              }
-              className="mt-3 w-full inline-flex justify-center items-center gap-2 rounded-lg border border-border bg-background px-3 py-2 text-xs font-medium hover:bg-muted transition-colors disabled:opacity-50"
-            >
-              {testBackup.isPending || config?.running
-                ? 'Backup en ejecución...'
-                : 'Probar Envío Ahora (Test)'}
-            </button>
+            </div>
           </div>
         </div>
-      </div>
 
-      <div className="flex flex-wrap items-center justify-between gap-3 border-t border-border px-5 py-4 bg-muted/5">
-        <div className="text-xs text-muted-foreground">
-          Los cambios se aplicarán en la próxima revisión automática.
+        <div className="flex flex-wrap items-center justify-between gap-3 border-t border-border px-5 py-4 bg-muted/5">
+          <div className="text-xs text-muted-foreground">
+            Los cambios se aplicarán en la próxima revisión automática.
+          </div>
+          <button
+            type="submit"
+            disabled={!hasChanges || save.isPending}
+            className="inline-flex items-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90 disabled:opacity-50"
+          >
+            <Save className="size-4" />
+            {save.isPending ? 'Guardando...' : 'Guardar'}
+          </button>
         </div>
-        <button
-          type="submit"
-          disabled={!hasChanges || save.isPending}
-          className="inline-flex items-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90 disabled:opacity-50"
-        >
-          <Save className="size-4" />
-          {save.isPending ? 'Guardando...' : 'Guardar'}
-        </button>
+      </form>
+
+      <div className="rounded-xl border border-border bg-background overflow-hidden">
+        <div className="border-b border-border px-5 py-4 flex items-center justify-between gap-3">
+          <div className="flex items-center gap-3">
+            <div className="size-10 rounded-lg bg-muted flex items-center justify-center">
+              <Download className="size-5 text-muted-foreground" />
+            </div>
+            <div>
+              <h2 className="text-sm font-semibold">Historial de respaldos</h2>
+              <p className="text-xs text-muted-foreground">
+                Respaldos disponibles en el servidor (base de datos + archivos).
+              </p>
+            </div>
+          </div>
+          {config?.latestDownloadAvailable && (
+            <button
+              type="button"
+              onClick={() => downloadLatest.mutate()}
+              disabled={downloadLatest.isPending || config.running}
+              className="inline-flex shrink-0 items-center gap-2 rounded-lg bg-primary px-3 py-2 text-xs font-medium text-primary-foreground hover:bg-primary/90 transition-colors disabled:opacity-50"
+            >
+              <Download className="size-4" />
+              {downloadLatest.isPending ? 'Descargando...' : 'Descargar último'}
+            </button>
+          )}
+        </div>
+        <div className="p-2">
+          {!history || history.length === 0 ? (
+            <p className="px-3 py-6 text-center text-xs text-muted-foreground">
+              Aún no hay respaldos generados. Usa “Probar Envío Ahora” para crear el primero.
+            </p>
+          ) : (
+            <ul className="divide-y divide-border">
+              {history.map((item) => (
+                <li
+                  key={item.fileName}
+                  className="flex items-center justify-between gap-3 px-3 py-2.5"
+                >
+                  <div className="min-w-0">
+                    <p className="truncate text-xs font-medium text-foreground">{item.fileName}</p>
+                    <p className="text-[10px] text-muted-foreground">
+                      {formatBackupTimestamp(item.createdAt.slice(0, 19).replace('T', ' '))} ·{' '}
+                      {formatBytes(item.sizeBytes)} · {item.encrypted ? 'Cifrado' : 'Sin cifrar'}
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => downloadFromHistory.mutate(item.fileName)}
+                    disabled={downloadFromHistory.isPending}
+                    className="inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-border bg-background px-2.5 py-1.5 text-[11px] font-medium hover:bg-muted transition-colors disabled:opacity-50"
+                  >
+                    <Download className="size-3.5" />
+                    Descargar
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
       </div>
-    </form>
+    </div>
   );
 }

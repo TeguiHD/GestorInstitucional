@@ -8,8 +8,8 @@ import {
 } from '@nestjs/common';
 import { Cron } from '@nestjs/schedule';
 import { spawn } from 'child_process';
-import { createHash, timingSafeEqual } from 'crypto';
-import { stat } from 'fs/promises';
+import { createHash, randomInt, timingSafeEqual } from 'crypto';
+import { readdir, stat } from 'fs/promises';
 import path from 'path';
 import { PrismaService } from '../prisma/prisma.service.js';
 
@@ -47,6 +47,7 @@ type BackupConfigResponse = {
   time: string;
   hasPassword: boolean;
   passwordCompatible: boolean;
+  passwordPlain: string | null;
   active: boolean;
   lastSuccessAt: string | null;
   lastAttemptAt: string | null;
@@ -80,6 +81,17 @@ type StoredBackupDownload = {
   sizeBytes?: number;
   expiresAt: string;
 };
+
+type BackupHistoryItem = {
+  fileName: string;
+  sizeBytes: number;
+  createdAt: string;
+  encrypted: boolean;
+};
+
+// ASCII imprimible y sin caracteres que rompan shell/zip ("$`\\ y comillas).
+const BACKUP_PASSWORD_ALPHABET =
+  'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789._=+-!?@#%';
 
 @Injectable()
 export class SystemConfigService {
@@ -116,15 +128,15 @@ export class SystemConfigService {
     const lastFileSizeBytes = lastFileSizeRaw ? Number(lastFileSizeRaw) : null;
 
     const lastMessageId = configMap.get('backup_last_message_id') || null;
-    const latestDownload = await this.resolveStoredBackupFile(configMap).catch(() => null);
-    const latestDownloadAvailable =
-      lastStatus === 'success' && !!lastMessageId && latestDownload != null;
+    const latestDownload = await this.resolveLatestBackupFile(configMap).catch(() => null);
+    const latestDownloadAvailable = latestDownload != null;
 
     return {
       emails,
       time,
       hasPassword,
       passwordCompatible,
+      passwordPlain: configMap.get('backup_password') || null,
       active,
       lastSuccessAt: configMap.get('backup_last_success_at') || null,
       lastAttemptAt: configMap.get('backup_last_attempt_at') || null,
@@ -223,13 +235,7 @@ export class SystemConfigService {
 
   async getLatestBackupDownload() {
     const configMap = await this.getBackupSettings();
-    if (configMap.get('backup_last_status') !== 'success') {
-      throw new NotFoundException('No hay respaldo exitoso para descargar');
-    }
-    if (!configMap.get('backup_last_message_id')) {
-      throw new NotFoundException('El último respaldo no tiene confirmación de correo');
-    }
-    return this.resolveStoredBackupFile(configMap);
+    return this.resolveLatestBackupFile(configMap);
   }
 
   private async startBackup(source: 'manual' | 'scheduled') {
@@ -237,17 +243,9 @@ export class SystemConfigService {
     if (this.isBackupRunning(configMap)) {
       throw new ConflictException('Ya hay un backup en ejecución');
     }
-    const currentPassword = configMap.get('backup_password') || '';
-    if (currentPassword && !this.isZipPasswordCompatible(currentPassword)) {
-      const message =
-        'La contraseña actual del backup contiene caracteres no compatibles con ZIP AES. Cambia la contraseña por una con caracteres ASCII imprimibles.';
-      await this.upsertSettings({
-        backup_last_attempt_at: this.utcSqlNow(),
-        backup_last_status: 'failed',
-        backup_last_error: message,
-      });
-      throw new BadRequestException(message);
-    }
+    // Auto-repara una contraseña ausente o no-ASCII para que el ZIP cifrado
+    // nunca falle por compatibilidad. La nueva clave queda visible en el panel.
+    await this.ensureUsableBackupPassword();
 
     const scriptPath = path.resolve(process.cwd(), 'infra/backup/run-backup.sh');
     const startedAt = this.utcSqlNow();
@@ -255,13 +253,6 @@ export class SystemConfigService {
       backup_last_attempt_at: startedAt,
       backup_last_status: 'running',
       backup_last_error: '',
-      backup_last_message_id: '',
-      backup_last_delivery_mode: '',
-      backup_last_file_name: '',
-      backup_last_file_size_bytes: '',
-      backup_last_download_expires_at: '',
-      backup_last_download_verified_at: '',
-      backup_last_download_verified_status: '',
     });
 
     this.inProcessBackupRunning = true;
@@ -375,6 +366,106 @@ export class SystemConfigService {
       size: info.size,
       expiresAt: expiresAtRaw,
     };
+  }
+
+  private backupRootDir(): string {
+    return path.resolve(process.env.BACKUP_DIR || path.resolve(process.cwd(), 'backups'));
+  }
+
+  /** Genera una contraseña ASCII fuerte y segura para shell/zip. */
+  private generateAsciiBackupPassword(length = 24): string {
+    let out = '';
+    for (let i = 0; i < length; i++) {
+      out += BACKUP_PASSWORD_ALPHABET[randomInt(BACKUP_PASSWORD_ALPHABET.length)];
+    }
+    return out;
+  }
+
+  /**
+   * Garantiza que exista una contraseña de backup compatible con ZIP AES.
+   * Si falta o tiene caracteres no-ASCII, genera una nueva y la persiste.
+   * Devuelve la contraseña vigente.
+   */
+  private async ensureUsableBackupPassword(): Promise<string> {
+    const configMap = await this.getBackupSettings();
+    const current = configMap.get('backup_password') || '';
+    if (current && this.isZipPasswordCompatible(current)) return current;
+
+    const generated = this.generateAsciiBackupPassword(24);
+    await this.upsertSettings({ backup_password: generated });
+    this.log.warn(
+      'Contraseña de backup ausente o incompatible con ZIP AES; se generó una nueva (visible en el panel).',
+    );
+    return generated;
+  }
+
+  /** Resuelve el último respaldo descargable; cae al archivo más nuevo en disco. */
+  private async resolveLatestBackupFile(
+    configMap: Map<string, string>,
+  ): Promise<BackupFileDownload> {
+    const stored = await this.resolveStoredBackupFile(configMap).catch(() => null);
+    if (stored) return stored;
+    return this.resolveNewestBackupFileOnDisk();
+  }
+
+  private async resolveNewestBackupFileOnDisk(): Promise<BackupFileDownload> {
+    const history = await this.listBackupHistory();
+    const newest = history[0];
+    if (!newest) throw new NotFoundException('No hay respaldos disponibles');
+    return this.statBackupFileWithinRoot(newest.fileName);
+  }
+
+  /** Valida que el nombre esté dentro del directorio de backups y retorna su info. */
+  private async statBackupFileWithinRoot(fileName: string): Promise<BackupFileDownload> {
+    const backupRoot = this.backupRootDir();
+    const safePath = path.resolve(backupRoot, fileName);
+    if (!safePath.startsWith(`${backupRoot}${path.sep}`)) {
+      throw new ForbiddenException('Ruta de respaldo inválida');
+    }
+    const info = await stat(safePath).catch(() => null);
+    if (!info?.isFile()) throw new NotFoundException('Archivo de respaldo no encontrado');
+    return {
+      filePath: safePath,
+      fileName: path.basename(safePath),
+      size: info.size,
+      expiresAt: '',
+    };
+  }
+
+  async listBackupHistory(): Promise<BackupHistoryItem[]> {
+    const backupRoot = this.backupRootDir();
+    const entries = await readdir(backupRoot, { withFileTypes: true }).catch(() => []);
+    const items: BackupHistoryItem[] = [];
+    for (const entry of entries) {
+      if (!entry.isFile()) continue;
+      const name = entry.name;
+      if (!name.startsWith('backup_asistencia')) continue;
+      if (!/\.(zip|7z|sql)$/i.test(name)) continue;
+      const info = await stat(path.resolve(backupRoot, name)).catch(() => null);
+      if (!info?.isFile()) continue;
+      items.push({
+        fileName: name,
+        sizeBytes: info.size,
+        createdAt: info.mtime.toISOString(),
+        encrypted: /\.(zip|7z)$/i.test(name),
+      });
+    }
+    // Nombres con timestamp embebido ordenan cronológicamente; createdAt como respaldo.
+    items.sort(
+      (a, b) => b.fileName.localeCompare(a.fileName) || b.createdAt.localeCompare(a.createdAt),
+    );
+    return items;
+  }
+
+  /** Descarga de un respaldo del historial por nombre (sólo admin). */
+  async getBackupFileByName(fileName: string): Promise<BackupFileDownload> {
+    if (!fileName || fileName.includes('/') || fileName.includes('\\') || fileName.includes('..')) {
+      throw new ForbiddenException('Nombre de respaldo inválido');
+    }
+    if (path.basename(fileName) !== fileName) {
+      throw new ForbiddenException('Nombre de respaldo inválido');
+    }
+    return this.statBackupFileWithinRoot(fileName);
   }
 
   private parseStoredDownloadTokens(raw: string | null | undefined): StoredBackupDownload[] {

@@ -287,23 +287,20 @@ esac
 BACKUP_DIR="$PROJECT_DIR/backups"
 mkdir -p "$BACKUP_DIR"
 
+# Carpeta de archivos subidos (justificaciones, avatares, documentos) para el
+# respaldo COMPLETO del proyecto. Configurable; por defecto $PROJECT_DIR/uploads.
+UPLOADS_DIR="${BACKUP_UPLOADS_DIR:-$PROJECT_DIR/uploads}"
+
 DATE="$(date +%Y-%m-%d_%H%M%S)"
 FILE_NAME="backup_asistencia_${DATE}.sql"
 SQL_PATH="${BACKUP_DIR}/${FILE_NAME}"
-ZIP_PATH="${SQL_PATH}.zip"
+ZIP_PATH="${BACKUP_DIR}/backup_asistencia_${DATE}.zip"
 
 RUN_STARTED=true
 ATTEMPT_AT="$(date -u '+%Y-%m-%d %H:%M:%S')"
 upsert_setting backup_last_attempt_at "$ATTEMPT_AT"
 upsert_setting backup_last_status running
 upsert_setting backup_last_error ""
-upsert_setting backup_last_message_id ""
-upsert_setting backup_last_delivery_mode ""
-upsert_setting backup_last_file_name ""
-upsert_setting backup_last_file_size_bytes ""
-upsert_setting backup_last_download_expires_at ""
-upsert_setting backup_last_download_verified_at ""
-upsert_setting backup_last_download_verified_status ""
 
 if [ -n "$BACKUP_PASS_ZIP" ] && ! validate_zip_password "$BACKUP_PASS_ZIP"; then
   fail "la contrasena actual del backup no es compatible con ZIP AES; cambia la contrasena por una con caracteres ASCII imprimibles."
@@ -318,13 +315,26 @@ if [ ! -s "$SQL_PATH" ]; then
   fail "mariadb-dump genero un archivo vacio."
 fi
 
+# Respaldo COMPLETO: incluye el dump SQL + la carpeta de uploads (si existe).
+# Se referencian con rutas relativas a $PROJECT_DIR para una estructura limpia
+# dentro del ZIP: "backups/<dump>.sql" y "uploads/...".
+SQL_REL="${SQL_PATH#"$PROJECT_DIR"/}"
+ARCHIVE_ITEMS=("$SQL_REL")
+if [ -d "$UPLOADS_DIR" ]; then
+  UPLOADS_REL="${UPLOADS_DIR#"$PROJECT_DIR"/}"
+  ARCHIVE_ITEMS+=("$UPLOADS_REL")
+  echo "[$(date)] Incluyendo uploads en el respaldo: $UPLOADS_DIR"
+else
+  echo "[$(date)] Sin carpeta de uploads ($UPLOADS_DIR); respaldo solo de base de datos."
+fi
+
 if [ -n "$BACKUP_PASS_ZIP" ]; then
   SEVENZIP_BIN="$(command -v 7zz || command -v 7z || true)"
   if [ -z "$SEVENZIP_BIN" ]; then
     fail "se requiere 7z/7zz para cifrado ZIP AES-256."
   fi
-  echo "[$(date)] Cifrando ZIP con AES-256..."
-  if ! "$SEVENZIP_BIN" a -tzip -mem=AES256 -p"$BACKUP_PASS_ZIP" "$ZIP_PATH" "$SQL_PATH" >/dev/null 2>"$LAST_ERROR_FILE"; then
+  echo "[$(date)] Cifrando ZIP (BD + archivos) con AES-256..."
+  if ! ( cd "$PROJECT_DIR" && "$SEVENZIP_BIN" a -tzip -mem=AES256 -p"$BACKUP_PASS_ZIP" "$ZIP_PATH" "${ARCHIVE_ITEMS[@]}" ) >/dev/null 2>"$LAST_ERROR_FILE"; then
     fail "7z fallo al crear el ZIP cifrado AES-256; no se enviara respaldo en formato alternativo."
   fi
   if ! assert_zip_archive "$ZIP_PATH" "$BACKUP_PASS_ZIP"; then
@@ -332,8 +342,8 @@ if [ -n "$BACKUP_PASS_ZIP" ]; then
   fi
   rm -f "$SQL_PATH"
 else
-  echo "[$(date)] Comprimiendo ZIP sin cifrado..."
-  if ! zip -j "$ZIP_PATH" "$SQL_PATH" >/dev/null 2>"$LAST_ERROR_FILE"; then
+  echo "[$(date)] Comprimiendo ZIP (BD + archivos) sin cifrado..."
+  if ! ( cd "$PROJECT_DIR" && zip -r "$ZIP_PATH" "${ARCHIVE_ITEMS[@]}" ) >/dev/null 2>"$LAST_ERROR_FILE"; then
     fail "zip fallo al comprimir el respaldo."
   fi
   if ! assert_zip_archive "$ZIP_PATH"; then

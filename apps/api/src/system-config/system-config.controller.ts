@@ -54,6 +54,25 @@ export class SystemConfigController {
     void res.send(createReadStream(download.filePath));
   }
 
+  @Get('backup/history')
+  @ApiOperation({ summary: 'Historial de respaldos disponibles en el servidor' })
+  getBackupHistory() {
+    return this.systemConfig.listBackupHistory();
+  }
+
+  @Get('backup/file')
+  @ApiOperation({ summary: 'Descargar un respaldo del historial por nombre (admin)' })
+  async downloadBackupByName(@Query('name') name: string | undefined, @Res() res: FastifyReply) {
+    const download = await this.systemConfig.getBackupFileByName(name ?? '');
+    void res.header('Content-Type', this.backupContentType(download.fileName));
+    void res.header('Content-Length', String(download.size));
+    void res.header(
+      'Content-Disposition',
+      `attachment; filename="${encodeURIComponent(download.fileName)}"`,
+    );
+    void res.send(createReadStream(download.filePath));
+  }
+
   @Put('backup')
   @ApiOperation({ summary: 'Actualizar configuración del backup automático de base de datos' })
   updateBackupConfig(@Body() dto: UpdateBackupConfigDto) {
