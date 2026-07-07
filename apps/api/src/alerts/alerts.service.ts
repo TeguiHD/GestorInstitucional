@@ -9,6 +9,7 @@ import {
   emptyAttendanceCounts,
 } from '../attendance/attendance-calculation.js';
 import { CalendarService } from '../calendar/calendar.service.js';
+import { chileTodayKey, chileTodayUtc } from '../common/date-only.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { MailService } from '../mail/mail.service.js';
 import { SchoolConfigService } from '../school-config/school-config.service.js';
@@ -74,6 +75,11 @@ export class AlertsService {
       select: { id: true, name: true },
     });
     for (const school of schools) {
+      const skip = await this.isNonSchoolToday(school.id).catch(() => false);
+      if (skip) {
+        this.log.log(`Skipping alerts for school ${school.id}: hoy no es día lectivo`);
+        continue;
+      }
       await this.checkSchool(school.id, school.name).catch((e) =>
         this.log.warn(`Alert check failed for school ${school.id}: ${(e as Error).message}`),
       );
@@ -418,9 +424,13 @@ export class AlertsService {
     maxDays: number,
     roles: string[],
   ): Promise<number> {
-    const cutoff = new Date(Date.now() - maxDays * 86_400_000);
     const today = new Date();
     today.setHours(0, 0, 0, 0);
+
+    // El corte se mide en DÍAS LECTIVOS (no corridos): tras vacaciones o feriados
+    // no debe alertarse a quien registró hasta el último día de clases.
+    const cutoffKey = await this.schoolDayCutoffKey(schoolId, Math.max(1, maxDays));
+    if (!cutoffKey) return 0;
 
     const courseTeachers = await this.prisma.courseTeacher.findMany({
       where: { course: { schoolId, active: true } },
@@ -437,7 +447,7 @@ export class AlertsService {
         orderBy: { date: 'desc' },
         select: { date: true },
       });
-      if (!latest || latest.date < cutoff) {
+      if (!latest || this.schoolConfig.formatDate(latest.date) < cutoffKey) {
         lagging.push({
           teacher: `${ct.user.firstName} ${ct.user.lastName}`,
           course: ct.course.code,
@@ -467,6 +477,39 @@ export class AlertsService {
     });
 
     return 1;
+  }
+
+  /** Hoy (en Chile) es feriado, suspensión o vacaciones para este colegio. */
+  private async isNonSchoolToday(schoolId: string): Promise<boolean> {
+    const todayUtc = chileTodayUtc();
+    const nonSchool = await this.calendar.getNonSchoolDays(schoolId, todayUtc, todayUtc);
+    return nonSchool.has(chileTodayKey());
+  }
+
+  /**
+   * Clave (YYYY-MM-DD) del N-ésimo día lectivo hacia atrás, contando desde ayer
+   * (la lista de hoy puede no estar tomada aún cuando corre el cron). Devuelve
+   * null si en la ventana (~180 días) no se juntan N días lectivos.
+   */
+  private async schoolDayCutoffKey(schoolId: string, count: number): Promise<string | null> {
+    const todayUtc = chileTodayUtc();
+    const windowFrom = new Date(todayUtc);
+    windowFrom.setUTCDate(windowFrom.getUTCDate() - 180);
+    const nonSchool = await this.calendar.getNonSchoolDays(schoolId, windowFrom, todayUtc);
+
+    const cursor = new Date(todayUtc);
+    cursor.setUTCDate(cursor.getUTCDate() - 1);
+    let found = 0;
+    while (cursor >= windowFrom) {
+      const dow = cursor.getUTCDay();
+      const key = this.schoolConfig.formatDate(cursor);
+      if (dow !== 0 && dow !== 6 && !nonSchool.has(key)) {
+        found++;
+        if (found >= count) return key;
+      }
+      cursor.setUTCDate(cursor.getUTCDate() - 1);
+    }
+    return null;
   }
 
   private filterSchoolRecords<T extends { date: Date }>(

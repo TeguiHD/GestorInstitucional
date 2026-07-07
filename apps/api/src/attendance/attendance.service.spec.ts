@@ -63,6 +63,7 @@ function makeService(params: {
           enrollmentNumber: idx + 1,
         })),
       }),
+      findMany: vi.fn().mockResolvedValue([{ id: 'course-1', code: '1A', name: 'Primero A' }]),
     },
     $transaction: vi.fn().mockResolvedValue([]),
   };
@@ -85,6 +86,7 @@ function makeService(params: {
       schoolConfig as never,
     ),
     prisma,
+    calendar,
   };
 }
 
@@ -193,5 +195,49 @@ describe('AttendanceService.recordBulk', () => {
     expect(prisma.attendanceRecord.create).toHaveBeenCalledTimes(2);
     const created = prisma.attendanceRecord.create.mock.calls[0]![0] as { data: { date: Date } };
     expect(created.data.date.toISOString()).toBe('2026-05-12T00:00:00.000Z');
+  });
+});
+
+describe('AttendanceService.getMissingAttendance', () => {
+  const VACATION_DAYS = [
+    '2026-06-19',
+    '2026-06-22',
+    '2026-06-23',
+    '2026-06-24',
+    '2026-06-25',
+    '2026-06-26',
+  ];
+
+  function recordsOn(dates: string[]) {
+    return dates.map((date) => ({
+      courseId: 'course-1',
+      date: new Date(`${date}T00:00:00.000Z`),
+    }));
+  }
+
+  it('no cuenta como pendientes los días no lectivos (vacaciones entre semestres)', async () => {
+    const { service, prisma, calendar } = makeService({ activeStudentIds: [] });
+    calendar.getNonSchoolDays.mockResolvedValue(new Set(VACATION_DAYS));
+    prisma.attendanceRecord.findMany = vi
+      .fn()
+      .mockResolvedValue(recordsOn(['2026-06-15', '2026-06-16', '2026-06-17', '2026-06-18']));
+
+    const result = await service.getMissingAttendance('school-1', '2026-06-15', '2026-06-26');
+
+    expect(result).toEqual([]);
+  });
+
+  it('sigue reportando días lectivos sin registro', async () => {
+    const { service, prisma, calendar } = makeService({ activeStudentIds: [] });
+    calendar.getNonSchoolDays.mockResolvedValue(new Set(VACATION_DAYS));
+    prisma.attendanceRecord.findMany = vi
+      .fn()
+      .mockResolvedValue(recordsOn(['2026-06-15', '2026-06-17', '2026-06-18']));
+
+    const result = await service.getMissingAttendance('school-1', '2026-06-15', '2026-06-26');
+
+    expect(result).toEqual([
+      expect.objectContaining({ courseId: 'course-1', missingDates: ['2026-06-16'] }),
+    ]);
   });
 });

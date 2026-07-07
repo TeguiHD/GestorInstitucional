@@ -14,6 +14,7 @@ type CalendarDayRow = {
   description: string;
 };
 type CalendarDayResponse = Omit<CalendarDayRow, 'date'> & { date: string };
+type NonSchoolDayDetail = { type: string; description: string };
 
 @Injectable()
 export class CalendarService {
@@ -157,7 +158,11 @@ export class CalendarService {
     return { seeded: fixed.length, year };
   }
 
-  /** Returns set of ISO dates (YYYY-MM-DD) marked HOLIDAY or SUSPENDED in given range. */
+  /**
+   * Returns set of ISO dates (YYYY-MM-DD) that are NOT school days in the range:
+   * days marked HOLIDAY or SUSPENDED in the calendar, plus every day outside the
+   * configured academic year (before 1st semester, between semesters, after 2nd).
+   */
   async getNonSchoolDays(schoolId: string, from: Date, to: Date): Promise<Set<string>> {
     const range = expandDateOnlyRange(from, to);
     const days = await this.prisma.schoolCalendarDay.findMany({
@@ -170,18 +175,20 @@ export class CalendarService {
     });
     const fromKey = this.schoolConfig.formatDate(from);
     const toKey = this.schoolConfig.formatDate(to);
-    return new Set(
-      days
+    const outOfPeriod = await this.getOutOfPeriodDays(schoolId, from, to);
+    return new Set([
+      ...days
         .map((d) => this.calendarDateKey(d))
         .filter((dateKey) => dateKey >= fromKey && dateKey <= toKey),
-    );
+      ...outOfPeriod.keys(),
+    ]);
   }
 
   async getNonSchoolDayDetails(
     schoolId: string,
     from: Date,
     to: Date,
-  ): Promise<Record<string, { type: string; description: string }>> {
+  ): Promise<Record<string, NonSchoolDayDetail>> {
     const range = expandDateOnlyRange(from, to);
     const fromKey = this.schoolConfig.formatDate(from);
     const toKey = this.schoolConfig.formatDate(to);
@@ -194,11 +201,64 @@ export class CalendarService {
       select: { id: true, schoolId: true, date: true, type: true, description: true },
     });
 
-    const result: Record<string, { type: string; description: string }> = {};
+    const result: Record<string, NonSchoolDayDetail> = {};
+    for (const [key, detail] of await this.getOutOfPeriodDays(schoolId, from, to)) {
+      result[key] = detail;
+    }
+    // Los días marcados explícitamente en el calendario ganan sobre la etiqueta sintética.
     for (const day of days) {
       const key = this.calendarDateKey(day);
       if (key < fromKey || key > toKey) continue;
       result[key] = { type: day.type, description: day.description };
+    }
+    return result;
+  }
+
+  /**
+   * Días de [from, to] que caen fuera del período lectivo del año escolar
+   * (config guardada o default por año, vía SchoolConfigService). Son entradas
+   * sintéticas — no se persisten en school_calendar_days — de modo que un
+   * cambio en la configuración de semestres se refleja de inmediato.
+   */
+  private async getOutOfPeriodDays(
+    schoolId: string,
+    from: Date,
+    to: Date,
+  ): Promise<Map<string, NonSchoolDayDetail>> {
+    const result = new Map<string, NonSchoolDayDetail>();
+    const fromKey = this.schoolConfig.formatDate(from);
+    const toKey = this.schoolConfig.formatDate(to);
+    if (fromKey > toKey) return result;
+
+    const startYear = Number(fromKey.slice(0, 4));
+    const endYear = Number(toKey.slice(0, 4));
+
+    for (let year = startYear; year <= endYear; year++) {
+      const { ranges } = await this.schoolConfig.getAnnualPeriod(schoolId, year);
+      const firstStartKey = ranges[0] ? this.schoolConfig.formatDate(ranges[0].from) : null;
+      const lastEndKey = ranges[ranges.length - 1]
+        ? this.schoolConfig.formatDate(ranges[ranges.length - 1]!.to)
+        : null;
+
+      const yearFromKey = fromKey > `${year}-01-01` ? fromKey : `${year}-01-01`;
+      const yearToKey = toKey < `${year}-12-31` ? toKey : `${year}-12-31`;
+      if (yearFromKey > yearToKey) continue;
+
+      const cursor = parseDateOnlyUtc(yearFromKey);
+      const end = parseDateOnlyUtc(yearToKey);
+      while (cursor <= end) {
+        const key = this.schoolConfig.formatDate(cursor);
+        if (!this.schoolConfig.isDateInRanges(cursor, ranges)) {
+          const isSummer =
+            (firstStartKey !== null && key < firstStartKey) ||
+            (lastEndKey !== null && key > lastEndKey);
+          result.set(key, {
+            type: 'VACATION',
+            description: isSummer ? 'Vacaciones de verano' : 'Vacaciones de invierno',
+          });
+        }
+        cursor.setUTCDate(cursor.getUTCDate() + 1);
+      }
     }
     return result;
   }
