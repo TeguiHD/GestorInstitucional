@@ -25,7 +25,8 @@ export default defineConfig(function (_a) {
           skipWaiting: false,
           globPatterns: ['**/*.{js,css,html,svg,png,ico,woff2}'],
           // No servir el app-shell para navegaciones a la API: abrir un enlace
-          // /api/... (p.ej. descarga de respaldo) debe ir a la red, no al SPA.
+          // /api/... (p.ej. descarga de respaldo) debe ir a la red, no al SPA
+          // (de lo contrario el router muestra "Not Found").
           navigateFallbackDenylist: [/^\/api\//],
           runtimeCaching: [
             {
@@ -118,6 +119,7 @@ export default defineConfig(function (_a) {
       environment: 'jsdom',
       globals: true,
       setupFiles: './src/test/setup.ts',
+      env: { TZ: 'America/Santiago' },
     },
   };
 });

@@ -72,6 +72,49 @@ describe('AlertsService attendance thresholds', () => {
   });
 });
 
+describe('AlertsService.upsertRule — validación de threshold por tipo', () => {
+  function makeService() {
+    const prisma = { alertRule: { upsert: vi.fn().mockResolvedValue({ id: 'rule-1' }) } };
+    const service = new AlertsService(
+      prisma as never,
+      { sendSystemAlert: vi.fn() } as never,
+      { getNonSchoolDays: vi.fn() } as never,
+      schoolConfig(),
+    );
+    return { service, prisma };
+  }
+
+  it('rechaza umbral de días guardado como fracción (bug histórico del form: 3 → 0.03)', async () => {
+    const { service, prisma } = makeService();
+    await expect(
+      service.upsertRule({
+        schoolId: 'school-1',
+        trigger: AlertTrigger.STUDENT_CONSECUTIVE_ABSENCES,
+        threshold: 0.03,
+      }),
+    ).rejects.toMatchObject({ status: 400 });
+    expect(prisma.alertRule.upsert).not.toHaveBeenCalled();
+  });
+
+  it('acepta fracción para porcentajes y entero para días', async () => {
+    const { service } = makeService();
+    await expect(
+      service.upsertRule({
+        schoolId: 'school-1',
+        trigger: AlertTrigger.STUDENT_BELOW_THRESHOLD,
+        threshold: 0.85,
+      }),
+    ).resolves.toBeTruthy();
+    await expect(
+      service.upsertRule({
+        schoolId: 'school-1',
+        trigger: AlertTrigger.TEACHER_NO_RECORD,
+        threshold: 2,
+      }),
+    ).resolves.toBeTruthy();
+  });
+});
+
 describe('AlertsService.runDailyAlerts — días no lectivos', () => {
   afterEach(() => {
     vi.useRealTimers();

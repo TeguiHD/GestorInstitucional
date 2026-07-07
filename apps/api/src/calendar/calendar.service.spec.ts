@@ -151,6 +151,14 @@ describe('CalendarService.getNonSchoolDays — período lectivo', () => {
     expect(after.has('2026-12-22')).toBe(true);
   });
 
+  it('rechaza rangos absurdamente amplios (protección de queries por día)', async () => {
+    const { service } = makeService();
+
+    await expect(
+      service.getNonSchoolDays('school-1', d('2020-01-01'), d('2030-01-01')),
+    ).rejects.toMatchObject({ status: 400 });
+  });
+
   it('cruza el año hacia el verano siguiente usando la config de cada año', async () => {
     const { service } = makeService({
       savedConfig: {

@@ -1,4 +1,4 @@
-import { Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { Cron } from '@nestjs/schedule';
 import type { AlertTrigger } from '@prisma/client';
 
@@ -39,6 +39,7 @@ export class AlertsService {
     enabled?: boolean;
     notifyRoles?: string[];
   }) {
+    this.assertValidThreshold(dto.trigger, dto.threshold);
     return this.prisma.alertRule.upsert({
       where: { schoolId_trigger: { schoolId: dto.schoolId, trigger: dto.trigger } },
       update: {
@@ -75,7 +76,10 @@ export class AlertsService {
       select: { id: true, name: true },
     });
     for (const school of schools) {
-      const skip = await this.isNonSchoolToday(school.id).catch(() => false);
+      const skip = await this.isNonSchoolToday(school.id).catch((e) => {
+        this.log.warn(`isNonSchoolToday failed for school ${school.id}: ${(e as Error).message}`);
+        return false;
+      });
       if (skip) {
         this.log.log(`Skipping alerts for school ${school.id}: hoy no es día lectivo`);
         continue;
@@ -173,11 +177,35 @@ export class AlertsService {
           schoolName,
           from,
           to,
-          rule.threshold ?? 3,
+          normalizeDayCount(rule.threshold, 3),
           roles,
         );
       case 'TEACHER_NO_RECORD':
-        return this.checkTeacherNoRecord(rule.id, schoolId, schoolName, rule.threshold ?? 2, roles);
+        return this.checkTeacherNoRecord(
+          rule.id,
+          schoolId,
+          schoolName,
+          normalizeDayCount(rule.threshold, 2),
+          roles,
+        );
+    }
+  }
+
+  /**
+   * Percent triggers guardan fracción (0-1]; triggers de conteo de días guardan
+   * enteros >= 1. Evita que el umbral "3 días" se persista como 0.03.
+   */
+  private assertValidThreshold(trigger: AlertTrigger, threshold?: number): void {
+    if (threshold === undefined || threshold === null) return;
+    if (!Number.isFinite(threshold)) {
+      throw new BadRequestException('threshold debe ser numérico');
+    }
+    const isPercent = trigger === 'STUDENT_BELOW_THRESHOLD' || trigger === 'COURSE_BELOW_THRESHOLD';
+    if (isPercent && (threshold <= 0 || threshold > 1)) {
+      throw new BadRequestException('threshold de porcentaje debe estar entre 0 y 1');
+    }
+    if (!isPercent && (!Number.isInteger(threshold) || threshold < 1)) {
+      throw new BadRequestException('threshold de días debe ser un entero mayor o igual a 1');
     }
   }
 
@@ -424,13 +452,15 @@ export class AlertsService {
     maxDays: number,
     roles: string[],
   ): Promise<number> {
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-
     // El corte se mide en DÍAS LECTIVOS (no corridos): tras vacaciones o feriados
     // no debe alertarse a quien registró hasta el último día de clases.
-    const cutoffKey = await this.schoolDayCutoffKey(schoolId, Math.max(1, maxDays));
-    if (!cutoffKey) return 0;
+    const cutoffKey = await this.schoolDayCutoffKey(schoolId, maxDays);
+    if (!cutoffKey) {
+      this.log.warn(
+        `TEACHER_NO_RECORD ${ruleId}: no se juntan ${maxDays} días lectivos en la ventana de 180 días — regla omitida`,
+      );
+      return 0;
+    }
 
     const courseTeachers = await this.prisma.courseTeacher.findMany({
       where: { course: { schoolId, active: true } },
@@ -457,6 +487,8 @@ export class AlertsService {
 
     if (lagging.length === 0) return 0;
 
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
     const alreadyFired = await this.prisma.alertFired.findFirst({
       where: { ruleId, firedAt: { gte: today } },
     });
@@ -469,7 +501,7 @@ export class AlertsService {
     await this.notifyRoleUsers(schoolId, roles, {
       subject: `⚠ Profesores sin registro de asistencia — ${schoolName}`,
       body:
-        `Los siguientes profesores no han registrado asistencia en ${maxDays}+ días:\n\n` +
+        `Los siguientes profesores no han registrado asistencia en ${maxDays}+ días lectivos:\n\n` +
         lagging
           .slice(0, 20)
           .map((l) => `• ${l.teacher} (${l.course})`)
@@ -555,4 +587,10 @@ export class AlertsService {
         .catch((e) => this.log.warn(`Alert email to ${u.email} failed: ${(e as Error).message}`));
     }
   }
+}
+
+/** Umbrales de conteo de días: entero >= 1; filas legadas con fracción (bug del form) caen al default. */
+function normalizeDayCount(threshold: number | null, fallback: number): number {
+  if (threshold === null || !Number.isFinite(threshold) || threshold < 1) return fallback;
+  return Math.round(threshold);
 }

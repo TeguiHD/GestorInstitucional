@@ -1,4 +1,4 @@
-import { Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import type { CalendarDayType } from '@prisma/client';
 
 import { expandDateOnlyRange, parseDateOnlyUtc } from '../common/date-only.js';
@@ -164,24 +164,7 @@ export class CalendarService {
    * configured academic year (before 1st semester, between semesters, after 2nd).
    */
   async getNonSchoolDays(schoolId: string, from: Date, to: Date): Promise<Set<string>> {
-    const range = expandDateOnlyRange(from, to);
-    const days = await this.prisma.schoolCalendarDay.findMany({
-      where: {
-        schoolId,
-        date: { gte: range.from, lte: range.to },
-        type: { in: ['HOLIDAY', 'SUSPENDED'] },
-      },
-      select: { id: true, schoolId: true, date: true, type: true, description: true },
-    });
-    const fromKey = this.schoolConfig.formatDate(from);
-    const toKey = this.schoolConfig.formatDate(to);
-    const outOfPeriod = await this.getOutOfPeriodDays(schoolId, from, to);
-    return new Set([
-      ...days
-        .map((d) => this.calendarDateKey(d))
-        .filter((dateKey) => dateKey >= fromKey && dateKey <= toKey),
-      ...outOfPeriod.keys(),
-    ]);
+    return new Set(Object.keys(await this.getNonSchoolDayDetails(schoolId, from, to)));
   }
 
   async getNonSchoolDayDetails(
@@ -232,13 +215,22 @@ export class CalendarService {
 
     const startYear = Number(fromKey.slice(0, 4));
     const endYear = Number(toKey.slice(0, 4));
+    // from/to llegan de query params validados solo en formato: acotar el ancho
+    // evita un barrido de siglos (queries de config + iteración por día).
+    if (endYear - startYear > 2) {
+      throw new BadRequestException('Rango de fechas demasiado amplio (máximo 3 años)');
+    }
 
     for (let year = startYear; year <= endYear; year++) {
+      // Si el lookup de config falla se propaga: mejor un error visible que
+      // números silenciosamente incorrectos (los crons aíslan por colegio).
       const { ranges } = await this.schoolConfig.getAnnualPeriod(schoolId, year);
-      const firstStartKey = ranges[0] ? this.schoolConfig.formatDate(ranges[0].from) : null;
-      const lastEndKey = ranges[ranges.length - 1]
-        ? this.schoolConfig.formatDate(ranges[ranges.length - 1]!.to)
-        : null;
+      const [firstSemester, secondSemester] = ranges;
+      if (!firstSemester || !secondSemester) continue;
+      const yearStartKey = this.schoolConfig.formatDate(firstSemester.from);
+      const yearEndKey = this.schoolConfig.formatDate(secondSemester.to);
+      const gapFromKey = this.schoolConfig.formatDate(firstSemester.to);
+      const gapToKey = this.schoolConfig.formatDate(secondSemester.from);
 
       const yearFromKey = fromKey > `${year}-01-01` ? fromKey : `${year}-01-01`;
       const yearToKey = toKey < `${year}-12-31` ? toKey : `${year}-12-31`;
@@ -248,10 +240,9 @@ export class CalendarService {
       const end = parseDateOnlyUtc(yearToKey);
       while (cursor <= end) {
         const key = this.schoolConfig.formatDate(cursor);
-        if (!this.schoolConfig.isDateInRanges(cursor, ranges)) {
-          const isSummer =
-            (firstStartKey !== null && key < firstStartKey) ||
-            (lastEndKey !== null && key > lastEndKey);
+        const isSummer = key < yearStartKey || key > yearEndKey;
+        const isWinterGap = key > gapFromKey && key < gapToKey;
+        if (isSummer || isWinterGap) {
           result.set(key, {
             type: 'VACATION',
             description: isSummer ? 'Vacaciones de verano' : 'Vacaciones de invierno',

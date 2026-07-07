@@ -39,6 +39,25 @@ export class WeeklyDigestCron {
     let total = 0;
 
     for (const school of schools) {
+      try {
+        total += await this.runForSchool(school, weekStart, weekEnd);
+      } catch (e) {
+        // Aislar por colegio (mismo patrón que runDailyAlerts): un colegio con
+        // error no debe abortar el digest de los demás.
+        this.log.warn(`weekly digest failed for school ${school.id}: ${(e as Error).message}`);
+      }
+    }
+
+    this.log.log(`weekly digest enqueued: ${total}`);
+  }
+
+  private async runForSchool(
+    school: { id: string; name: string },
+    weekStart: Date,
+    weekEnd: Date,
+  ): Promise<number> {
+    let total = 0;
+    {
       // Active guardianships with guardian email
       const guardianships = await this.prisma.guardianship.findMany({
         where: {
@@ -119,8 +138,7 @@ export class WeeklyDigestCron {
         if (result.id) total++;
       }
     }
-
-    this.log.log(`weekly digest enqueued: ${total}`);
+    return total;
   }
 }
 

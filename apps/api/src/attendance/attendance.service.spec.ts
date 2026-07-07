@@ -181,6 +181,27 @@ describe('AttendanceService.recordBulk', () => {
     expect(arg.data.status).toBe(AttendanceStatus.JUSTIFIED);
   });
 
+  it('rechaza registrar asistencia en un día no lectivo (feriado/suspensión/vacaciones)', async () => {
+    const { service, calendar, prisma } = makeService({ activeStudentIds: ['s1'] });
+    calendar.getNonSchoolDays.mockResolvedValue(new Set(['2026-05-12']));
+
+    await expect(
+      service.recordBulk(dto([{ studentId: 's1', status: AttendanceStatus.PRESENT }]), 'user-1'),
+    ).rejects.toBeInstanceOf(BadRequestException);
+    expect(prisma.attendanceRecord.create).not.toHaveBeenCalled();
+    expect(prisma.attendanceRecord.update).not.toHaveBeenCalled();
+  });
+
+  it('permite registrar en un día lectivo normal (set no lectivo vacío)', async () => {
+    const { service, prisma } = makeService({ activeStudentIds: ['s1'] });
+
+    await service.recordBulk(
+      dto([{ studentId: 's1', status: AttendanceStatus.PRESENT }]),
+      'user-1',
+    );
+    expect(prisma.attendanceRecord.create).toHaveBeenCalledTimes(1);
+  });
+
   it('escribe la fecha como medianoche UTC del día, sin corrimiento por TZ', async () => {
     const { service, prisma } = makeService({ activeStudentIds: ['s1', 's2'] });
 

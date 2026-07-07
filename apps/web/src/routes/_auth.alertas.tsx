@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
 import { Bell, Play, Trash2, Plus } from 'lucide-react';
 import { api } from '@/lib/api';
+import { TRIGGER_DEFAULT_THRESHOLD, thresholdPayload } from '@/lib/alert-threshold';
 import { useUser } from '@/stores/auth.store';
 import { useEffectiveSchoolId } from '@/stores/school.store';
 
@@ -42,7 +43,8 @@ const TRIGGER_DESCRIPTIONS: Record<AlertTrigger, string> = {
   STUDENT_BELOW_THRESHOLD: 'Notifica cuando un alumno cae bajo el % de asistencia configurado',
   COURSE_BELOW_THRESHOLD: 'Notifica cuando un curso entero cae bajo el umbral',
   STUDENT_CONSECUTIVE_ABSENCES: 'Notifica cuando un alumno acumula N días seguidos de ausencia',
-  TEACHER_NO_RECORD: 'Notifica cuando un profesor no ha registrado asistencia en N días',
+  TEACHER_NO_RECORD:
+    'Notifica cuando un profesor no ha registrado asistencia en N días lectivos (no cuenta feriados ni vacaciones)',
 };
 
 const ALL_TRIGGERS: AlertTrigger[] = [
@@ -130,10 +132,9 @@ function AlertasPage() {
 
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    const threshold = parseFloat(form.threshold) / 100;
     upsert.mutate({
       trigger: form.trigger,
-      threshold: isNaN(threshold) ? undefined : threshold,
+      threshold: thresholdPayload(form.trigger, form.threshold),
       windowDays: parseInt(form.windowDays, 10) || 30,
       enabled: form.enabled,
       notifyRoles: ['DIRECTOR', 'UTP', 'INSPECTORIA'],
@@ -167,7 +168,12 @@ function AlertasPage() {
             <button
               onClick={() => {
                 setShowForm(true);
-                if (availableTriggers[0]) setForm({ ...DEFAULTS, trigger: availableTriggers[0] });
+                if (availableTriggers[0])
+                  setForm({
+                    ...DEFAULTS,
+                    trigger: availableTriggers[0],
+                    threshold: TRIGGER_DEFAULT_THRESHOLD[availableTriggers[0]],
+                  });
               }}
               className="flex items-center gap-2 px-4 py-2 text-sm rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 transition-colors"
             >
@@ -239,9 +245,14 @@ function AlertasPage() {
               <select
                 id="alert-trigger"
                 value={form.trigger}
-                onChange={(e) =>
-                  setForm((f) => ({ ...f, trigger: e.target.value as AlertTrigger }))
-                }
+                onChange={(e) => {
+                  const trigger = e.target.value as AlertTrigger;
+                  setForm((f) => ({
+                    ...f,
+                    trigger,
+                    threshold: TRIGGER_DEFAULT_THRESHOLD[trigger],
+                  }));
+                }}
                 className="rounded-lg border border-border bg-background px-3 py-2 text-sm"
               >
                 {availableTriggers.map((t) => (
@@ -258,7 +269,7 @@ function AlertasPage() {
                 className="text-xs text-muted-foreground font-medium"
               >
                 {form.trigger === 'TEACHER_NO_RECORD'
-                  ? 'Días sin registro'
+                  ? 'Días lectivos sin registro'
                   : form.trigger === 'STUDENT_CONSECUTIVE_ABSENCES'
                     ? 'Ausencias consecutivas mínimas'
                     : 'Umbral de asistencia (%)'}

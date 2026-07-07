@@ -55,6 +55,7 @@ export class AttendanceService {
   /** Bulk upsert daily attendance for a course. Idempotent — safe to call multiple times. */
   async recordBulk(dto: RecordAttendanceDto, recordedById: string): Promise<{ upserted: number }> {
     const date = parseDateOnlyUtc(dto.date);
+    await this.assertSchoolDay(dto.courseId, date);
     const activeStudentIds = await this.assertEntriesBelongToCourse(dto, date);
     const existingRecords = await this.findExistingRecordsForDate(
       dto.courseId,
@@ -107,6 +108,26 @@ export class AttendanceService {
     );
 
     return { upserted: dto.entries.length };
+  }
+
+  /**
+   * La grilla ya bloquea días no lectivos en el cliente; esto cierra la vía
+   * directa por API. Un registro en día no lectivo queda fuera de todas las
+   * estadísticas y bloquea guardar la configuración de semestres.
+   */
+  private async assertSchoolDay(courseId: string, date: Date): Promise<void> {
+    const course = await this.prisma.course.findUnique({
+      where: { id: courseId },
+      select: { schoolId: true },
+    });
+    if (!course) throw new NotFoundException('Curso no encontrado');
+    const nonSchool = await this.calendar.getNonSchoolDays(course.schoolId, date, date);
+    const dateKey = this.schoolConfig.formatDate(date);
+    if (nonSchool.has(dateKey)) {
+      throw new BadRequestException(
+        'No se puede registrar asistencia en un día no lectivo (feriado, suspensión o vacaciones)',
+      );
+    }
   }
 
   private async assertEntriesBelongToCourse(
