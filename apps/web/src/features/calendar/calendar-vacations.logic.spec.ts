@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
   getVacationBanners,
   getVacationInfo,
+  isWeekendKey,
   shiftDateKey,
   type AcademicYearConfig,
 } from './calendar-vacations.logic';
@@ -107,5 +108,31 @@ describe('getVacationBanners', () => {
 
   it('sin config retorna lista vacia', () => {
     expect(getVacationBanners(2026, undefined)).toEqual([]);
+  });
+});
+
+describe('isWeekendKey', () => {
+  it('detecta sabados y domingos sin timezone local', () => {
+    expect(isWeekendKey('2026-07-25')).toBe(true); // sábado
+    expect(isWeekendKey('2026-07-26')).toBe(true); // domingo
+    expect(isWeekendKey('2026-07-24')).toBe(false); // viernes
+    expect(isWeekendKey('2026-07-27')).toBe(false); // lunes
+  });
+});
+
+describe('getVacationBanners — solo franjas con dias habiles', () => {
+  it('omite la franja de invierno cuando el hueco entre semestres es solo fin de semana', () => {
+    const realCssp2026: AcademicYearConfig = {
+      firstSemester: { startDate: '2026-03-04', endDate: '2026-07-24' },
+      secondSemester: { startDate: '2026-07-27', endDate: '2026-12-04' },
+    };
+    const kinds = getVacationBanners(2026, realCssp2026).map((b) => b.kind);
+    expect(kinds).not.toContain('winter');
+    // el verano de inicio y el de fin de año (05-dic→31-dic tiene hábiles) sí van
+    expect(kinds).toEqual(['summer', 'summer']);
+  });
+
+  it('mantiene la franja de invierno cuando el hueco tiene dias habiles', () => {
+    expect(getVacationBanners(2026, config2026).map((b) => b.kind)).toContain('winter');
   });
 });

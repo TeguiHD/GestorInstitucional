@@ -57,6 +57,19 @@ export function getVacationInfo(
   return null;
 }
 
+/** true si la fecha YYYY-MM-DD cae sábado o domingo (UTC, sin TZ local). */
+export function isWeekendKey(dateKey: string): boolean {
+  const dow = new Date(`${dateKey}T00:00:00Z`).getUTCDay();
+  return dow === 0 || dow === 6;
+}
+
+function rangeContainsWeekday(from: string, to: string): boolean {
+  for (let key = from; key <= to; key = shiftDateKey(key, 1)) {
+    if (!isWeekendKey(key)) return true;
+  }
+  return false;
+}
+
 /** Franjas informativas del año calendario, para las cards bajo la grilla. */
 export function getVacationBanners(
   year: number,
@@ -99,5 +112,7 @@ export function getVacationBanners(
     });
   }
 
-  return banners;
+  // Una "franja" sin días hábiles (ej: hueco entre semestres que cae en
+  // fin de semana) no es información útil — se omite.
+  return banners.filter((b) => rangeContainsWeekday(b.from, b.to));
 }
