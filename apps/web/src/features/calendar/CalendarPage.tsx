@@ -87,7 +87,7 @@ export function CalendarPage() {
   // Config de semestres para derivar vacaciones (misma fuente que reportes/asistencia).
   // Sin retry ni toast: si falla, la página se ve exactamente como antes.
   const { data: academicYear } = useQuery<AcademicYearConfig>({
-    queryKey: ['academic-year', schoolId, year],
+    queryKey: ['school-academic-year-config', schoolId, year],
     queryFn: () => api.get(`/school-config/${schoolId}/academic-year/${year}`),
     enabled: !!schoolId,
     staleTime: 1000 * 60 * 60,
