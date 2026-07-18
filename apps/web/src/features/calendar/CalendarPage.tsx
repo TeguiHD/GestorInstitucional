@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { ChevronLeft, ChevronRight, Send, Trash2 } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Send, Snowflake, Sun, Trash2 } from 'lucide-react';
 import { useMemo, useState } from 'react';
 import { toast } from 'sonner';
 
@@ -7,6 +7,12 @@ import { api } from '@/lib/api';
 import { useUser } from '@/stores/auth.store';
 import { useEffectiveSchoolId } from '@/stores/school.store';
 import { cn } from '@/lib/cn';
+
+import {
+  getVacationBanners,
+  getVacationInfo,
+  type AcademicYearConfig,
+} from './calendar-vacations.logic';
 
 type DayType = 'HOLIDAY' | 'SUSPENDED' | 'EVENT';
 type CalendarDay = { id: string; date: string; type: DayType; description: string };
@@ -76,6 +82,16 @@ export function CalendarPage() {
     queryKey: ['calendar', schoolId, year],
     queryFn: () => api.get(`/calendar/school/${schoolId}?year=${year}`),
     enabled: !!schoolId,
+  });
+
+  // Config de semestres para derivar vacaciones (misma fuente que reportes/asistencia).
+  // Sin retry ni toast: si falla, la página se ve exactamente como antes.
+  const { data: academicYear } = useQuery<AcademicYearConfig>({
+    queryKey: ['academic-year', schoolId, year],
+    queryFn: () => api.get(`/school-config/${schoolId}/academic-year/${year}`),
+    enabled: !!schoolId,
+    staleTime: 1000 * 60 * 60,
+    retry: false,
   });
 
   const dayMap = useMemo(() => {
@@ -221,6 +237,7 @@ export function CalendarPage() {
               if (!day) return <div key={i} />;
               const dateStr = `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
               const special = dayMap.get(dateStr);
+              const vacation = !special ? getVacationInfo(dateStr, academicYear) : null;
               const isToday =
                 year === today.getFullYear() &&
                 month === today.getMonth() &&
@@ -232,9 +249,14 @@ export function CalendarPage() {
                 <button
                   key={i}
                   onClick={() => handleDayClick(day)}
+                  title={vacation?.label}
                   className={cn(
                     'relative flex flex-col items-center rounded-lg py-1.5 px-1 text-xs transition select-none',
-                    isWeekend && !special ? 'text-muted-foreground/60' : 'text-foreground',
+                    vacation
+                      ? 'bg-muted/60 text-muted-foreground/50'
+                      : isWeekend && !special
+                        ? 'text-muted-foreground/60'
+                        : 'text-foreground',
                     special ? 'font-semibold' : '',
                     isToday ? 'ring-2 ring-primary ring-offset-1' : '',
                     canEdit || special ? 'cursor-pointer hover:bg-muted' : 'cursor-default',
@@ -267,8 +289,53 @@ export function CalendarPage() {
               {cfg.label}
             </div>
           ))}
+          <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+            <span className="size-2 rounded-[3px] border border-border bg-muted" />
+            Vacaciones
+          </div>
         </div>
       </div>
+
+      {/* Vacaciones del mes (derivadas de semestres — no son entradas de BD) */}
+      {(() => {
+        const pad = (n: number) => String(n).padStart(2, '0');
+        const monthStartKey = `${year}-${pad(month + 1)}-01`;
+        const monthEndKey = `${year}-${pad(month + 1)}-${pad(new Date(year, month + 1, 0).getDate())}`;
+        const fmtKey = (key: string, opts: Intl.DateTimeFormatOptions) =>
+          new Date(`${key}T12:00`).toLocaleDateString('es-CL', opts);
+        const banners = getVacationBanners(year, academicYear).filter(
+          (b) => b.from <= monthEndKey && b.to >= monthStartKey,
+        );
+        if (banners.length === 0) return null;
+        return (
+          <div className="space-y-2">
+            {banners.map((b) => (
+              <div
+                key={`${b.kind}-${b.from}`}
+                className="flex items-start gap-3 rounded-xl border border-border bg-muted/30 px-4 py-3"
+              >
+                {b.kind === 'winter' ? (
+                  <Snowflake className="size-4 mt-0.5 shrink-0 text-muted-foreground" />
+                ) : (
+                  <Sun className="size-4 mt-0.5 shrink-0 text-muted-foreground" />
+                )}
+                <div className="min-w-0">
+                  <p className="text-sm font-medium">
+                    {b.label} — {fmtKey(b.from, { day: 'numeric', month: 'short' })} al{' '}
+                    {fmtKey(b.to, { day: 'numeric', month: 'short' })}
+                  </p>
+                  <p className="text-xs text-muted-foreground">
+                    Según configuración de semestres · sin clases, no afecta la asistencia
+                    {b.returnDate
+                      ? ` · retorno ${fmtKey(b.returnDate, { weekday: 'long', day: 'numeric', month: 'long' })}`
+                      : ''}
+                  </p>
+                </div>
+              </div>
+            ))}
+          </div>
+        );
+      })()}
 
       {/* Month list */}
       {monthDays.length > 0 && (
