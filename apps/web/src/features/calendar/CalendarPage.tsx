@@ -289,10 +289,12 @@ export function CalendarPage() {
               {cfg.label}
             </div>
           ))}
-          <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
-            <span className="size-2 rounded-[3px] border border-border bg-muted" />
-            Vacaciones
-          </div>
+          {academicYear && (
+            <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+              <span className="size-2 rounded-[3px] border border-border bg-muted" />
+              Vacaciones
+            </div>
+          )}
         </div>
       </div>
 
