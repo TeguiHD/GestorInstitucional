@@ -13,6 +13,7 @@ import {
   getVacationInfo,
   type AcademicYearConfig,
 } from './calendar-vacations.logic';
+import { buildRangeDayKeys } from './calendar-range.logic';
 
 type DayType = 'HOLIDAY' | 'SUSPENDED' | 'EVENT';
 type CalendarDay = { id: string; date: string; type: DayType; description: string };
@@ -72,6 +73,7 @@ export function CalendarPage() {
   const [month, setMonth] = useState(today.getMonth()); // 0-indexed
   const [form, setForm] = useState({
     date: '',
+    dateTo: '',
     type: 'HOLIDAY' as DayType,
     description: '',
     notify: false,
@@ -116,10 +118,73 @@ export function CalendarPage() {
   };
 
   const createMut = useMutation({
-    mutationFn: () => api.post('/calendar', { schoolId, ...form }),
-    onSuccess: () => {
-      toast.success(form.notify ? 'Día guardado · avisos en cola' : 'Día guardado');
-      setForm({ date: '', type: 'HOLIDAY', description: '', notify: false });
+    mutationFn: async () => {
+      // Día único: comportamiento original intacto (incluye notify).
+      if (!form.dateTo) {
+        await api.post('/calendar', {
+          schoolId,
+          date: form.date,
+          type: form.type,
+          description: form.description,
+          notify: form.notify,
+        });
+        return { single: true, created: 1, skippedExisting: 0, skippedWeekends: 0, failed: 0 };
+      }
+
+      const plan = buildRangeDayKeys(form.date, form.dateTo, new Set(dayMap.keys()));
+      if (!plan.ok) {
+        throw new Error(
+          plan.error === 'RANGE_TOO_LARGE'
+            ? 'El rango no puede superar 60 días'
+            : 'Rango inválido: "Hasta" debe ser posterior a "Desde" y del mismo año',
+        );
+      }
+
+      let created = 0;
+      let failed = 0;
+      // Secuencial a propósito: orden estable y sin ráfaga contra la API.
+      for (const date of plan.create) {
+        try {
+          await api.post('/calendar', {
+            schoolId,
+            date,
+            type: form.type,
+            description: form.description,
+            notify: false,
+          });
+          created += 1;
+        } catch {
+          failed += 1;
+        }
+      }
+      return {
+        single: false,
+        created,
+        skippedExisting: plan.skippedExisting.length,
+        skippedWeekends: plan.skippedWeekends,
+        failed,
+      };
+    },
+    onSuccess: (r) => {
+      if (r.single) {
+        toast.success(form.notify ? 'Día guardado · avisos en cola' : 'Día guardado');
+      } else {
+        const parts = [
+          `${r.created} día${r.created !== 1 ? 's' : ''} guardado${r.created !== 1 ? 's' : ''}`,
+        ];
+        if (r.skippedExisting > 0) {
+          parts.push(
+            `${r.skippedExisting} omitido${r.skippedExisting !== 1 ? 's' : ''} (ya existía${r.skippedExisting !== 1 ? 'n' : ''})`,
+          );
+        }
+        if (r.skippedWeekends > 0) parts.push('fines de semana excluidos');
+        if (r.failed > 0) {
+          toast.warning(`${parts.join(' · ')} · ${r.failed} con error`);
+        } else {
+          toast.success(parts.join(' · '));
+        }
+      }
+      setForm({ date: '', dateTo: '', type: 'HOLIDAY', description: '', notify: false });
       void qc.invalidateQueries({ queryKey: ['calendar', schoolId] });
     },
     onError: (e: unknown) => toast.error((e as Error).message),
@@ -402,37 +467,70 @@ export function CalendarPage() {
       {canEdit && (
         <div className="rounded-xl border border-border bg-background p-4 space-y-3">
           <h2 className="text-sm font-semibold">Agregar día especial</h2>
-          <div className="grid sm:grid-cols-4 gap-2">
-            <input
-              type="date"
-              value={form.date}
-              onChange={(e) => setForm({ ...form, date: e.target.value })}
-              className="rounded-lg border border-border px-3 py-1.5 text-sm bg-background"
-            />
-            <select
-              value={form.type}
-              onChange={(e) => setForm({ ...form, type: e.target.value as DayType })}
-              className="rounded-lg border border-border px-3 py-1.5 text-sm bg-background"
-            >
-              <option value="HOLIDAY">Feriado</option>
-              <option value="SUSPENDED">Día suspendido</option>
-              <option value="EVENT">Evento</option>
-            </select>
-            <input
-              placeholder="Descripción"
-              value={form.description}
-              onChange={(e) => setForm({ ...form, description: e.target.value })}
-              className="sm:col-span-2 rounded-lg border border-border px-3 py-1.5 text-sm bg-background"
-            />
+          <div className="grid sm:grid-cols-5 gap-2">
+            <div className="flex flex-col gap-1">
+              <label className="text-[10px] font-medium text-muted-foreground uppercase tracking-wide">
+                Desde
+              </label>
+              <input
+                type="date"
+                value={form.date}
+                onChange={(e) => setForm({ ...form, date: e.target.value })}
+                className="rounded-lg border border-border px-3 py-1.5 text-sm bg-background"
+              />
+            </div>
+            <div className="flex flex-col gap-1">
+              <label className="text-[10px] font-medium text-muted-foreground uppercase tracking-wide">
+                Hasta (opcional)
+              </label>
+              <input
+                type="date"
+                value={form.dateTo}
+                min={form.date || undefined}
+                onChange={(e) => setForm({ ...form, dateTo: e.target.value, notify: false })}
+                className="rounded-lg border border-border px-3 py-1.5 text-sm bg-background"
+              />
+            </div>
+            <div className="flex flex-col gap-1 justify-end">
+              <select
+                value={form.type}
+                onChange={(e) => setForm({ ...form, type: e.target.value as DayType })}
+                className="rounded-lg border border-border px-3 py-1.5 text-sm bg-background"
+              >
+                <option value="HOLIDAY">Feriado</option>
+                <option value="SUSPENDED">Día suspendido</option>
+                <option value="EVENT">Evento</option>
+              </select>
+            </div>
+            <div className="flex flex-col gap-1 justify-end sm:col-span-2">
+              <input
+                placeholder="Descripción"
+                value={form.description}
+                onChange={(e) => setForm({ ...form, description: e.target.value })}
+                className="rounded-lg border border-border px-3 py-1.5 text-sm bg-background"
+              />
+            </div>
           </div>
-          <label className="flex items-center gap-2 text-sm cursor-pointer">
+          {form.dateTo && (
+            <p className="text-xs text-muted-foreground">
+              Se creará un día por cada día hábil del rango; se omiten fines de semana y fechas que
+              ya tienen entrada.
+            </p>
+          )}
+          <label
+            className={cn(
+              'flex items-center gap-2 text-sm',
+              form.dateTo ? 'cursor-not-allowed opacity-50' : 'cursor-pointer',
+            )}
+          >
             <input
               type="checkbox"
-              checked={form.notify}
+              checked={!form.dateTo && form.notify}
+              disabled={!!form.dateTo}
               onChange={(e) => setForm({ ...form, notify: e.target.checked })}
               className="rounded"
             />
-            Avisar a apoderados por correo
+            Avisar a apoderados por correo{form.dateTo ? ' (solo para día único)' : ''}
           </label>
           <button
             onClick={() => createMut.mutate()}
