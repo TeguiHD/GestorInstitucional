@@ -13,7 +13,7 @@ import {
   getVacationInfo,
   type AcademicYearConfig,
 } from './calendar-vacations.logic';
-import { buildRangeDayKeys } from './calendar-range.logic';
+import { buildRangeDayKeys, RANGE_MAX_DAYS } from './calendar-range.logic';
 
 type DayType = 'HOLIDAY' | 'SUSPENDED' | 'EVENT';
 type CalendarDay = { id: string; date: string; type: DayType; description: string };
@@ -131,11 +131,17 @@ export function CalendarPage() {
         return { single: true, created: 1, skippedExisting: 0, skippedWeekends: 0, failed: 0 };
       }
 
+      if (form.date.slice(0, 4) !== String(year)) {
+        throw new Error(
+          `El rango debe estar dentro del año mostrado (${year}). Cambia el año en el selector de arriba.`,
+        );
+      }
+
       const plan = buildRangeDayKeys(form.date, form.dateTo, new Set(dayMap.keys()));
       if (!plan.ok) {
         throw new Error(
           plan.error === 'RANGE_TOO_LARGE'
-            ? 'El rango no puede superar 60 días'
+            ? `El rango no puede superar ${RANGE_MAX_DAYS} días`
             : 'Rango inválido: "Hasta" debe ser posterior a "Desde" y del mismo año',
         );
       }
