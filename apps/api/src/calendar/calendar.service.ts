@@ -41,7 +41,7 @@ export class CalendarService {
     });
     const byDate = new Map<string, CalendarDayResponse>();
     for (const day of days) {
-      const date = this.calendarDateKey(day);
+      const date = this.schoolConfig.formatDate(day.date);
       if (year && !date.startsWith(`${year}-`)) continue;
       byDate.set(date, { ...day, date });
     }
@@ -190,7 +190,7 @@ export class CalendarService {
     }
     // Los días marcados explícitamente en el calendario ganan sobre la etiqueta sintética.
     for (const day of days) {
-      const key = this.calendarDateKey(day);
+      const key = this.schoolConfig.formatDate(day.date);
       if (key < fromKey || key > toKey) continue;
       result[key] = { type: day.type, description: day.description };
     }
@@ -252,19 +252,5 @@ export class CalendarService {
       }
     }
     return result;
-  }
-
-  private calendarDateKey(day: { date: Date; description: string }): string {
-    const key = this.schoolConfig.formatDate(day.date);
-    const normalizedDescription = day.description
-      .normalize('NFD')
-      .replace(/[\u0300-\u036f]/g, '')
-      .toLowerCase();
-
-    if (normalizedDescription.includes('pueblos indigenas')) {
-      return `${key.slice(0, 4)}-06-21`;
-    }
-
-    return key;
   }
 }
