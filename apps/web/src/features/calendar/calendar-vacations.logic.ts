@@ -3,7 +3,7 @@ export type AcademicYearConfig = {
   secondSemester: { startDate: string; endDate: string };
 };
 
-export type VacationKind = 'winter' | 'summer';
+export type VacationKind = 'winter' | 'summer' | 'recess';
 export type VacationInfo = { kind: VacationKind; label: string };
 export type VacationBanner = {
   kind: VacationKind;
@@ -16,6 +16,7 @@ export type VacationBanner = {
 const LABELS: Record<VacationKind, string> = {
   winter: 'Vacaciones de invierno',
   summer: 'Vacaciones de verano',
+  recess: 'Receso de semestre',
 };
 
 const DATE_KEY_RE = /^\d{4}-\d{2}-\d{2}$/;
@@ -52,7 +53,12 @@ export function getVacationInfo(
     return { kind: 'summer', label: LABELS.summer };
   }
   if (dateKey > config.firstSemester.endDate && dateKey < config.secondSemester.startDate) {
-    return { kind: 'winter', label: LABELS.winter };
+    // Un hueco entre semestres que es solo fin de semana es un cambio de semestre,
+    // no vacaciones de invierno (mismo criterio que getVacationBanners).
+    const gapFrom = shiftDateKey(config.firstSemester.endDate, 1);
+    const gapTo = shiftDateKey(config.secondSemester.startDate, -1);
+    const kind: VacationKind = rangeContainsWeekday(gapFrom, gapTo) ? 'winter' : 'recess';
+    return { kind, label: LABELS[kind] };
   }
   return null;
 }

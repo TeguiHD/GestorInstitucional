@@ -64,6 +64,38 @@ describe('getVacationInfo', () => {
   });
 });
 
+describe('getVacationInfo — receso de semestre (hueco de puro fin de semana)', () => {
+  // Config real CSSP 2026: S1 termina vie 24-jul, S2 empieza lun 27-jul → hueco = 25-26 jul (solo finde)
+  const realCssp2026: AcademicYearConfig = {
+    firstSemester: { startDate: '2026-03-04', endDate: '2026-07-24' },
+    secondSemester: { startDate: '2026-07-27', endDate: '2026-12-04' },
+  };
+
+  it('etiqueta el finde de cambio de semestre como receso, no vacaciones', () => {
+    expect(getVacationInfo('2026-07-25', realCssp2026)).toEqual({
+      kind: 'recess',
+      label: 'Receso de semestre',
+    });
+    expect(getVacationInfo('2026-07-26', realCssp2026)).toEqual({
+      kind: 'recess',
+      label: 'Receso de semestre',
+    });
+  });
+
+  it('los limites del semestre siguen siendo lectivos (null)', () => {
+    expect(getVacationInfo('2026-07-24', realCssp2026)).toBeNull(); // ultimo dia S1
+    expect(getVacationInfo('2026-07-27', realCssp2026)).toBeNull(); // primer dia S2
+  });
+
+  it('un finde DENTRO de un receso real con dias habiles sigue siendo invierno', () => {
+    // config2026: hueco 19-jun→5-jul tiene dias habiles → 20-jun (sabado) es vacaciones de invierno
+    expect(getVacationInfo('2026-06-20', config2026)).toEqual({
+      kind: 'winter',
+      label: 'Vacaciones de invierno',
+    });
+  });
+});
+
 describe('getVacationBanners', () => {
   it('retorna verano de inicio e invierno para 2026 (sin verano fin de año)', () => {
     expect(getVacationBanners(2026, config2026)).toEqual([
