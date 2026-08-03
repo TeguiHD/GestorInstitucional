@@ -19,7 +19,8 @@ import {
   parseDateOnlyUtc,
 } from '../common/date-only.js';
 import { SchoolConfigService } from '../school-config/school-config.service.js';
-import type { RecordAttendanceDto } from './dto/record-attendance.dto.js';
+import type { RecordAttendanceBatchDto } from './dto/record-attendance-batch.dto.js';
+import type { AttendanceDayDto, RecordAttendanceDto } from './dto/record-attendance.dto.js';
 import type { JwtPayload } from '../common/decorators/current-user.decorator.js';
 import {
   ATTENDANCE_FORMULA_VERSION,
@@ -53,20 +54,29 @@ export class AttendanceService {
   ) {}
 
   /** Bulk upsert daily attendance for a course. Idempotent — safe to call multiple times. */
-  async recordBulk(dto: RecordAttendanceDto, recordedById: string): Promise<{ upserted: number }> {
-    const date = parseDateOnlyUtc(dto.date);
-    await this.assertSchoolDay(dto.courseId, date);
+  /**
+   * Valida un día y arma sus escrituras, sin ejecutarlas.
+   *
+   * Separar la validación de la escritura es lo que permite guardar varios días
+   * de forma atómica: se comprueban todos primero y sólo entonces se abre una
+   * transacción. Si algo falla, no se escribió nada todavía.
+   */
+  private async prepareDay(courseId: string, day: AttendanceDayDto, recordedById: string) {
+    const date = parseDateOnlyUtc(day.date);
+    const dto: RecordAttendanceDto = { courseId, date: day.date, entries: day.entries };
+
+    await this.assertSchoolDay(courseId, date);
     const activeStudentIds = await this.assertEntriesBelongToCourse(dto, date);
     const existingRecords = await this.findExistingRecordsForDate(
-      dto.courseId,
-      dto.date,
+      courseId,
+      day.date,
       activeStudentIds,
     );
     await this.assertDailyAttendanceComplete(dto, activeStudentIds, existingRecords);
     const changeAudit = await this.buildAttendanceChangeAudit(dto, existingRecords, recordedById);
     const existingByStudent = new Map(existingRecords.map((record) => [record.studentId, record]));
 
-    const writes = dto.entries.map((entry) => {
+    const writes = day.entries.map((entry) => {
       const existing = existingByStudent.get(entry.studentId);
       const data = {
         status: entry.status as AttendanceStatus,
@@ -80,16 +90,17 @@ export class AttendanceService {
             data: { ...data, updatedAt: new Date() },
           })
         : this.prisma.attendanceRecord.create({
-            data: {
-              studentId: entry.studentId,
-              courseId: dto.courseId,
-              date,
-              ...data,
-            },
+            data: { studentId: entry.studentId, courseId, date, ...data },
           });
     });
 
-    await this.prisma.$transaction(writes);
+    return { dto, date, writes, changeAudit };
+  }
+
+  async recordBulk(dto: RecordAttendanceDto, recordedById: string): Promise<{ upserted: number }> {
+    const prepared = await this.prepareDay(dto.courseId, dto, recordedById);
+
+    await this.prisma.$transaction(prepared.writes);
 
     await this.audit.log({
       userId: recordedById,
@@ -99,15 +110,74 @@ export class AttendanceService {
       meta: {
         date: dto.date,
         count: dto.entries.length,
-        ...changeAudit,
+        ...prepared.changeAudit,
       },
     });
 
-    void this.notifyGuardiansAbsence(dto, date).catch((e) =>
+    void this.notifyGuardiansAbsence(dto, prepared.date).catch((e) =>
       this.log.warn(`notifyGuardiansAbsence failed: ${e instanceof Error ? e.message : String(e)}`),
     );
 
     return { upserted: dto.entries.length };
+  }
+
+  /**
+   * Guarda varios días de una vez, todo o nada.
+   *
+   * El panel deja corregir varias fechas antes de guardar. Antes se enviaba un
+   * POST por fecha: si una fallaba a mitad, unos días quedaban registrados y
+   * otros no, y desde la interfaz no había forma de saber cuáles. En un registro
+   * con valor legal eso es peor que no guardar nada.
+   */
+  async recordBatch(
+    dto: RecordAttendanceBatchDto,
+    recordedById: string,
+  ): Promise<{ days: number; upserted: number }> {
+    const fechas = dto.days.map((d) => d.date);
+    const repetidas = fechas.filter((f, i) => fechas.indexOf(f) !== i);
+    if (repetidas.length > 0) {
+      throw new BadRequestException(
+        `Fecha repetida en el lote: ${[...new Set(repetidas)].join(', ')}`,
+      );
+    }
+
+    // Todas las validaciones ocurren aquí, antes de tocar la base.
+    const prepared = [];
+    for (const day of dto.days) {
+      prepared.push(await this.prepareDay(dto.courseId, day, recordedById));
+    }
+
+    await this.prisma.$transaction(prepared.flatMap((p) => p.writes));
+
+    // La auditoría va por día: un evento agregado perdería el detalle de qué
+    // cambió en cada fecha, que es justo lo que se audita.
+    for (const p of prepared) {
+      await this.audit.log({
+        userId: recordedById,
+        action: 'UPDATE',
+        entity: 'AttendanceRecord',
+        entityId: dto.courseId,
+        meta: {
+          date: p.dto.date,
+          count: p.dto.entries.length,
+          batch: true,
+          ...p.changeAudit,
+        },
+      });
+    }
+
+    for (const p of prepared) {
+      void this.notifyGuardiansAbsence(p.dto, p.date).catch((e) =>
+        this.log.warn(
+          `notifyGuardiansAbsence failed: ${e instanceof Error ? e.message : String(e)}`,
+        ),
+      );
+    }
+
+    return {
+      days: prepared.length,
+      upserted: prepared.reduce((n, p) => n + p.dto.entries.length, 0),
+    };
   }
 
   /**

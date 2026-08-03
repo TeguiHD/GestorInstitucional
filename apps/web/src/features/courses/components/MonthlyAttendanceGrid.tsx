@@ -469,16 +469,21 @@ export function MonthlyAttendanceGrid({
         throw new IncompleteAttendanceError('Asistencia incompleta');
       }
 
-      const promises: Promise<unknown>[] = [];
-      dirty.forEach((studentMap, date) => {
-        if (studentMap.size === 0) return;
-        const entries = Array.from(studentMap.entries()).map(([studentId, status]) => ({
-          studentId,
-          status,
+      // Un solo envío atómico. Antes se mandaba un POST por fecha: si una
+      // fallaba, unos días quedaban guardados y otros no, sin forma de saber
+      // cuáles desde aquí. El servidor valida todos los días antes de escribir.
+      const days = Array.from(dirty.entries())
+        .filter(([, studentMap]) => studentMap.size > 0)
+        .map(([date, studentMap]) => ({
+          date,
+          entries: Array.from(studentMap.entries()).map(([studentId, status]) => ({
+            studentId,
+            status,
+          })),
         }));
-        promises.push(api.post('/attendance', { courseId, date, entries }));
-      });
-      await Promise.all(promises);
+
+      if (days.length === 0) return;
+      await api.post('/attendance/batch', { courseId, days });
     },
     onSuccess: () => {
       removeStoredDraft(draftKey);

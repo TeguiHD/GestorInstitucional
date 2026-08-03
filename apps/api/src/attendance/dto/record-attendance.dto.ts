@@ -36,6 +36,20 @@ class AttendanceEntryDto {
   lateMinutes?: number;
 }
 
+/** Un día de asistencia. Se reutiliza en el guardado por lotes. */
+export class AttendanceDayDto {
+  @ApiProperty({ example: '2026-04-19', description: 'YYYY-MM-DD' })
+  @IsString()
+  @Matches(/^\d{4}-\d{2}-\d{2}$/, { message: 'date debe ser YYYY-MM-DD' })
+  date!: string;
+
+  @ApiProperty({ type: [AttendanceEntryDto] })
+  @ValidateNested({ each: true })
+  @ArrayMinSize(1)
+  @Type(() => AttendanceEntryDto)
+  entries!: AttendanceEntryDto[];
+}
+
 export class RecordAttendanceDto {
   @ApiProperty()
   @IsUUID()

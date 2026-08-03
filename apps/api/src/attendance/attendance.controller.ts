@@ -15,6 +15,7 @@ import { RolesGuard } from '../common/guards/roles.guard.js';
 import { CurrentUser, type JwtPayload } from '../common/decorators/current-user.decorator.js';
 import { CoursesService } from '../courses/courses.service.js';
 import { AttendanceService } from './attendance.service.js';
+import { RecordAttendanceBatchDto } from './dto/record-attendance-batch.dto.js';
 import { RecordAttendanceDto } from './dto/record-attendance.dto.js';
 
 @ApiTags('attendance')
@@ -33,6 +34,19 @@ export class AttendanceController {
     this.assertIsoDate(dto.date, 'date');
     await this.courses.assertAccess(dto.courseId, user);
     return this.attendance.recordBulk(dto, user.sub);
+  }
+
+  @Post('batch')
+  @ApiOperation({
+    summary: 'Registrar varios días de una vez, de forma atómica',
+    description:
+      'Valida todos los días antes de escribir: o se guardan todos o no se guarda ninguno. ' +
+      'Evita que una corrección de varias fechas quede aplicada a medias.',
+  })
+  async recordBatch(@Body() dto: RecordAttendanceBatchDto, @CurrentUser() user: JwtPayload) {
+    for (const day of dto.days) this.assertIsoDate(day.date, 'date');
+    await this.courses.assertAccess(dto.courseId, user);
+    return this.attendance.recordBatch(dto, user.sub);
   }
 
   @Get('course/:courseId')
