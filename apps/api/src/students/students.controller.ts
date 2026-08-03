@@ -291,6 +291,17 @@ export class StudentsController {
     return this.students.listGuardians(id, user);
   }
 
+  @Get('course/:courseId/guardians')
+  @Roles(SystemRole.SUPER_ADMIN, SystemRole.DIRECTOR, SystemRole.UTP, SystemRole.INSPECTORIA)
+  @ApiOperation({
+    summary: 'Apoderados de todo un curso, indexados por alumno',
+    description:
+      'Evita pedir /students/:id/guardians una vez por alumno al abrir el panel de curso.',
+  })
+  listGuardiansByCourse(@Param('courseId') courseId: string, @CurrentUser() user: JwtPayload) {
+    return this.students.listGuardiansByCourse(courseId, user);
+  }
+
   @Post(':id/guardians')
   @Roles(SystemRole.SUPER_ADMIN, SystemRole.DIRECTOR, SystemRole.UTP, SystemRole.INSPECTORIA)
   @ApiOperation({ summary: 'Vincular apoderado a alumno' })

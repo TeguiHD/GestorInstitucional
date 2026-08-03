@@ -868,6 +868,43 @@ export class StudentsService {
     });
   }
 
+  /**
+   * Apoderados de todos los alumnos de un curso, indexados por alumno.
+   *
+   * El panel de curso pedía `/students/:id/guardians` una vez por alumno: 35
+   * peticiones para pintar una tabla. Desde Chile cada una cuesta ~340 ms de
+   * latencia, así que la ganancia está en el número de viajes, no en la query.
+   */
+  async listGuardiansByCourse(courseId: string, actor: JwtPayload) {
+    await this.assertCanAccessCourse(courseId, actor);
+
+    const students = await this.prisma.student.findMany({
+      where: { courseId },
+      select: {
+        id: true,
+        guardianships: {
+          include: {
+            guardian: {
+              select: {
+                id: true,
+                email: true,
+                firstName: true,
+                lastName: true,
+                status: true,
+                lastLoginAt: true,
+              },
+            },
+          },
+          orderBy: { isPrimary: 'desc' },
+        },
+      },
+    });
+
+    // Se incluyen los alumnos sin apoderados con lista vacía: el frontend
+    // indexa por id y una clave ausente lo haría fallar al renderizar.
+    return Object.fromEntries(students.map((s) => [s.id, s.guardianships]));
+  }
+
   async addGuardian(
     studentId: string,
     dto: { guardianId: string; relation?: string; isPrimary?: boolean },

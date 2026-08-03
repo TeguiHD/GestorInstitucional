@@ -114,18 +114,13 @@ export function StudentsTab({ courseId }: { courseId: string }) {
     queryFn: () => api.get(`/attendance/course/${courseId}/matrix?year=${year}&month=${month}`),
   });
 
+  // Una sola petición para todo el curso. Antes se pedía /students/:id/guardians
+  // por alumno y había que esperar a `matrix` para saber cuáles: dos cuellos de
+  // botella encadenados. Ahora sólo depende de courseId y viaja en paralelo.
   const { data: guardianMap } = useQuery<Record<string, Guardian[]>>({
     queryKey: ['course-guardians', courseId],
-    queryFn: async () => {
-      const students = matrix?.students ?? [];
-      const results = await Promise.all(
-        students.map((s) =>
-          api.get<Guardian[]>(`/students/${s.id}/guardians`).then((g) => [s.id, g] as const),
-        ),
-      );
-      return Object.fromEntries(results);
-    },
-    enabled: !!matrix?.students.length,
+    queryFn: () => api.get<Record<string, Guardian[]>>(`/students/course/${courseId}/guardians`),
+    enabled: !!courseId,
     staleTime: 1000 * 60 * 5,
   });
 
