@@ -5,10 +5,14 @@ import { ATTENDANCE_STATUS, ROLES } from '../constants/index.js';
 const rolesTuple = Object.values(ROLES) as [string, ...string[]];
 const statusTuple = Object.values(ATTENDANCE_STATUS) as [string, ...string[]];
 
-/** RUT chileno — normalizado (sin puntos, con guion). Validación dígito verificador se hace en backend. */
+/**
+ * Identificador del alumno, normalizado (sin puntos, con guion).
+ * 7-8 dígitos: RUT chileno. 9 dígitos: IPE que MINEDUC asigna a alumnos
+ * migrantes sin RUT. El dígito verificador se valida en el backend.
+ */
 export const RutSchema = z
   .string()
-  .regex(/^\d{7,8}-[\dkK]$/, 'RUT inválido — formato esperado 12345678-9');
+  .regex(/^\d{7,9}-[\dkK]$/, 'RUT o IPE inválido — formatos 12345678-9 o 100448352-5');
 
 /** Password policy NIST SP 800-63B: min 12, permite espacios, sin composición forzada. */
 export const PasswordSchema = z

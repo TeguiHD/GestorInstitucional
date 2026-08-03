@@ -1,10 +1,17 @@
 export function normalizeRut(value: string): string {
-  return value.replace(/\./g, '').replace(/\s/g, '').toUpperCase();
+  const compact = value.replace(/\./g, '').replace(/\s/g, '').toUpperCase();
+  if (compact.includes('-')) return compact;
+  // Las planillas del colegio traen el identificador de corrido. El último
+  // carácter es siempre el dígito verificador.
+  if (!/^\d{6,9}[\dK]$/.test(compact)) return compact;
+  return `${compact.slice(0, -1)}-${compact.slice(-1)}`;
 }
 
 export function isValidRut(value: string): boolean {
   const rut = normalizeRut(value);
-  const match = /^(\d{7,8})-([\dK])$/.exec(rut);
+  // 7-8 dígitos: RUT chileno. 9 dígitos: IPE (Identificador Provisorio Escolar)
+  // que MINEDUC asigna a alumnos migrantes sin RUT. Mismo DV módulo 11.
+  const match = /^(\d{7,9})-([\dK])$/.exec(rut);
   if (!match) return false;
 
   const body = match[1]!;

@@ -10,6 +10,9 @@ import {
   MinLength,
 } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { Transform } from 'class-transformer';
+
+import { normalizeRut } from '../rut.js';
 
 export class CreateStudentDto {
   @ApiProperty()
@@ -20,9 +23,15 @@ export class CreateStudentDto {
   @IsUUID()
   courseId!: string;
 
-  @ApiProperty({ example: '12345678-9', description: 'RUT sin puntos, con guion' })
+  @ApiProperty({
+    example: '12345678-9',
+    description: 'RUT chileno (7-8 dígitos) o IPE MINEDUC (9 dígitos). Se normaliza el guion.',
+  })
+  @Transform(({ value }) => (typeof value === 'string' ? normalizeRut(value) : value))
   @IsString()
-  @Matches(/^\d{7,8}-[\dkK]$/, { message: 'RUT inválido — formato 12345678-9' })
+  @Matches(/^\d{7,9}-[\dkK]$/, {
+    message: 'RUT o IPE inválido — formatos 12345678-9 (RUT) o 100448352-5 (IPE)',
+  })
   rut!: string;
 
   @ApiProperty()

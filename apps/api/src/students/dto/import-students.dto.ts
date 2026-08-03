@@ -1,5 +1,5 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { Type } from 'class-transformer';
+import { Transform, Type } from 'class-transformer';
 import {
   ArrayMinSize,
   IsArray,
@@ -14,10 +14,13 @@ import {
   ValidateNested,
 } from 'class-validator';
 
+import { normalizeRut } from '../rut.js';
+
 export class ImportStudentRow {
-  @ApiProperty({ example: '12345678-9' })
+  @ApiProperty({ example: '12345678-9', description: 'RUT chileno o IPE MINEDUC' })
+  @Transform(({ value }) => (typeof value === 'string' ? normalizeRut(value) : value))
   @IsString()
-  @Matches(/^\d{7,8}-[\dkK]$/, { message: 'RUT inválido' })
+  @Matches(/^\d{7,9}-[\dkK]$/, { message: 'RUT o IPE inválido' })
   rut!: string;
 
   @ApiProperty()

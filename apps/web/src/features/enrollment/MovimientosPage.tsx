@@ -198,7 +198,7 @@ function MatricularDialog({
       api.post('/students', {
         schoolId,
         courseId,
-        rut,
+        rut: rut.trim(),
         firstName: firstName.trim(),
         lastName: lastName.trim(),
         secondLastName: secondLastName.trim() || undefined,
@@ -231,12 +231,12 @@ function MatricularDialog({
         className="space-y-4"
       >
         <div className="grid grid-cols-2 gap-3">
-          <Field label="RUT *">
+          <Field label="RUT o IPE *">
             <input
               required
               value={rut}
               onChange={(e) => setRut(e.target.value)}
-              placeholder="12345678-9"
+              placeholder="12345678-9 · IPE 100448352-5"
               className={inputCls}
             />
           </Field>
