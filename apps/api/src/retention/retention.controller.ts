@@ -1,4 +1,4 @@
-import { Controller, Get, HttpCode, HttpStatus, Post, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, HttpCode, HttpStatus, Post, UseGuards } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { SystemRole } from '@prisma/client';
 
@@ -6,6 +6,7 @@ import { CurrentUser, type JwtPayload } from '../common/decorators/current-user.
 import { Roles } from '../common/decorators/roles.decorator.js';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard.js';
 import { RolesGuard } from '../common/guards/roles.guard.js';
+import { PurgeRetentionDto } from './dto/purge-retention.dto.js';
 import { RetentionService } from './retention.service.js';
 
 @ApiTags('admin/retention')
@@ -25,8 +26,14 @@ export class RetentionController {
   @Post('purge')
   @Roles(SystemRole.SUPER_ADMIN)
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'Ejecutar purga de retención MINEDUC (irreversible)' })
-  purge(@CurrentUser() actor: JwtPayload) {
-    return this.service.purge(actor);
+  @ApiOperation({
+    summary: 'Ejecutar purga de retención MINEDUC (IRREVERSIBLE)',
+    description:
+      'Borra definitivamente asistencia, justificaciones y auditoría fuera de plazo. ' +
+      'Requiere: RETENTION_PURGE_ENABLED=true en el entorno, la frase de confirmación ' +
+      'exacta, y los conteos obtenidos de GET /admin/retention/preview sin cambios.',
+  })
+  purge(@Body() dto: PurgeRetentionDto, @CurrentUser() actor: JwtPayload) {
+    return this.service.purge(actor, dto);
   }
 }
