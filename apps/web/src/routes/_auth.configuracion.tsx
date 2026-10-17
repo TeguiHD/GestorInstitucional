@@ -383,6 +383,8 @@ type BackupHistoryItem = {
   encrypted: boolean;
 };
 
+const BACKUP_HISTORY_PAGE_SIZE = 10;
+
 function formatBackupTimestamp(value: string | null): string {
   if (!value) return 'Sin registro';
   const parsed = new Date(`${value.replace(' ', 'T')}Z`);
@@ -472,6 +474,15 @@ function BackupConfigPanel() {
     queryFn: () => api.get('/system-config/backup/history'),
     refetchInterval: 60_000,
   });
+  const [historyPage, setHistoryPage] = useState(0);
+  const historyTotal = history?.length ?? 0;
+  const historyPages = Math.max(1, Math.ceil(historyTotal / BACKUP_HISTORY_PAGE_SIZE));
+  // El refetch puede acortar la lista (rotación): no quedar en una página que ya no existe.
+  const safeHistoryPage = Math.min(historyPage, historyPages - 1);
+  const historyPageItems = (history ?? []).slice(
+    safeHistoryPage * BACKUP_HISTORY_PAGE_SIZE,
+    (safeHistoryPage + 1) * BACKUP_HISTORY_PAGE_SIZE,
+  );
 
   const downloadFromHistory = useMutation({
     mutationFn: (fileName: string) =>
@@ -897,7 +908,7 @@ function BackupConfigPanel() {
             </p>
           ) : (
             <ul className="divide-y divide-border">
-              {history.map((item) => (
+              {historyPageItems.map((item) => (
                 <li
                   key={item.fileName}
                   className="flex items-center justify-between gap-3 px-3 py-2.5"
@@ -921,6 +932,31 @@ function BackupConfigPanel() {
                 </li>
               ))}
             </ul>
+          )}
+          {historyPages > 1 && (
+            <div className="flex items-center justify-between gap-3 border-t border-border px-3 pt-3 pb-1 text-xs">
+              <span className="text-muted-foreground">
+                {historyTotal} respaldos · pág. {safeHistoryPage + 1} de {historyPages}
+              </span>
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  disabled={safeHistoryPage === 0}
+                  onClick={() => setHistoryPage(safeHistoryPage - 1)}
+                  className="px-3 py-1.5 rounded-lg border border-border disabled:opacity-40 hover:bg-muted transition-colors"
+                >
+                  ← Anterior
+                </button>
+                <button
+                  type="button"
+                  disabled={safeHistoryPage + 1 >= historyPages}
+                  onClick={() => setHistoryPage(safeHistoryPage + 1)}
+                  className="px-3 py-1.5 rounded-lg border border-border disabled:opacity-40 hover:bg-muted transition-colors"
+                >
+                  Siguiente →
+                </button>
+              </div>
+            </div>
           )}
         </div>
       </div>
