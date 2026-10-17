@@ -102,6 +102,31 @@ describe('uploadFormData', () => {
       message: 'Sin acceso',
     });
   });
+
+  // HTTP/2 (Cloudflare) no tiene reason phrase: statusText llega vacío.
+  it('lee el mensaje anidado que entregaba el API y nunca deja el error en blanco', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi
+        .fn()
+        .mockResolvedValueOnce(
+          jsonResponse(
+            { statusCode: 401, message: { message: 'Código 2FA inválido', statusCode: 401 } },
+            { ok: false, status: 401, statusText: '' },
+          ),
+        )
+        .mockResolvedValueOnce(jsonResponse({}, { ok: false, status: 502, statusText: '' })),
+    );
+
+    await expect(api.post('/auth/login', {})).rejects.toMatchObject({
+      status: 401,
+      message: 'Código 2FA inválido',
+    });
+    await expect(api.post('/auth/login', {})).rejects.toMatchObject({
+      status: 502,
+      message: 'Error inesperado del servidor (502)',
+    });
+  });
 });
 
 describe('api auth refresh', () => {

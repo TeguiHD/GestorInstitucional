@@ -47,13 +47,20 @@ export class ApiError extends Error {
 }
 
 function parseErrorMessage(data: unknown, fallback: string): string {
-  const raw = (data as { message?: unknown }).message;
-  return Array.isArray(raw) ? raw.join(', ') : typeof raw === 'string' ? raw : fallback;
+  let raw = (data as { message?: unknown } | null)?.message;
+  // Versiones previas del API anidaban el cuerpo de Nest: { message: { message } }.
+  if (raw && typeof raw === 'object' && !Array.isArray(raw)) {
+    raw = (raw as { message?: unknown }).message;
+  }
+  const text = Array.isArray(raw) ? raw.join(', ') : typeof raw === 'string' ? raw : '';
+  return text.trim() || fallback;
 }
 
 async function apiErrorFromResponse(res: Response): Promise<ApiError> {
   const data = await res.json().catch(() => ({}));
-  return new ApiError(res.status, parseErrorMessage(data, res.statusText), data);
+  // HTTP/2 no tiene reason phrase: statusText llega vacío detrás de Cloudflare.
+  const fallback = res.statusText || `Error inesperado del servidor (${res.status})`;
+  return new ApiError(res.status, parseErrorMessage(data, fallback), data);
 }
 
 function isAuthFlowPath(path: string): boolean {
