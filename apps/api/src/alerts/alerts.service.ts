@@ -5,7 +5,7 @@ import type { AlertTrigger } from '@prisma/client';
 import {
   addAttendanceStatus,
   buildAttendanceSummary,
-  countsAsAttendance,
+  countsAsAbsence,
   emptyAttendanceCounts,
 } from '../attendance/attendance-calculation.js';
 import { CalendarService } from '../calendar/calendar.service.js';
@@ -242,6 +242,7 @@ export class AlertsService {
       select: {
         studentId: true,
         status: true,
+        wasLate: true,
         date: true,
       },
     });
@@ -249,7 +250,7 @@ export class AlertsService {
     const byStudent = new Map(students.map((student) => [student.id, emptyAttendanceCounts()]));
     for (const r of this.filterSchoolRecords(records, nonSchool)) {
       const counts = byStudent.get(r.studentId);
-      if (counts) addAttendanceStatus(counts, r.status);
+      if (counts) addAttendanceStatus(counts, r.status, r.wasLate);
     }
 
     const atRisk = students
@@ -328,7 +329,7 @@ export class AlertsService {
     const nonSchool = await this.calendar.getNonSchoolDays(schoolId, from, to);
     const records = await this.prisma.attendanceRecord.findMany({
       where: { course: { schoolId, active: true }, date: { gte: from, lte: to } },
-      select: { courseId: true, status: true, date: true },
+      select: { courseId: true, status: true, wasLate: true, date: true },
     });
     const byCourse = new Map<string, Array<(typeof records)[number]>>();
     for (const record of this.filterSchoolRecords(records, nonSchool)) {
@@ -341,7 +342,7 @@ export class AlertsService {
     for (const course of courses) {
       const counts = emptyAttendanceCounts();
       for (const record of byCourse.get(course.id) ?? [])
-        addAttendanceStatus(counts, record.status);
+        addAttendanceStatus(counts, record.status, record.wasLate);
       const totalClasses = course.students.reduce(
         (sum, student) =>
           sum + this.schoolConfig.countActiveSchoolDaysInRanges(student, ranges, nonSchool),
@@ -404,7 +405,8 @@ export class AlertsService {
     for (const r of records) {
       const name = `${r.student.firstName} ${r.student.lastName}`;
       const e = byStudent.get(r.studentId) ?? { name, dates: [] };
-      e.dates.push({ absent: !countsAsAttendance(r.status) });
+      // Un atraso pendiente no es inasistencia: el alumno llegó.
+      e.dates.push({ absent: countsAsAbsence(r.status) });
       byStudent.set(r.studentId, e);
     }
 

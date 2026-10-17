@@ -17,7 +17,7 @@ describe('InsightsService attendance formulas', () => {
     vi.useRealTimers();
   });
 
-  it('calcula insights de curso como P + AT sobre días lectivos activos', async () => {
+  it('calcula insights de curso como P sobre días lectivos activos menos atrasos pendientes', async () => {
     vi.setSystemTime(new Date(2026, 2, 6, 12));
 
     const student = {
@@ -57,12 +57,13 @@ describe('InsightsService attendance formulas', () => {
 
     const result = await service.getCourseInsights('course-1', 2026, 3);
 
-    expect(result.attendanceRate).toBe(0.4);
+    // 5 días lectivos − 1 atraso pendiente = 4; 1 presente → 25 %.
+    expect(result.attendanceRate).toBe(0.25);
     const risk = result.insights.find((insight) => insight.type === 'risk_students');
     expect(risk?.meta?.students).toEqual([
       expect.objectContaining({
         id: student.id,
-        rate: 0.4,
+        rate: 0.25,
         totalClasses: 5,
         missing: 1,
       }),

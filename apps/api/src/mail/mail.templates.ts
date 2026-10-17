@@ -284,6 +284,8 @@ export function weeklyDigest(p: {
     present: number;
     absent: number;
     late: number;
+    /** Atrasos aún sin resolver por Inspectoría (no cuentan en el %). */
+    pendingLate?: number;
     justified: number;
     missing?: number;
     total?: number;
@@ -319,7 +321,8 @@ export function weeklyDigest(p: {
       </tr>
     </table>
     <p style="margin:8px 0 0;font-size:12px;color:#64748b">
-      Fórmula: (Presentes + Atrasos) / Total clases. Justificados y sin registro no suman asistencia.
+      Fórmula: Presentes / (Total clases − atrasos pendientes de resolver). Justificados y sin registro no suman asistencia.
+      ${p.stats.pendingLate ? `Atrasos pendientes de resolver por Inspectoría: ${p.stats.pendingLate}.` : ''}
       ${p.stats.missing ? `Sin registro: ${p.stats.missing}.` : ''}
     </p>
     ${
@@ -336,7 +339,7 @@ export function weeklyDigest(p: {
     </div>
     <p style="margin:16px 0 0;font-size:13px;color:#475569">Atentamente,<br/>${BRAND.name}</p>`;
 
-  const text = `${subject}\n\n${p.studentName} ${p.courseName}\nAsistencia: ${pct}%\nFórmula: (Presentes + Atrasos) / Total clases\nPresente ${p.stats.present} · Ausente ${p.stats.absent} · Atrasos ${p.stats.late} · Justif ${p.stats.justified} · Total clases ${p.stats.total ?? '—'}${p.stats.missing ? ` · Sin registro ${p.stats.missing}` : ''}${p.absentDates.length ? `\nAusencias: ${p.absentDates.join(', ')}` : ''}\n\n${p.portalUrl}/my-children`;
+  const text = `${subject}\n\n${p.studentName} ${p.courseName}\nAsistencia: ${pct}%\nFórmula: Presentes / (Total clases − atrasos pendientes de resolver)\nPresente ${p.stats.present} · Ausente ${p.stats.absent} · Atrasos ${p.stats.late} · Justif ${p.stats.justified} · Total clases ${p.stats.total ?? '—'}${p.stats.missing ? ` · Sin registro ${p.stats.missing}` : ''}${p.absentDates.length ? `\nAusencias: ${p.absentDates.join(', ')}` : ''}\n\n${p.portalUrl}/my-children`;
 
   return { subject, html: shell(subject, body), text };
 }

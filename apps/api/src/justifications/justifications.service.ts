@@ -21,6 +21,7 @@ import { MailService } from '../mail/mail.service.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { AuditService } from '../audit/audit.service.js';
 import type { JwtPayload } from '../common/decorators/current-user.decorator.js';
+import { statusAfterJustification } from '../attendance/attendance-calculation.js';
 
 const ALLOWED_MIME = new Set(['application/pdf', 'image/png', 'image/jpeg', 'image/webp']);
 const MAX_FILE_SIZE_BYTES = 8 * 1024 * 1024;
@@ -275,7 +276,9 @@ export class JustificationsService {
     const j = await this.prisma.attendanceJustification.findUnique({
       where: { id, deletedAt: null },
       include: {
-        record: { select: { status: true, student: { select: { schoolId: true } } } },
+        record: {
+          select: { status: true, wasLate: true, student: { select: { schoolId: true } } },
+        },
       },
     });
     if (!j) throw new NotFoundException('Justificación no encontrada');
@@ -284,6 +287,8 @@ export class JustificationsService {
     if (decision === 'APPROVED' && j.record.status !== 'ABSENT' && j.record.status !== 'LATE') {
       throw new BadRequestException('El registro ya no es justificable');
     }
+
+    const newRecordStatus = decision === 'APPROVED' ? statusAfterJustification(j.record) : null;
 
     const updated = await this.prisma.$transaction(async (tx) => {
       const result = await tx.attendanceJustification.update({
@@ -295,10 +300,10 @@ export class JustificationsService {
           reviewNotes: notes ?? null,
         },
       });
-      if (decision === 'APPROVED') {
+      if (newRecordStatus) {
         await tx.attendanceRecord.update({
           where: { id: j.recordId },
-          data: { status: 'JUSTIFIED' },
+          data: { status: newRecordStatus },
         });
       }
       return result;
@@ -309,7 +314,12 @@ export class JustificationsService {
       action: 'UPDATE',
       entity: 'AttendanceJustification',
       entityId: id,
-      meta: { decision, recordId: j.recordId },
+      meta: {
+        decision,
+        recordId: j.recordId,
+        previousStatus: j.record.status,
+        newStatus: newRecordStatus ?? j.record.status,
+      },
     });
 
     void this.notifyGuardianResult(id, decision, notes).catch((e) =>

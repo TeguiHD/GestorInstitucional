@@ -28,6 +28,8 @@ import {
   buildAttendanceSummary,
   countsAsAttendance,
   emptyAttendanceCounts,
+  isPendingLate,
+  nextWasLate,
   type AttendanceCounts,
 } from './attendance-calculation.js';
 
@@ -38,6 +40,7 @@ type ExistingAttendanceRecord = {
   status: AttendanceStatus;
   lateMinutes: number | null;
   note: string | null;
+  wasLate: boolean;
 };
 
 @Injectable()
@@ -61,7 +64,12 @@ export class AttendanceService {
    * de forma atómica: se comprueban todos primero y sólo entonces se abre una
    * transacción. Si algo falla, no se escribió nada todavía.
    */
-  private async prepareDay(courseId: string, day: AttendanceDayDto, recordedById: string) {
+  private async prepareDay(
+    courseId: string,
+    day: AttendanceDayDto,
+    recordedById: string,
+    resolvesLate: boolean,
+  ) {
     const date = parseDateOnlyUtc(day.date);
     const dto: RecordAttendanceDto = { courseId, date: day.date, entries: day.entries };
 
@@ -82,6 +90,7 @@ export class AttendanceService {
         status: entry.status as AttendanceStatus,
         note: entry.note ?? null,
         lateMinutes: entry.lateMinutes ?? null,
+        wasLate: nextWasLate(existing, entry.status, resolvesLate),
         recordedById,
       };
       return existing
@@ -97,8 +106,17 @@ export class AttendanceService {
     return { dto, date, writes, changeAudit };
   }
 
-  async recordBulk(dto: RecordAttendanceDto, recordedById: string): Promise<{ upserted: number }> {
-    const prepared = await this.prepareDay(dto.courseId, dto, recordedById);
+  /**
+   * `resolvesLate`: quien guarda es Inspectoría (ver canResolveLate). Cambiar un
+   * atraso pendiente desde la grilla cuenta entonces como resolución y conserva
+   * la marca de atraso; si es un profesor, es una corrección de captura.
+   */
+  async recordBulk(
+    dto: RecordAttendanceDto,
+    recordedById: string,
+    resolvesLate = false,
+  ): Promise<{ upserted: number }> {
+    const prepared = await this.prepareDay(dto.courseId, dto, recordedById, resolvesLate);
 
     await this.prisma.$transaction(prepared.writes);
 
@@ -132,6 +150,7 @@ export class AttendanceService {
   async recordBatch(
     dto: RecordAttendanceBatchDto,
     recordedById: string,
+    resolvesLate = false,
   ): Promise<{ days: number; upserted: number }> {
     const fechas = dto.days.map((d) => d.date);
     const repetidas = fechas.filter((f, i) => fechas.indexOf(f) !== i);
@@ -144,7 +163,7 @@ export class AttendanceService {
     // Todas las validaciones ocurren aquí, antes de tocar la base.
     const prepared = [];
     for (const day of dto.days) {
-      prepared.push(await this.prepareDay(dto.courseId, day, recordedById));
+      prepared.push(await this.prepareDay(dto.courseId, day, recordedById, resolvesLate));
     }
 
     await this.prisma.$transaction(prepared.flatMap((p) => p.writes));
@@ -253,6 +272,7 @@ export class AttendanceService {
         status: true,
         lateMinutes: true,
         note: true,
+        wasLate: true,
       },
       orderBy: { updatedAt: 'desc' },
     });
@@ -536,34 +556,37 @@ export class AttendanceService {
 
     const records = await this.prisma.attendanceRecord.findMany({
       where: { courseId, date: { gte: range.from, lte: range.to } },
-      select: { date: true, status: true, studentId: true },
+      select: { date: true, status: true, studentId: true, wasLate: true },
     });
 
     // Group by date
-    const byDate = new Map<
-      string,
-      { present: number; absent: number; late: number; justified: number; total: number }
-    >();
+    const byDate = new Map<string, { counts: AttendanceCounts; total: number }>();
     for (const r of records) {
       const key = this.schoolConfig.formatDate(r.date);
       if (!key.startsWith(monthPrefix)) continue;
-      const entry = byDate.get(key) ?? { present: 0, absent: 0, late: 0, justified: 0, total: 0 };
+      const entry = byDate.get(key) ?? { counts: emptyAttendanceCounts(), total: 0 };
       entry.total++;
-      if (r.status === 'PRESENT') entry.present++;
-      else if (r.status === 'ABSENT') entry.absent++;
-      else if (r.status === 'LATE') entry.late++;
-      else if (r.status === 'JUSTIFIED') entry.justified++;
+      addAttendanceStatus(entry.counts, r.status, r.wasLate);
       byDate.set(key, entry);
     }
 
-    return Array.from(byDate.entries()).map(([date, counts]) => ({
-      date,
-      ...counts,
-      attendanceRate: counts.total > 0 ? (counts.present + counts.late) / counts.total : 0,
-      totalClasses: counts.total,
-      missing: 0,
-      formulaVersion: ATTENDANCE_FORMULA_VERSION,
-    }));
+    // Denominador = registros del día (no calendario): es la tasa "registrada" del día.
+    return Array.from(byDate.entries()).map(([date, { counts, total }]) => {
+      const summary = buildAttendanceSummary(counts, total);
+      return {
+        date,
+        present: summary.present,
+        absent: summary.absent,
+        late: summary.late,
+        pendingLate: summary.pendingLate,
+        justified: summary.justified,
+        total,
+        attendanceRate: summary.attendanceRate ?? 0,
+        totalClasses: summary.effectiveClasses,
+        missing: 0,
+        formulaVersion: ATTENDANCE_FORMULA_VERSION,
+      };
+    });
   }
 
   /** School-level stats per course for a given period. */
@@ -606,7 +629,7 @@ export class AttendanceService {
               courseId: { in: courseIds },
               date: { gte: queryRange.from, lte: queryRange.to },
             },
-            select: { courseId: true, date: true, status: true },
+            select: { courseId: true, date: true, status: true, wasLate: true },
           });
 
     const byCourse = new Map<string, AttendanceCounts>();
@@ -614,7 +637,7 @@ export class AttendanceService {
       const key = this.schoolConfig.formatDate(record.date);
       if (key < fromKey || key > toKey || nonSchool.has(key)) continue;
       const cur = byCourse.get(record.courseId) ?? emptyAttendanceCounts();
-      addAttendanceStatus(cur, record.status);
+      addAttendanceStatus(cur, record.status, record.wasLate);
       byCourse.set(record.courseId, cur);
     }
 
@@ -639,6 +662,7 @@ export class AttendanceService {
           total: summary.totalClasses,
           present: summary.present,
           late: summary.late,
+          pendingLate: summary.pendingLate,
           absent: summary.absent,
           justified: summary.justified,
           missing: summary.missing,
@@ -667,6 +691,8 @@ export class AttendanceService {
     for (const r of records) {
       const d = this.schoolConfig.formatDate(r.date);
       if (d < fromKey || d > toKey) continue;
+      // Un atraso pendiente no cuenta ni como asistencia ni en el denominador.
+      if (isPendingLate(r.status)) continue;
       const cur = byDate.get(d) ?? { total: 0, present: 0 };
       cur.total += 1;
       if (countsAsAttendance(r.status)) cur.present += 1;
@@ -717,7 +743,7 @@ export class AttendanceService {
       }),
       this.prisma.attendanceRecord.findMany({
         where: { courseId, date: { gte: queryRange.from, lte: queryRange.to } },
-        select: { studentId: true, date: true, status: true },
+        select: { studentId: true, date: true, status: true, wasLate: true },
         orderBy: { date: 'asc' },
       }),
     ]);
@@ -747,11 +773,15 @@ export class AttendanceService {
     const dates = allDates;
 
     const matrix: Record<string, Record<string, string>> = {};
+    // Fechas con marca de atraso por alumno (pendientes y resueltos). La grilla
+    // marca con un punto los atrasos ya resueltos a otro estado.
+    const lateMarks: Record<string, string[]> = {};
     records.forEach((r) => {
       const date = this.schoolConfig.formatDate(r.date);
       if (!allDates.includes(date)) return;
       if (!matrix[r.studentId]) matrix[r.studentId] = {};
       matrix[r.studentId]![date] = r.status;
+      if (r.wasLate) (lateMarks[r.studentId] ??= []).push(date);
     });
 
     const studentStats = course.students.map((s) => {
@@ -776,7 +806,7 @@ export class AttendanceService {
         const date = parseDateOnlyUtc(dateKey);
         if (date < this.startOfDay(s.enrolledAt)) continue;
         if (s.withdrawnAt && date > this.startOfDay(s.withdrawnAt)) continue;
-        addAttendanceStatus(counts, status);
+        addAttendanceStatus(counts, status, lateMarks[s.id]?.includes(dateKey) ?? false);
       }
       const summary = buildAttendanceSummary(counts, totalClasses);
       return {
@@ -785,6 +815,7 @@ export class AttendanceService {
         present: summary.present,
         absent: summary.absent,
         late: summary.late,
+        pendingLate: summary.pendingLate,
         justified: summary.justified,
         missing: summary.missing,
         attended: summary.attended,
@@ -797,7 +828,15 @@ export class AttendanceService {
 
     const todayKey = this.schoolConfig.formatDate(today);
 
-    return { students: studentStats, dates, matrix, nonSchoolDays, schoolDays, today: todayKey };
+    return {
+      students: studentStats,
+      dates,
+      matrix,
+      lateMarks,
+      nonSchoolDays,
+      schoolDays,
+      today: todayKey,
+    };
   }
 
   async getCourseSummary(courseId: string, from: string, to: string) {
@@ -831,7 +870,7 @@ export class AttendanceService {
       }),
       this.prisma.attendanceRecord.findMany({
         where: { courseId, date: { gte: fromDate, lte: cappedToDate } },
-        select: { studentId: true, date: true, status: true },
+        select: { studentId: true, date: true, status: true, wasLate: true },
       }),
     ]);
 
@@ -851,7 +890,7 @@ export class AttendanceService {
       const stats = statsByStudent.get(r.studentId);
       if (!stats) continue;
       if (r.status === 'WITHDRAWN') continue;
-      addAttendanceStatus(stats, r.status);
+      addAttendanceStatus(stats, r.status, r.wasLate);
     }
 
     const students = course.students.map((s) => {
@@ -872,6 +911,7 @@ export class AttendanceService {
         present: summary.present,
         absent: summary.absent,
         late: summary.late,
+        pendingLate: summary.pendingLate,
         justified: summary.justified,
         missing: summary.missing,
         attended: summary.attended,
@@ -932,7 +972,7 @@ export class AttendanceService {
       }),
       this.prisma.attendanceRecord.findMany({
         where: { courseId, ...this.schoolConfig.attendanceWhereForRanges(ranges) },
-        select: { studentId: true, date: true, status: true },
+        select: { studentId: true, date: true, status: true, wasLate: true },
       }),
     ]);
 
@@ -948,7 +988,7 @@ export class AttendanceService {
       const stats = statsByStudent.get(record.studentId);
       if (!stats || record.status === 'WITHDRAWN') continue;
       if (record.date > today) continue;
-      addAttendanceStatus(stats, record.status);
+      addAttendanceStatus(stats, record.status, record.wasLate);
     }
 
     const cappedRanges = ranges.map((r) => ({
@@ -974,6 +1014,7 @@ export class AttendanceService {
         present: summary.present,
         absent: summary.absent,
         late: summary.late,
+        pendingLate: summary.pendingLate,
         justified: summary.justified,
         missing: summary.missing,
         attended: summary.attended,
@@ -1045,20 +1086,25 @@ export class AttendanceService {
       }),
       this.prisma.attendanceRecord.findMany({
         where: { courseId, ...this.schoolConfig.attendanceWhereForRanges(ranges) },
-        select: { studentId: true, date: true, status: true },
+        select: { studentId: true, date: true, status: true, wasLate: true },
       }),
     ]);
 
     if (!course) throw new NotFoundException('Curso no encontrado');
 
-    const recordsByStudentAndDate = new Map<string, Map<string, string>>();
+    const recordsByStudentAndDate = new Map<
+      string,
+      Map<string, { status: string; wasLate: boolean }>
+    >();
     for (const r of records) {
       if (r.status === 'WITHDRAWN') continue;
       if (!recordsByStudentAndDate.has(r.studentId)) {
         recordsByStudentAndDate.set(r.studentId, new Map());
       }
       const dateKey = this.schoolConfig.formatDate(r.date);
-      recordsByStudentAndDate.get(r.studentId)!.set(dateKey, r.status);
+      recordsByStudentAndDate
+        .get(r.studentId)!
+        .set(dateKey, { status: r.status, wasLate: r.wasLate });
     }
 
     const today = chileTodayEndUtc();
@@ -1073,6 +1119,7 @@ export class AttendanceService {
           present: number;
           absent: number;
           late: number;
+          pendingLate: number;
           justified: number;
           missing: number;
           attended: number;
@@ -1096,9 +1143,9 @@ export class AttendanceService {
         if (studentRecords) {
           const fromKey = this.schoolConfig.formatDate(mr.from);
           const toKey = this.schoolConfig.formatDate(cappedTo);
-          for (const [dateKey, status] of studentRecords) {
+          for (const [dateKey, record] of studentRecords) {
             if (dateKey < fromKey || dateKey > toKey) continue;
-            addAttendanceStatus(counts, status);
+            addAttendanceStatus(counts, record.status, record.wasLate);
           }
         }
 
@@ -1108,6 +1155,7 @@ export class AttendanceService {
           present: summary.present,
           absent: summary.absent,
           late: summary.late,
+          pendingLate: summary.pendingLate,
           justified: summary.justified,
           missing: summary.missing,
           attended: summary.attended,

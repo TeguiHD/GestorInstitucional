@@ -17,7 +17,7 @@ describe('WeeklyDigestCron attendance formulas', () => {
     vi.useRealTimers();
   });
 
-  it('usa P + AT sobre total clases e incluye el día sin registro', async () => {
+  it('usa P sobre total clases menos atrasos pendientes e incluye el día sin registro', async () => {
     vi.setSystemTime(new Date(2026, 2, 6, 12));
 
     const weeklyDigest = vi.fn().mockReturnValue({
@@ -79,9 +79,10 @@ describe('WeeklyDigestCron attendance formulas', () => {
           late: 1,
           justified: 1,
           absent: 1,
+          pendingLate: 1,
           missing: 1,
           total: 5,
-          rate: 0.4,
+          rate: 0.25,
         }),
       }),
     );

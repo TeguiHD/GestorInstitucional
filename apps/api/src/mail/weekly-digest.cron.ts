@@ -86,14 +86,14 @@ export class WeeklyDigestCron {
             studentId: g.student.id,
             date: { gte: weekStart, lte: weekEnd },
           },
-          select: { date: true, status: true },
+          select: { date: true, status: true, wasLate: true },
         });
         if (records.length === 0) continue;
 
         const counts = emptyAttendanceCounts();
         const absentDates: string[] = [];
         for (const r of records.filter((record) => !nonSchool.has(formatKey(record.date)))) {
-          addAttendanceStatus(counts, r.status);
+          addAttendanceStatus(counts, r.status, r.wasLate);
           if (r.status === AttendanceStatus.ABSENT) absentDates.push(formatShort(r.date));
         }
         const totalClasses = this.schoolConfig.countActiveSchoolDaysInRanges(
@@ -107,6 +107,7 @@ export class WeeklyDigestCron {
           present: summary.present,
           absent: summary.absent,
           late: summary.late,
+          pendingLate: summary.pendingLate,
           justified: summary.justified,
           missing: summary.missing,
           total: summary.totalClasses,

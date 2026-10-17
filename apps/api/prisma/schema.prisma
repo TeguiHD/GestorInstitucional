@@ -432,6 +432,9 @@ model AttendanceRecord {
   status       AttendanceStatus
   note         String?          @db.VarChar(500)
   lateMinutes  Int? // when LATE, optional minutes
+  // Marca de atraso: true si el registro fue (o es) un atraso. Sobrevive a la
+  // resolución de Inspectoría (LATE → PRESENT/ABSENT) para no perder el conteo.
+  wasLate      Boolean          @default(false)
   recordedById String           @db.Char(36)
   recordedAt   DateTime         @default(now())
   updatedAt    DateTime         @updatedAt
@@ -754,4 +757,3 @@ model SystemSetting {
 
   @@map("system_settings")
 }
-

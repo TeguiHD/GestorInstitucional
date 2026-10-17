@@ -4,7 +4,9 @@ import type { AttendanceStatus } from '@prisma/client';
 import {
   addAttendanceStatus,
   buildAttendanceSummary,
+  countsAsAbsence,
   countsAsAttendance,
+  isPendingLate,
   emptyAttendanceCounts,
   type AttendanceCounts,
 } from '../attendance/attendance-calculation.js';
@@ -107,6 +109,7 @@ export class InsightsService {
             select: {
               date: true,
               status: true,
+              wasLate: true,
               studentId: true,
               student: { select: { firstName: true, lastName: true } },
             },
@@ -119,7 +122,7 @@ export class InsightsService {
               date: { gte: previousRange.from, lte: previousRange.to },
               studentId: { in: previousStudents.map((s) => s.id) },
             },
-            select: { status: true, date: true },
+            select: { status: true, wasLate: true, date: true },
           })
         : Promise.resolve([]),
     ]);
@@ -163,7 +166,9 @@ export class InsightsService {
       const dow = r.date.getDay();
       const e = byDow.get(dow);
       if (!e) continue;
-      if (countsAsAttendance(r.status)) e.attended++;
+      // Un atraso pendiente sale del denominador del día.
+      if (isPendingLate(r.status)) e.total = Math.max(0, e.total - 1);
+      else if (countsAsAttendance(r.status)) e.attended++;
       byDow.set(dow, e);
     }
     const dowRates = Array.from(byDow.entries())
@@ -201,7 +206,7 @@ export class InsightsService {
     for (const r of current) {
       const e = byStudent.get(r.studentId);
       if (!e) continue;
-      addAttendanceStatus(e.counts, r.status);
+      addAttendanceStatus(e.counts, r.status, r.wasLate);
     }
     const atRisk = Array.from(byStudent.entries())
       .map(([id, v]) => {
@@ -296,7 +301,7 @@ export class InsightsService {
             course: { schoolId, active: true },
             date: { gte: range.from, lte: range.to },
           },
-          select: { courseId: true, status: true, date: true },
+          select: { courseId: true, status: true, wasLate: true, date: true },
         })
       : [];
     const recordsByCourse = new Map<string, typeof records>();
@@ -392,7 +397,7 @@ export class InsightsService {
             studentId: { in: students.map((s) => s.id) },
             date: { gte: range.from, lte: range.to },
           },
-          select: { studentId: true, status: true, date: true },
+          select: { studentId: true, status: true, wasLate: true, date: true },
         })
       : [];
 
@@ -400,7 +405,7 @@ export class InsightsService {
     const byStudent = new Map(students.map((student) => [student.id, emptyAttendanceCounts()]));
     for (const record of this.filterSchoolRecords(records, nonSchool)) {
       const counts = byStudent.get(record.studentId);
-      if (counts) addAttendanceStatus(counts, record.status);
+      if (counts) addAttendanceStatus(counts, record.status, record.wasLate);
     }
 
     const atRisk = students
@@ -492,7 +497,8 @@ export class InsightsService {
       const courseMatrix = matrix[courseKey]!;
       if (!courseMatrix[dow]) courseMatrix[dow] = { total: 0, present: 0 };
       const cell = courseMatrix[dow]!;
-      if (countsAsAttendance(r.status)) cell.present++;
+      if (isPendingLate(r.status)) cell.total = Math.max(0, cell.total - 1);
+      else if (countsAsAttendance(r.status)) cell.present++;
     }
 
     return Object.entries(matrix)
@@ -562,7 +568,9 @@ export class InsightsService {
         const recs = filteredRecords.filter(
           (r) => r.studentId === student.id && r.date >= start && r.date <= end,
         );
-        return recs.filter((r) => countsAsAttendance(r.status)).length / totalClasses;
+        const effective = totalClasses - recs.filter((r) => isPendingLate(r.status)).length;
+        if (effective <= 0) return NaN;
+        return recs.filter((r) => countsAsAttendance(r.status)).length / effective;
       });
 
       const valid = weekRates.filter((r) => !isNaN(r));
@@ -618,14 +626,16 @@ export class InsightsService {
     );
   }
 
-  private summaryForRecords<T extends { status: AttendanceStatus | string | null | undefined }>(
+  private summaryForRecords<
+    T extends { status: AttendanceStatus | string | null | undefined; wasLate?: boolean },
+  >(
     records: T[],
     students: Array<{ enrolledAt: Date; withdrawnAt: Date | null }>,
     ranges: DateRange[],
     nonSchoolDays: Set<string>,
   ) {
     const counts = emptyAttendanceCounts();
-    for (const record of records) addAttendanceStatus(counts, record.status);
+    for (const record of records) addAttendanceStatus(counts, record.status, record.wasLate);
     const totalClasses = students.reduce(
       (sum, student) =>
         sum + this.schoolConfig.countActiveSchoolDaysInRanges(student, ranges, nonSchoolDays),
@@ -717,7 +727,7 @@ export class InsightsService {
     for (const r of records) {
       const name = `${r.student.firstName} ${r.student.lastName}`;
       const e = byStudent.get(r.studentId) ?? { name, dates: [] };
-      e.dates.push({ date: r.date, absent: !countsAsAttendance(r.status) });
+      e.dates.push({ date: r.date, absent: countsAsAbsence(r.status) });
       byStudent.set(r.studentId, e);
     }
 

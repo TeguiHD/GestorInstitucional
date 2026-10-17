@@ -965,14 +965,14 @@ export class StudentsService {
               studentId,
               OR: ranges.map((range) => ({ date: { gte: range.from, lte: range.to } })),
             },
-            select: { status: true, date: true },
+            select: { status: true, wasLate: true, date: true },
           })
         : [];
 
     const counts = emptyAttendanceCounts();
     for (const record of records) {
       if (!nonSchool.has(this.schoolConfig.formatDate(record.date))) {
-        addAttendanceStatus(counts, record.status);
+        addAttendanceStatus(counts, record.status, record.wasLate);
       }
     }
     const totalClasses = this.schoolConfig.countActiveSchoolDaysInRanges(
@@ -988,6 +988,7 @@ export class StudentsService {
       present: summary.present,
       absent: summary.absent,
       late: summary.late,
+      pendingLate: summary.pendingLate,
       justified: summary.justified,
       attended: summary.attended,
       totalClasses: summary.totalClasses,

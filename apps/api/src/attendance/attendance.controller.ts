@@ -17,6 +17,7 @@ import { CoursesService } from '../courses/courses.service.js';
 import { AttendanceService } from './attendance.service.js';
 import { RecordAttendanceBatchDto } from './dto/record-attendance-batch.dto.js';
 import { RecordAttendanceDto } from './dto/record-attendance.dto.js';
+import { canResolveLate } from './late-roles.js';
 
 @ApiTags('attendance')
 @UseGuards(JwtAuthGuard, RolesGuard)
@@ -33,7 +34,7 @@ export class AttendanceController {
   async record(@Body() dto: RecordAttendanceDto, @CurrentUser() user: JwtPayload) {
     this.assertIsoDate(dto.date, 'date');
     await this.courses.assertAccess(dto.courseId, user);
-    return this.attendance.recordBulk(dto, user.sub);
+    return this.attendance.recordBulk(dto, user.sub, canResolveLate(user));
   }
 
   @Post('batch')
@@ -46,7 +47,7 @@ export class AttendanceController {
   async recordBatch(@Body() dto: RecordAttendanceBatchDto, @CurrentUser() user: JwtPayload) {
     for (const day of dto.days) this.assertIsoDate(day.date, 'date');
     await this.courses.assertAccess(dto.courseId, user);
-    return this.attendance.recordBatch(dto, user.sub);
+    return this.attendance.recordBatch(dto, user.sub, canResolveLate(user));
   }
 
   @Get('course/:courseId')
