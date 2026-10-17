@@ -12,7 +12,12 @@
       "persistent": true
     },
     "lint": {
-      "dependsOn": ["^build"]
+      "dependsOn": ["^build"],
+      "inputs": ["$TURBO_DEFAULT$", "$TURBO_ROOT$/eslint.config.mjs"]
+    },
+    "lint:fix": {
+      "dependsOn": ["^build"],
+      "cache": false
     },
     "typecheck": {
       "dependsOn": ["^build"],

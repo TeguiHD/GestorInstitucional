@@ -1,5 +1,14 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { AlertCircle, Ban, CheckCircle2, Clock, Info, Mail, Send, XCircle } from 'lucide-react';
+import {
+  AlertCircle,
+  Ban,
+  CheckCircle2,
+  Clock,
+  Info,
+  type Mail,
+  Send,
+  XCircle,
+} from 'lucide-react';
 import { useState } from 'react';
 import { toast } from 'sonner';
 

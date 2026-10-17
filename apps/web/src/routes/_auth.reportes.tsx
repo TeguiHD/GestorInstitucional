@@ -300,14 +300,15 @@ function ReportsPage() {
     return Number(firstSemesterEnd.slice(8, 10)) || JUNE_LAST_DAY;
   }, [academicConfig?.firstSemester.endDate, year]);
 
+  const matrixDates = matrix?.dates;
   const filteredDates = useMemo(() => {
-    if (!matrix?.dates) return [];
-    if (month !== 6) return matrix.dates;
-    return matrix.dates.filter((d) => {
+    if (!matrixDates) return [];
+    if (month !== 6) return matrixDates;
+    return matrixDates.filter((d) => {
       const day = new Date(d + 'T12:00').getDate();
       return day <= juneLastDay;
     });
-  }, [juneLastDay, matrix?.dates, month]);
+  }, [juneLastDay, matrixDates, month]);
 
   const recalculatedStudents = useMemo(() => {
     if (!matrix?.students || !matrix.matrix || filteredDates.length === 0) return [];

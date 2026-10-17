@@ -18,8 +18,8 @@ export function PwaLifecycle() {
   const [showUpdate, setShowUpdate] = useState(false);
   const [offlineReady, setOfflineReady] = useState(false);
 
-  const platform = useMemo(getPlatform, []);
-  const standalone = useMemo(isStandalone, []);
+  const platform = useMemo(() => getPlatform(), []);
+  const standalone = useMemo(() => isStandalone(), []);
 
   useEffect(() => {
     updateServiceWorker = registerSW({

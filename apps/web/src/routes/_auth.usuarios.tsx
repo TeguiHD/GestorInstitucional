@@ -310,7 +310,7 @@ function UserModal({
   const create = useMutation({
     mutationFn: (body: object) => api.post('/users', body),
     onSuccess: (data: unknown) => {
-      qc.invalidateQueries({ queryKey: ['users', schoolId] });
+      void qc.invalidateQueries({ queryKey: ['users', schoolId] });
       const d = data as { tempPassword?: string; id?: string };
       if (d.tempPassword) {
         onPasswordGenerated(d.tempPassword, d.id);
@@ -328,7 +328,7 @@ function UserModal({
   const edit = useMutation({
     mutationFn: ({ id, ...body }: { id: string } & object) => api.patch(`/users/${id}`, body),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['users', schoolId] });
+      void qc.invalidateQueries({ queryKey: ['users', schoolId] });
       toast.success('Usuario actualizado', {
         description: `${firstName} ${lastName} — cambios guardados.`,
       });
@@ -343,7 +343,7 @@ function UserModal({
 
   if (state?.type === 'password') {
     const copy = () => {
-      navigator.clipboard.writeText(state.tempPassword).then(() => {
+      void navigator.clipboard.writeText(state.tempPassword).then(() => {
         setCopied(true);
       });
     };
@@ -424,7 +424,7 @@ function UserModal({
         });
       } catch (err) {
         // If roles failed after profile saved, invalidate to show current state
-        qc.invalidateQueries({ queryKey: ['users', schoolId] });
+        void qc.invalidateQueries({ queryKey: ['users', schoolId] });
         throw err;
       }
     } else {
@@ -595,7 +595,7 @@ function SetPasswordModal({
   const setPassword = useMutation({
     mutationFn: () => api.post(`/users/${user.id}/set-password`, { newPassword }),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['users', schoolId] });
+      void qc.invalidateQueries({ queryKey: ['users', schoolId] });
       toast.success('Contraseña actualizada', {
         description: `Se cambió la contraseña de ${user.firstName} ${user.lastName}.`,
       });
@@ -719,7 +719,7 @@ function UsersPage() {
     mutationFn: ({ id, status }: { id: string; status: string }) =>
       api.patch(`/users/${id}`, { status: status === 'ACTIVE' ? 'INACTIVE' : 'ACTIVE' }),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['users', schoolId] });
+      void qc.invalidateQueries({ queryKey: ['users', schoolId] });
       toast.success('Estado actualizado');
     },
     onError: (e: Error) => toast.error(e.message),
@@ -728,7 +728,7 @@ function UsersPage() {
   const unlock = useMutation({
     mutationFn: (id: string) => api.post(`/users/${id}/unlock`, {}),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['users', schoolId] });
+      void qc.invalidateQueries({ queryKey: ['users', schoolId] });
       toast.success('Cuenta desbloqueada');
     },
   });
@@ -745,7 +745,7 @@ function UsersPage() {
   const remove = useMutation({
     mutationFn: (id: string) => api.del(`/users/${id}`),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['users', schoolId] });
+      void qc.invalidateQueries({ queryKey: ['users', schoolId] });
       toast.success('Usuario eliminado');
     },
     onError: (e: Error) => toast.error(e.message),

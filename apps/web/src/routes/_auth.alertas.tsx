@@ -103,7 +103,7 @@ function AlertasPage() {
   const upsert = useMutation({
     mutationFn: (body: object) => api.put(`/alerts/school/${schoolId}/rules`, body),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['alertRules', schoolId] });
+      void qc.invalidateQueries({ queryKey: ['alertRules', schoolId] });
       setShowForm(false);
       setForm(DEFAULTS);
     },
