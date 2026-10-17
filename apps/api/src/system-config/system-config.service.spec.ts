@@ -11,13 +11,13 @@ import { SystemConfigService } from './system-config.service.js';
 function makeService() {
   const prisma = {
     systemSetting: {
-      findMany: vi.fn(),
+      findMany: vi.fn().mockResolvedValue([]),
       upsert: vi.fn(),
     },
     $transaction: vi.fn(),
   };
 
-  return new SystemConfigService(prisma as never);
+  return new SystemConfigService(prisma as never, { log: vi.fn() } as never);
 }
 
 function settings(values: Record<string, string>) {
@@ -358,6 +358,8 @@ describe('SystemConfigService backup scheduler', () => {
       'backup_asistencia_2026-06-16_220000.zip',
     ]);
     expect(history[0]!.sizeBytes).toBe(2);
+    // Pocos respaldos: la política los conserva todos.
+    expect(history.every((h) => h.retention !== null)).toBe(true);
 
     await rm(backupDir, { recursive: true, force: true });
   });
@@ -413,5 +415,61 @@ describe('SystemConfigService backup scheduler', () => {
     expect(download.size).toBe(2);
 
     await rm(backupDir, { recursive: true, force: true });
+  });
+});
+
+describe('SystemConfigService retención de respaldos', () => {
+  afterEach(() => {
+    delete process.env.BACKUP_DIR;
+  });
+
+  it('borra solo lo que la política no conserva, respeta el enlace vigente y lo audita', async () => {
+    const backupDir = await mkdtemp(path.join(tmpdir(), 'asistencia-retention-'));
+    process.env.BACKUP_DIR = backupDir;
+    try {
+      const names: string[] = [];
+      for (let i = 0; i < 120; i++) {
+        const day = new Date(Date.now() - i * 86_400_000).toISOString().slice(0, 10);
+        names.push(`backup_asistencia_${day}_020000.zip`);
+      }
+      const linked = names[90]!; // enviado por enlace de descarga: no se toca
+      for (const name of [...names, 'pre_restore_20260101_000000.sql']) {
+        await writeFile(path.join(backupDir, name), 'x');
+      }
+
+      const prisma = {
+        systemSetting: {
+          findMany: vi.fn().mockResolvedValue(settings({ backup_download_file_name: linked })),
+          upsert: vi.fn(),
+        },
+        $transaction: vi.fn(),
+      };
+      const audit = { log: vi.fn().mockResolvedValue(undefined) };
+      const service = new SystemConfigService(prisma as never, audit as never);
+
+      const { removed } = await service.applyBackupRetention();
+
+      const { readdir } = await import('fs/promises');
+      const left = await readdir(backupDir);
+      expect(removed.length).toBeGreaterThan(60);
+      expect(left).toContain(linked);
+      expect(left).toContain('pre_restore_20260101_000000.sql');
+      expect(left).toContain(names[0]);
+      expect(left.length + removed.length).toBe(names.length + 1);
+      expect(audit.log).toHaveBeenCalledWith(
+        expect.objectContaining({
+          action: 'DELETE',
+          entity: 'Backup',
+          meta: expect.objectContaining({ reason: 'retention', removed }),
+        }),
+      );
+
+      // Segunda pasada: ya no hay nada que borrar ni que auditar.
+      audit.log.mockClear();
+      await expect(service.applyBackupRetention()).resolves.toEqual({ removed: [] });
+      expect(audit.log).not.toHaveBeenCalled();
+    } finally {
+      await rm(backupDir, { recursive: true, force: true });
+    }
   });
 });

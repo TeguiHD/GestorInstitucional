@@ -10,9 +10,11 @@ import {
 import { Cron } from '@nestjs/schedule';
 import { spawn } from 'child_process';
 import { createHash, randomInt, timingSafeEqual } from 'crypto';
-import { readdir, stat } from 'fs/promises';
+import { readdir, stat, unlink } from 'fs/promises';
 import path from 'path';
+import { AuditService } from '../audit/audit.service.js';
 import { PrismaService } from '../prisma/prisma.service.js';
+import { BACKUP_RETENTION, planBackupRetention, type RetentionTier } from './backup-retention.js';
 
 const BACKUP_KEYS = [
   'backup_emails',
@@ -88,6 +90,8 @@ type BackupHistoryItem = {
   sizeBytes: number;
   createdAt: string;
   encrypted: boolean;
+  /** Por qué se conserva según la política de retención (null: formato desconocido). */
+  retention: RetentionTier | null;
 };
 
 // ASCII imprimible y sin caracteres que rompan shell/zip ("$`\\ y comillas).
@@ -99,7 +103,10 @@ export class SystemConfigService {
   private readonly log = new Logger(SystemConfigService.name);
   private inProcessBackupRunning = false;
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly audit: AuditService,
+  ) {}
 
   async getBackupConfig(): Promise<BackupConfigResponse> {
     const configMap = await this.getBackupSettings();
@@ -257,7 +264,9 @@ export class SystemConfigService {
       throw new InternalServerErrorException('No se pudo generar el respaldo');
     }
 
-    return this.resolveLatestBackupFile(await this.getBackupSettings());
+    const download = await this.resolveLatestBackupFile(await this.getBackupSettings());
+    await this.applyBackupRetention();
+    return download;
   }
 
   async getBackupDownload(token: string | undefined) {
@@ -342,6 +351,7 @@ export class SystemConfigService {
       });
       if (code === 0) {
         this.log.log(`Backup ${source} completed`);
+        void this.applyBackupRetention();
       } else {
         this.log.warn(`Backup ${source} failed with exit code ${code}: ${output.slice(-500)}`);
       }
@@ -499,13 +509,79 @@ export class SystemConfigService {
         sizeBytes: info.size,
         createdAt: info.mtime.toISOString(),
         encrypted: /\.(zip|7z)$/i.test(name),
+        retention: null,
       });
     }
+    const { keep } = planBackupRetention(
+      items.map((item) => item.fileName),
+      { protect: await this.protectedBackupNames() },
+    );
+    for (const item of items) item.retention = keep.get(item.fileName) ?? null;
     // Nombres con timestamp embebido ordenan cronológicamente; createdAt como respaldo.
     items.sort(
       (a, b) => b.fileName.localeCompare(a.fileName) || b.createdAt.localeCompare(a.createdAt),
     );
     return items;
+  }
+
+  /**
+   * Aplica la retención por niveles (ver backup-retention.ts) tras un respaldo
+   * exitoso. Nunca hace fallar el respaldo: un error solo queda en el log.
+   */
+  async applyBackupRetention(): Promise<{ removed: string[] }> {
+    try {
+      const root = this.backupRootDir();
+      const entries = await readdir(root, { withFileTypes: true }).catch(() => []);
+      const names = entries.filter((e) => e.isFile()).map((e) => e.name);
+      const plan = planBackupRetention(names, { protect: await this.protectedBackupNames() });
+      if (plan.remove.length === 0) return { removed: [] };
+
+      const removed: string[] = [];
+      for (const name of plan.remove) {
+        const filePath = path.resolve(root, name);
+        if (path.dirname(filePath) !== root) continue;
+        try {
+          await unlink(filePath);
+          removed.push(name);
+        } catch (error) {
+          this.log.warn(`Retención: no se pudo borrar ${name}: ${(error as Error).message}`);
+        }
+      }
+
+      this.log.log(
+        `Retención de respaldos: ${removed.length} eliminados, ${plan.keep.size} conservados`,
+      );
+      await this.audit.log({
+        action: 'DELETE',
+        entity: 'Backup',
+        meta: {
+          reason: 'retention',
+          policy: BACKUP_RETENTION,
+          removed,
+          keptCount: plan.keep.size,
+        },
+      });
+      return { removed };
+    } catch (error) {
+      this.log.error(`Retención de respaldos falló: ${(error as Error).message}`);
+      return { removed: [] };
+    }
+  }
+
+  /** Respaldos que no se borran nunca: los enlazados en correos o descargas vigentes. */
+  private async protectedBackupNames(): Promise<Set<string>> {
+    const configMap = await this.getBackupSettings();
+    const names = new Set<string>();
+    for (const key of ['backup_download_file_name', 'backup_last_file_name']) {
+      const value = configMap.get(key);
+      if (value) names.add(path.basename(value));
+    }
+    for (const download of this.parseStoredDownloadTokens(
+      configMap.get('backup_download_tokens'),
+    )) {
+      names.add(path.basename(download.fileName));
+    }
+    return names;
   }
 
   /** Descarga de un respaldo del historial por nombre (sólo admin). */

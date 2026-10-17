@@ -381,6 +381,16 @@ type BackupHistoryItem = {
   sizeBytes: number;
   createdAt: string;
   encrypted: boolean;
+  /** Motivo por el que la política de retención lo conserva. */
+  retention?: 'daily' | 'weekly' | 'monthly' | 'yearly' | 'protected' | null;
+};
+
+const RETENTION_LABEL: Record<NonNullable<BackupHistoryItem['retention']>, string> = {
+  daily: 'Diario',
+  weekly: 'Semanal',
+  monthly: 'Mensual',
+  yearly: 'Anual',
+  protected: 'Enlace vigente',
 };
 
 const BACKUP_HISTORY_PAGE_SIZE = 10;
@@ -885,7 +895,12 @@ function BackupConfigPanel() {
             <div>
               <h2 className="text-sm font-semibold">Historial de respaldos</h2>
               <p className="text-xs text-muted-foreground">
-                Respaldos disponibles en el servidor (base de datos + archivos).
+                Respaldos disponibles en el servidor (base de datos + archivos). Cada uno es
+                completo: para migrar basta con restaurar uno.
+              </p>
+              <p className="mt-1 text-[11px] text-muted-foreground">
+                Se conservan todos los de los últimos 14 días, el último de cada semana (8 semanas),
+                de cada mes (24 meses) y de cada año.
               </p>
             </div>
           </div>
@@ -918,6 +933,7 @@ function BackupConfigPanel() {
                     <p className="text-[10px] text-muted-foreground">
                       {formatBackupTimestamp(item.createdAt.slice(0, 19).replace('T', ' '))} ·{' '}
                       {formatBytes(item.sizeBytes)} · {item.encrypted ? 'Cifrado' : 'Sin cifrar'}
+                      {item.retention && <> · {RETENTION_LABEL[item.retention]}</>}
                     </p>
                   </div>
                   <button

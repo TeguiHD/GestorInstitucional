@@ -495,7 +495,8 @@ upsert_setting backup_download_file_size_bytes "$ZIP_SIZE_BYTES"
 upsert_setting backup_download_expires_at "$DOWNLOAD_EXPIRES_AT"
 echo "[$(date)] Marcado ultimo backup exitoso: $SUCCESS_AT"
 
-echo "[$(date)] Purgando backups locales antiguos..."
-find "$BACKUP_DIR" -type f -name "backup_asistencia_*.sql.zip" -mtime +30 -delete
+# La retención (qué respaldos antiguos se conservan) la aplica la API al terminar
+# este script: apps/api/src/system-config/backup-retention.ts. El patrón que había
+# aquí (*.sql.zip) no coincidía con ningún archivo y nunca borró nada.
 
 echo "[$(date)] Proceso de backup finalizado con exito."
