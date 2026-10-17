@@ -1,6 +1,44 @@
 # Deploy — asistencia.nicoholas.dev
 
-## Pre-requisitos VPS
+## Producción actual (Azure, desde 2-ago-2026)
+
+- VM `13.88.244.94`, usuario `teguihd` con llave SSH (sin contraseña), en el grupo `docker`.
+- Stack en `/opt/asistencia/`: `docker-compose.yml` (copia versionada en
+  `infra/docker/docker-compose.azure.yml`), `.env.prod` (no versionado) y `mariadb/init.sql`.
+- Proxy: `portfolio_nginx` del portafolio, red externa `docker_portfolio_network`.
+- La VM (892 MB RAM) **no compila**: las imágenes se construyen en local y se cargan.
+
+```bash
+# 1. Local: construir imágenes
+podman build -t asistencia-api:latest -f apps/api/Dockerfile --target runner .
+podman build -t asistencia-web:latest -f apps/web/Dockerfile --build-arg VITE_API_BASE_URL=/api/v1 .
+podman save --format docker-archive asistencia-api:latest | gzip > api.tar.gz   # sin --format, docker load falla
+podman save --format docker-archive asistencia-web:latest | gzip > web.tar.gz
+scp api.tar.gz web.tar.gz teguihd@13.88.244.94:/tmp/
+
+# 2. VM: respaldo previo + etiqueta de vuelta atrás
+docker exec asistencia_db sh -c 'mariadb-dump --single-transaction --quick -uroot -p"$MARIADB_ROOT_PASSWORD" asistencia' \
+  | gzip > /opt/asistencia/backup_pre_<cambio>_$(date +%Y%m%d_%H%M%S).sql.gz
+docker tag asistencia-api:latest asistencia-api:prev
+docker tag asistencia-web:latest asistencia-web:prev
+gunzip -c /tmp/api.tar.gz | docker load && gunzip -c /tmp/web.tar.gz | docker load
+docker tag localhost/asistencia-api:latest asistencia-api:latest   # podman prefija localhost/
+docker tag localhost/asistencia-web:latest asistencia-web:latest
+
+# 3. VM: migraciones (si hay) y recrear api + web (la DB no se reinicia)
+cd /opt/asistencia
+docker compose --env-file .env.prod run --rm --entrypoint sh api -c "cd apps/api && ./node_modules/.bin/prisma migrate deploy"
+docker compose --env-file .env.prod up -d --force-recreate api web
+curl -fsS https://asistencia.nicoholas.dev/api/v1/health
+```
+
+Vuelta atrás: `docker tag asistencia-api:prev asistencia-api:latest` (ídem web) y
+`docker compose --env-file .env.prod up -d --force-recreate api web`. Una migración de
+datos se revierte restaurando el respaldo previo.
+
+---
+
+## Pre-requisitos VPS (instalación desde cero; histórico, droplet)
 
 ```bash
 # En el servidor (Ubuntu 22.04+)

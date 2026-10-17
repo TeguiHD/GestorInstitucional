@@ -23,8 +23,8 @@ la inspectora.
 2. **Marca de atraso** = nueva columna `wasLate`. Se pone en `true` al registrar
    `LATE` y **sobrevive** a la resolución: el conteo de atrasos no baja porque
    alguien resolvió el caso.
-3. **Resolución**: Inspectoría (SUPER_ADMIN, DIRECTOR, UTP, INSPECTORIA) pasa el
-   atraso a `PRESENT` o `ABSENT`, sin plazo. Desde la pantalla _Atrasos_ (en lote)
+3. **Resolución**: Inspectoría (SUPER*ADMIN, DIRECTOR, UTP, INSPECTORIA) pasa el
+   atraso a `PRESENT` o `ABSENT`, sin plazo. Desde la pantalla \_Atrasos* (en lote)
    o desde la grilla del curso.
 4. **Justificación aprobada** de un atraso (pendiente o ya resuelto) ⇒ `PRESENT`.
    Una inasistencia normal justificada sigue quedando `JUSTIFIED` (sin cambios).
@@ -68,7 +68,7 @@ indica cuántos). Visible para SUPER_ADMIN, DIRECTOR, UTP e INSPECTORIA.
 
 ## API
 
-- `GET /attendance/late?schoolId&state=pending|resolved&courseId&q&limit&offset`
+- `GET /attendance/late/school/:schoolId?state=pending|resolved&courseId&q&limit&offset`
 - `POST /attendance/late/resolve { recordIds[] (1..200), status: PRESENT|ABSENT }`
   — valida que todos sigan pendientes y sean del colegio; todo o nada; auditoría
   con `attendanceChange` (cuenta para el respaldo por cambios). No notifica a

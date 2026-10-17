@@ -1,0 +1,127 @@
+# -----------------------------------------------------------------------------
+# Copia versionada del compose que corre en producción (Azure, desde 2-ago-2026).
+# En el servidor vive como /opt/asistencia/docker-compose.yml, junto a:
+#   - .env.prod          (NO versionado: secretos; copia en el gestor de claves)
+#   - mariadb/init.sql   (= infra/docker/mariadb/init.sql de este repo)
+# Las imágenes asistencia-api / asistencia-web se construyen en local y se
+# cargan con `docker load`: la VM (892 MB RAM) no puede compilarlas. Ver
+# infra/docs/deploy.md.
+# -----------------------------------------------------------------------------
+# Asistencia — producción en Azure B1s (892 MB RAM)
+# Reverse proxy: portfolio_nginx, red externa docker_portfolio_network
+#
+# Los mem_limit son contención de daños: si un servicio se desborda, el OOM
+# killer mata ESE contenedor (restart: always lo revive) en vez de tumbar el
+# portafolio o la DB. Presupuesto: 288 + 256 + 32 = 576 MB.
+
+services:
+  asistencia-db:
+    image: mariadb:11.4
+    container_name: asistencia_db
+    restart: always
+    environment:
+      MARIADB_ROOT_PASSWORD: ${DB_ROOT_PASSWORD:?required}
+      MARIADB_DATABASE: ${DB_NAME:?required}
+      MARIADB_USER: ${DB_USER:?required}
+      MARIADB_PASSWORD: ${DB_PASSWORD:?required}
+    volumes:
+      - db_data:/var/lib/mysql
+      - ./mariadb/init.sql:/docker-entrypoint-initdb.d/00_init.sql:ro
+    # Tuning para 892 MB: buffer pool 96M (vs 512M del droplet), sin
+    # performance_schema (ahorra ~80 MB), conexiones acotadas.
+    command: >
+      --character-set-server=utf8mb4
+      --collation-server=utf8mb4_unicode_ci
+      --innodb-buffer-pool-size=96M
+      --innodb-log-file-size=48M
+      --innodb-flush-method=O_DIRECT
+      --performance-schema=OFF
+      --max-connections=40
+      --key-buffer-size=8M
+      --tmp-table-size=16M
+      --max-heap-table-size=16M
+      --table-open-cache=64
+    mem_limit: 288m
+    memswap_limit: 512m
+    networks:
+      - internal
+    healthcheck:
+      test: ['CMD', 'healthcheck.sh', '--connect', '--innodb_initialized']
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 60s
+
+  api:
+    image: asistencia-api:latest
+    container_name: asistencia_api
+    restart: always
+    depends_on:
+      asistencia-db:
+        condition: service_healthy
+    env_file: ./.env.prod
+    environment:
+      NODE_ENV: production
+      DB_HOST: asistencia-db
+      TZ: America/Santiago
+      # Heap por debajo del mem_limit para que V8 haga GC antes que el OOM killer
+      NODE_OPTIONS: --max-old-space-size=192
+    volumes:
+      - uploads:/app/uploads
+      - backups:/app/backups
+    init: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: 256m
+    memswap_limit: 512m
+    networks:
+      - internal
+      - proxy
+    healthcheck:
+      test:
+        [
+          'CMD',
+          'node',
+          '-e',
+          "require('http').get('http://127.0.0.1:4000/api/v1/health',r=>process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1))",
+        ]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 120s
+
+  web:
+    image: asistencia-web:latest
+    container_name: asistencia_web
+    restart: always
+    init: true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - SETGID
+      - SETUID
+      - NET_BIND_SERVICE
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: 32m
+    networks:
+      - proxy
+
+volumes:
+  db_data:
+    name: asistencia_db_prod
+  uploads:
+    name: asistencia_uploads
+  backups:
+    name: asistencia_backups
+
+networks:
+  internal:
+    driver: bridge
+    internal: true
+  proxy:
+    external: true
+    name: docker_portfolio_network
