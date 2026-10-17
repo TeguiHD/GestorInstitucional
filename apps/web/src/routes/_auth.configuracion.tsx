@@ -936,14 +936,14 @@ function BackupConfigPanel() {
           {historyPages > 1 && (
             <div className="flex items-center justify-between gap-3 border-t border-border px-3 pt-3 pb-1 text-xs">
               <span className="text-muted-foreground">
-                {historyTotal} respaldos · pág. {safeHistoryPage + 1} de {historyPages}
+                {historyTotal} respaldos · {safeHistoryPage + 1}/{historyPages}
               </span>
               <div className="flex gap-2">
                 <button
                   type="button"
                   disabled={safeHistoryPage === 0}
                   onClick={() => setHistoryPage(safeHistoryPage - 1)}
-                  className="px-3 py-1.5 rounded-lg border border-border disabled:opacity-40 hover:bg-muted transition-colors"
+                  className="whitespace-nowrap px-2.5 py-1.5 rounded-lg border border-border disabled:opacity-40 hover:bg-muted transition-colors"
                 >
                   ← Anterior
                 </button>
@@ -951,7 +951,7 @@ function BackupConfigPanel() {
                   type="button"
                   disabled={safeHistoryPage + 1 >= historyPages}
                   onClick={() => setHistoryPage(safeHistoryPage + 1)}
-                  className="px-3 py-1.5 rounded-lg border border-border disabled:opacity-40 hover:bg-muted transition-colors"
+                  className="whitespace-nowrap px-2.5 py-1.5 rounded-lg border border-border disabled:opacity-40 hover:bg-muted transition-colors"
                 >
                   Siguiente →
                 </button>
