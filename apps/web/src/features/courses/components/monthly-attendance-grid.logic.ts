@@ -159,3 +159,29 @@ export function deserializeAttendanceDirty(
 
   return dirty;
 }
+
+/**
+ * Tasa de asistencia de un conjunto de estados registrados (fórmula V2): solo
+ * PRESENT cuenta como asistencia y un atraso pendiente (LATE) se excluye del
+ * numerador y del denominador. Los estados que no son de la grilla se ignoran.
+ */
+export function gridAttendanceRate(statuses: Iterable<string | undefined>): {
+  present: number;
+  effective: number;
+  pendingLate: number;
+  rate: number | null;
+} {
+  let present = 0;
+  let effective = 0;
+  let pendingLate = 0;
+  for (const status of statuses) {
+    if (!isAttendanceGridStatus(status)) continue;
+    if (status === 'LATE') {
+      pendingLate++;
+      continue;
+    }
+    effective++;
+    if (status === 'PRESENT') present++;
+  }
+  return { present, effective, pendingLate, rate: effective > 0 ? present / effective : null };
+}

@@ -22,6 +22,8 @@ type Stats = {
   present: number;
   absent: number;
   late: number;
+  /** Atrasos aún sin resolver por Inspectoría: no cuentan en el %. */
+  pendingLate?: number;
   justified: number;
   attendanceRate: number;
 };
@@ -150,6 +152,13 @@ function ChildDetail({ child }: { child: Child }) {
             label="Asistencia"
             value={`${(stats.attendanceRate * 100).toFixed(1)}%`}
             color={rateColor}
+            hint={
+              (stats.pendingLate ?? 0) > 0
+                ? stats.pendingLate === 1
+                  ? '1 atraso pendiente de resolver'
+                  : `${stats.pendingLate} atrasos pendientes de resolver`
+                : undefined
+            }
           />
           <KpiCard label="Presentes" value={String(stats.present)} color="#22c55e" />
           <KpiCard label="Ausentes" value={String(stats.absent)} color="#ef4444" />
@@ -281,13 +290,24 @@ function ChildDetail({ child }: { child: Child }) {
   );
 }
 
-function KpiCard({ label, value, color }: { label: string; value: string; color: string }) {
+function KpiCard({
+  label,
+  value,
+  color,
+  hint,
+}: {
+  label: string;
+  value: string;
+  color: string;
+  hint?: string | undefined;
+}) {
   return (
     <div className="rounded-xl border border-border bg-background p-4 space-y-1">
       <p className="text-xs text-muted-foreground uppercase tracking-wide">{label}</p>
       <p className="text-2xl font-bold" style={{ color }}>
         {value}
       </p>
+      {hint && <p className="text-[11px] text-orange-600 dark:text-orange-400">{hint}</p>}
     </div>
   );
 }

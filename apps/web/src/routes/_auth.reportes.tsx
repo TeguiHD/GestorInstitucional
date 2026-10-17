@@ -32,6 +32,7 @@ import { SearchableSelect } from '@/components/ui/SearchableSelect';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { useEffectiveSchoolId } from '@/stores/school.store';
 import {
+  ATTENDANCE_FORMULA_VERSION,
   manualFormulaText,
   statusDatesForStudent,
   totalClasses,
@@ -63,6 +64,7 @@ type MatrixStudent = {
   present: number;
   absent: number;
   late?: number;
+  pendingLate?: number;
   justified: number;
   missing?: number;
   attended?: number;
@@ -82,6 +84,7 @@ type SummaryStudent = {
   present: number;
   absent: number;
   late: number;
+  pendingLate?: number;
   justified: number;
   missing?: number;
   attended?: number;
@@ -106,6 +109,8 @@ type MatrixData = {
   students: MatrixStudent[];
   dates: string[];
   matrix: Record<string, Record<string, string>>;
+  /** Fechas con marca de atraso por alumno (pendientes y resueltos). */
+  lateMarks?: Record<string, string[]>;
   nonSchoolDays?: Record<string, { type: string; description: string }>;
   schoolDays?: string[];
   today?: string;
@@ -200,6 +205,7 @@ type MonthlyBreakdownData = {
         present: number;
         absent: number;
         late: number;
+        pendingLate?: number;
         justified: number;
         missing?: number;
         attended?: number;
@@ -310,35 +316,43 @@ function ReportsPage() {
     const denominatorDates = (matrix.schoolDays ?? filteredDates).filter(
       (dateKey) => dateSet.has(dateKey) && dateKey <= todayKey && !matrix.nonSchoolDays?.[dateKey],
     );
+    // Fórmula V2: % = presentes / (clases − atrasos pendientes). Un atraso
+    // pendiente (LATE) no suma ni resta; `late` cuenta los atrasos con marca
+    // (pendientes + resueltos), igual que el backend.
     return matrix.students.map((s) => {
       const records = matrix.matrix[s.id];
+      const marks = new Set(matrix.lateMarks?.[s.id] ?? []);
       const activeDates = denominatorDates.filter((dateKey) => isStudentActiveForDate(s, dateKey));
       const totalClasses = activeDates.length;
-      let total = 0;
+      let recorded = 0;
       let present = 0;
       let absent = 0;
       let late = 0;
+      let pendingLate = 0;
       let justified = 0;
       for (const dateKey of activeDates) {
         const status = records?.[dateKey];
         if (status === 'WITHDRAWN') continue;
         if (status === 'PRESENT') {
-          total++;
+          recorded++;
           present++;
         } else if (status === 'ABSENT') {
-          total++;
+          recorded++;
           absent++;
-        } else if (status === 'LATE') {
-          total++;
-          late++;
         } else if (status === 'JUSTIFIED') {
-          total++;
+          recorded++;
           justified++;
+        } else if (status === 'LATE') {
+          pendingLate++;
+        } else {
+          continue;
         }
+        if (status === 'LATE' || marks.has(dateKey)) late++;
       }
-      const missing = Math.max(0, totalClasses - total);
-      const attended = present + late;
-      const rate = totalClasses > 0 ? attended / totalClasses : null;
+      const effectiveClasses = Math.max(0, totalClasses - pendingLate);
+      const missing = Math.max(0, effectiveClasses - recorded);
+      const attended = present;
+      const rate = effectiveClasses > 0 ? attended / effectiveClasses : null;
       return {
         ...s,
         total: totalClasses,
@@ -346,11 +360,12 @@ function ReportsPage() {
         absent,
         justified,
         late,
+        pendingLate,
         missing,
         attended,
         totalClasses,
         attendanceRate: rate,
-        formulaVersion: 'PRESENT_LATE_OVER_TOTAL_CLASSES_V1',
+        formulaVersion: ATTENDANCE_FORMULA_VERSION,
         rate,
       };
     });
@@ -993,6 +1008,7 @@ function ResumenTab({
   const rawStudents = isMonthly ? sortedStudents : sortedSummaryStudents;
   const avg = isMonthly ? avgRate : avgSummaryRate;
   const below = isMonthly ? belowCritical : belowSummaryCritical;
+  const totalPendingLate = rawStudents.reduce((acc, s) => acc + (s.pendingLate ?? 0), 0);
 
   // Filter by search
   const filtered = useMemo(() => {
@@ -1333,9 +1349,17 @@ function ResumenTab({
 
           <div className="px-4 py-2.5 border-t border-border bg-muted/20 space-y-1">
             <p className="text-[10px] text-muted-foreground flex items-center gap-1">
-              <CheckCircle2 className="size-3 shrink-0" />% = (Presentes + Atrasos) × 100 / Clases.
-              Justificados y sin registro no suman.
+              <CheckCircle2 className="size-3 shrink-0" />% = Presentes × 100 / (Clases − Atrasos
+              pendientes). Justificados y sin registro no suman.
             </p>
+            {totalPendingLate > 0 && (
+              <p className="text-[10px] text-orange-600 dark:text-orange-400 flex items-center gap-1">
+                <AlertTriangle className="size-3 shrink-0" />
+                {totalPendingLate === 1
+                  ? '1 atraso pendiente de resolver (no cuenta en el % hasta que Inspectoría lo resuelva).'
+                  : `${totalPendingLate} atrasos pendientes de resolver (no cuentan en el % hasta que Inspectoría los resuelva).`}
+              </p>
+            )}
             {showJuneBanner && (
               <p className="text-[10px] text-muted-foreground flex items-center gap-1">
                 <AlertTriangle className="size-3 shrink-0" />
@@ -1415,8 +1439,8 @@ function PlanillaTab({
     for (const month of months) {
       const stats = month.stats[student.id];
       if (stats) {
-        totalDays += stats.totalClasses ?? stats.total;
-        totalPresent += stats.attended ?? stats.present + stats.late;
+        totalDays += Math.max(0, (stats.totalClasses ?? stats.total) - (stats.pendingLate ?? 0));
+        totalPresent += stats.attended ?? stats.present;
       }
     }
     const rate = totalDays > 0 ? totalPresent / totalDays : null;
@@ -1584,15 +1608,15 @@ function PlanillaTab({
 
         <div className="px-4 py-2.5 border-t border-border bg-muted/20 no-print">
           <p className="text-[10px] text-muted-foreground flex items-center gap-1">
-            <CheckCircle2 className="size-3 shrink-0" />% = (Presentes + Atrasos) * 100 / Total
-            clases. Haz clic en un mes para ver el detalle.
+            <CheckCircle2 className="size-3 shrink-0" />% = Presentes * 100 / (Días hábiles −
+            Atrasos pendientes). Haz clic en un mes para ver el detalle.
           </p>
         </div>
 
         {/* Print-only footer */}
         <div className="print-only print-footer">
-          % = (Presentes + Atrasos) * 100 / Total clases · Documento generado desde plataforma
-          Asistencia CSSP — {new Date().toLocaleDateString('es-CL')}
+          % = Presentes * 100 / (Días hábiles − Atrasos pendientes) · Documento generado desde
+          plataforma Asistencia CSSP — {new Date().toLocaleDateString('es-CL')}
         </div>
 
         {/* Print-only signatures */}

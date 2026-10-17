@@ -570,6 +570,17 @@ thead .att-grid-sticky-right {
 .att-grid-cell {
   position: relative;
 }
+/* Atraso ya resuelto a otro estado: punto naranja en la esquina superior izquierda */
+.att-cell--was-late::before {
+  content: '';
+  position: absolute;
+  top: 1px;
+  left: 1px;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: #f97316;
+}
 
 /* Legend */
 .att-grid-legend {
@@ -593,6 +604,13 @@ thead .att-grid-sticky-right {
   width: 12px;
   height: 12px;
   border-radius: 3px;
+}
+.att-legend-mark {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #f97316;
 }
 
 /* ── Print styles ─────────────────────────────────────────────────── */

@@ -62,7 +62,7 @@ const STATUS_CONFIG = {
     icon: XCircle,
   },
   LATE: {
-    label: 'Atraso',
+    label: 'Atraso pendiente',
     bg: 'bg-orange-100 dark:bg-orange-900/30',
     text: 'text-orange-700 dark:text-orange-400',
     icon: Clock,

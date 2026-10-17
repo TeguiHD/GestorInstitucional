@@ -33,6 +33,7 @@ type CourseStats = {
   totalClasses?: number;
   present: number;
   late?: number;
+  pendingLate?: number;
   attended?: number;
 };
 
@@ -127,8 +128,12 @@ function weightedAttendanceRate(stats: CourseStats[] | undefined): number | null
   if (!stats?.length) return null;
   const totals = stats.reduce(
     (acc, course) => {
-      const totalClasses = course.totalClasses ?? course.total;
-      const attended = course.attended ?? course.present + (course.late ?? 0);
+      // V2: solo presentes; los atrasos pendientes salen del denominador.
+      const totalClasses = Math.max(
+        0,
+        (course.totalClasses ?? course.total) - (course.pendingLate ?? 0),
+      );
+      const attended = course.attended ?? course.present;
       return {
         attended: acc.attended + attended,
         totalClasses: acc.totalClasses + totalClasses,

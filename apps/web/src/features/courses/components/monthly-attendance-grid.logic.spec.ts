@@ -6,6 +6,7 @@ import {
   deserializeAttendanceDirty,
   getDateCompletion,
   getNextAttendanceStatus,
+  gridAttendanceRate,
   isStudentActiveOnDate,
   serializeAttendanceDirty,
 } from './monthly-attendance-grid.logic';
@@ -126,5 +127,15 @@ describe('monthly attendance grid logic', () => {
     expect(attendanceDraftStorageKey('user-1', 'course-1', 2026, 5)).toBe(
       'cssp:attendance-draft:user-1:course-1:2026-05',
     );
+  });
+
+  it('calcula la tasa V2: atraso pendiente fuera del numerador y del denominador', () => {
+    expect(gridAttendanceRate(['PRESENT', 'PRESENT', 'ABSENT', 'LATE', 'JUSTIFIED'])).toEqual({
+      present: 2,
+      effective: 4,
+      pendingLate: 1,
+      rate: 0.5,
+    });
+    expect(gridAttendanceRate(['LATE', undefined, 'WITHDRAWN']).rate).toBeNull();
   });
 });

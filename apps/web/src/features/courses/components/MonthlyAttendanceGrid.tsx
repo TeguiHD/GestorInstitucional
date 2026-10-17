@@ -23,6 +23,7 @@ import {
   deserializeAttendanceDirty,
   getDateCompletion,
   getNextAttendanceStatus,
+  gridAttendanceRate,
   isAttendanceGridStatus,
   isStudentActiveOnDate,
   serializeAttendanceDirty,
@@ -56,6 +57,8 @@ type MatrixData = {
   students: StudentStat[];
   dates: string[];
   matrix: Record<string, Record<string, string>>;
+  /** Fechas con marca de atraso por alumno (pendientes y resueltos). */
+  lateMarks?: Record<string, string[]>;
   nonSchoolDays: Record<string, NonSchoolDay>;
   schoolDays: string[];
   today: string;
@@ -71,6 +74,13 @@ const STATUS_SHORT: Record<string, string> = {
   LATE: 'AT',
   JUSTIFIED: 'J',
   WITHDRAWN: 'R',
+};
+
+const STATUS_TITLE: Record<string, string> = {
+  PRESENT: 'Presente',
+  ABSENT: 'Ausente',
+  LATE: 'Atraso pendiente de resolver (no cuenta en el %)',
+  JUSTIFIED: 'Justificado',
 };
 
 const STATUS_CELL_CLASS: Record<string, string> = {
@@ -584,19 +594,21 @@ export function MonthlyAttendanceGrid({
     let present = 0,
       absent = 0,
       late = 0,
-      justified = 0,
-      total = 0;
+      justified = 0;
+    const statuses: string[] = [];
     for (const s of students) {
       if (!isStudentActiveOnDate(s, todayKey)) continue;
       const st = getEffectiveStatus(s.id, todayKey);
       if (!isAttendanceGridStatus(st)) continue;
-      total++;
+      statuses.push(st);
       if (st === 'PRESENT') present++;
       else if (st === 'ABSENT') absent++;
       else if (st === 'LATE') late++;
       else if (st === 'JUSTIFIED') justified++;
     }
-    return { present, absent, late, justified, total };
+    // V2: los atrasos pendientes no cuentan como asistencia ni inasistencia.
+    const { rate } = gridAttendanceRate(statuses);
+    return { present, absent, late, justified, rate };
   }, [matrix, students, todayKey, dates, getEffectiveStatus]);
 
   const focusedCompletion =
@@ -688,7 +700,10 @@ export function MonthlyAttendanceGrid({
             </span>
           )}
           {todayStats.late > 0 && (
-            <span className="rounded-full bg-orange-100 dark:bg-orange-900/30 text-orange-700 dark:text-orange-400 px-2.5 py-1 font-medium">
+            <span
+              className="rounded-full bg-orange-100 dark:bg-orange-900/30 text-orange-700 dark:text-orange-400 px-2.5 py-1 font-medium"
+              title="Atrasos pendientes de resolver (no cuentan en el %)"
+            >
               {todayStats.late} AT
             </span>
           )}
@@ -698,9 +713,7 @@ export function MonthlyAttendanceGrid({
             </span>
           )}
           <span className="text-muted-foreground">
-            {todayStats.total > 0
-              ? `${(((todayStats.present + todayStats.late) / todayStats.total) * 100).toFixed(0)}%`
-              : '—'}
+            {todayStats.rate != null ? `${(todayStats.rate * 100).toFixed(0)}%` : '—'}
           </span>
         </div>
       )}
@@ -836,19 +849,18 @@ export function MonthlyAttendanceGrid({
               <tbody>
                 {students.map((s, idx) => {
                   const studentName = formatStudentFullName(s);
-                  // Compute effective rate including dirty
-                  let effPresent = 0,
-                    effTotal = 0;
+                  // Compute effective rate including dirty (V2: atraso pendiente
+                  // fuera del numerador y del denominador)
+                  const effStatuses: string[] = [];
                   for (const d of dates) {
                     if (!isStudentActiveOnDate(s, d)) continue;
                     if (matrix?.matrix[s.id]?.[d] === 'WITHDRAWN') continue;
-                    const st = getEffectiveStatus(s.id, d);
                     if (matrix?.nonSchoolDays[d]) continue;
-                    if (!isAttendanceGridStatus(st)) continue;
-                    effTotal++;
-                    if (st === 'PRESENT' || st === 'LATE') effPresent++;
+                    const st = getEffectiveStatus(s.id, d);
+                    if (st) effStatuses.push(st);
                   }
-                  const effRate = effTotal > 0 ? effPresent / effTotal : null;
+                  const effRate = gridAttendanceRate(effStatuses).rate;
+                  const lateMarks = matrix?.lateMarks?.[s.id];
 
                   return (
                     <tr
@@ -877,6 +889,10 @@ export function MonthlyAttendanceGrid({
                           !isBlocked &&
                           (dayCompletion.get(d)?.isPartial ?? false) &&
                           !isAttendanceGridStatus(status);
+                        const wasLateResolved =
+                          !!lateMarks?.includes(d) &&
+                          isAttendanceGridStatus(status) &&
+                          status !== 'LATE';
 
                         return (
                           <td
@@ -892,6 +908,7 @@ export function MonthlyAttendanceGrid({
                               isMissing && 'att-cell--missing',
                               isDirty && 'att-cell--dirty',
                               isBlocked && 'att-cell--blocked',
+                              wasLateResolved && 'att-cell--was-late',
                             )}
                             onClick={isBlocked ? undefined : () => handleCellClick(s.id, d)}
                             title={
@@ -906,7 +923,9 @@ export function MonthlyAttendanceGrid({
                                       : isMissing
                                         ? 'Falta estado de asistencia'
                                         : status
-                                          ? STATUS_SHORT[status]
+                                          ? `${STATUS_TITLE[status] ?? STATUS_SHORT[status]}${
+                                              wasLateResolved ? ' · Fue atraso (resuelto)' : ''
+                                            }`
                                           : 'Sin registro'
                             }
                           >
@@ -941,7 +960,10 @@ export function MonthlyAttendanceGrid({
           </div>
           <div className="att-legend-item">
             <span className="att-legend-dot att-cell--late" />
-            AT
+            AT = atraso pendiente (no cuenta en el %)
+          </div>
+          <div className="att-legend-item" title="Fue atraso (resuelto)">
+            <span className="att-legend-mark" aria-hidden="true" />= atraso resuelto
           </div>
           <div className="att-legend-item">
             <span className="att-legend-dot att-cell--justified" />J

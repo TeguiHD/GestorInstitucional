@@ -4,6 +4,7 @@ import { useQuery } from '@tanstack/react-query';
 import { api } from '@/lib/api';
 import { Link, useMatchRoute, useRouter } from '@tanstack/react-router';
 import {
+  AlarmClock,
   ArrowLeftRight,
   BarChart2,
   Bell,
@@ -48,6 +49,8 @@ type NavItem = {
   guardianOnly?: boolean;
   staffOnly?: boolean;
   enrollmentOnly?: boolean;
+  /** SUPER_ADMIN, DIRECTOR, UTP, INSPECTORIA: resuelven atrasos pendientes. */
+  lateResolverOnly?: boolean;
 };
 
 type NavGroup = { heading: string; items: NavItem[] };
@@ -61,6 +64,7 @@ const NAV_GROUPS: NavGroup[] = [
       { to: '/cursos', label: 'Cursos', icon: BookOpen, staffOnly: true },
       { to: '/movimientos', label: 'Movimientos', icon: ArrowLeftRight, enrollmentOnly: true },
       { to: '/justificaciones', label: 'Justificaciones', icon: FileCheck, staffOnly: true },
+      { to: '/atrasos', label: 'Atrasos', icon: AlarmClock, lateResolverOnly: true },
       { to: '/calendario', label: 'Calendario', icon: Calendar, staffOnly: true },
     ],
   },
@@ -287,6 +291,11 @@ export function AppLayout({ children }: Props) {
     if (
       item.enrollmentOnly &&
       !roles.some((r) => ['SUPER_ADMIN', 'DIRECTOR', 'INSPECTORIA'].includes(r))
+    )
+      return false;
+    if (
+      item.lateResolverOnly &&
+      !roles.some((r) => ['SUPER_ADMIN', 'DIRECTOR', 'UTP', 'INSPECTORIA'].includes(r))
     )
       return false;
     if (item.guardianOnly && !isGuardian) return false;

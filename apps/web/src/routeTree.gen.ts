@@ -32,6 +32,7 @@ import { Route as AuthCalendarioRouteImport } from './routes/_auth.calendario';
 import { Route as AuthCalendarRouteImport } from './routes/_auth.calendar';
 import { Route as AuthAuditoriaRouteImport } from './routes/_auth.auditoria';
 import { Route as AuthAuditRouteImport } from './routes/_auth.audit';
+import { Route as AuthAtrasosRouteImport } from './routes/_auth.atrasos';
 import { Route as AuthAlertasRouteImport } from './routes/_auth.alertas';
 import { Route as AuthCursosIndexRouteImport } from './routes/_auth.cursos.index';
 import { Route as AuthStudentsStudentIdRouteImport } from './routes/_auth.students.$studentId';
@@ -153,6 +154,11 @@ const AuthAuditRoute = AuthAuditRouteImport.update({
   path: '/audit',
   getParentRoute: () => AuthRoute,
 } as any);
+const AuthAtrasosRoute = AuthAtrasosRouteImport.update({
+  id: '/atrasos',
+  path: '/atrasos',
+  getParentRoute: () => AuthRoute,
+} as any);
 const AuthAlertasRoute = AuthAlertasRouteImport.update({
   id: '/alertas',
   path: '/alertas',
@@ -188,6 +194,7 @@ export interface FileRoutesByFullPath {
   '/': typeof AuthIndexRoute;
   '/login': typeof LoginRoute;
   '/alertas': typeof AuthAlertasRoute;
+  '/atrasos': typeof AuthAtrasosRoute;
   '/audit': typeof AuthAuditRoute;
   '/auditoria': typeof AuthAuditoriaRoute;
   '/calendar': typeof AuthCalendarRoute;
@@ -217,6 +224,7 @@ export interface FileRoutesByFullPath {
 export interface FileRoutesByTo {
   '/login': typeof LoginRoute;
   '/alertas': typeof AuthAlertasRoute;
+  '/atrasos': typeof AuthAtrasosRoute;
   '/audit': typeof AuthAuditRoute;
   '/auditoria': typeof AuthAuditoriaRoute;
   '/calendar': typeof AuthCalendarRoute;
@@ -248,6 +256,7 @@ export interface FileRoutesById {
   '/_auth': typeof AuthRouteWithChildren;
   '/login': typeof LoginRoute;
   '/_auth/alertas': typeof AuthAlertasRoute;
+  '/_auth/atrasos': typeof AuthAtrasosRoute;
   '/_auth/audit': typeof AuthAuditRoute;
   '/_auth/auditoria': typeof AuthAuditoriaRoute;
   '/_auth/calendar': typeof AuthCalendarRoute;
@@ -281,6 +290,7 @@ export interface FileRouteTypes {
     | '/'
     | '/login'
     | '/alertas'
+    | '/atrasos'
     | '/audit'
     | '/auditoria'
     | '/calendar'
@@ -310,6 +320,7 @@ export interface FileRouteTypes {
   to:
     | '/login'
     | '/alertas'
+    | '/atrasos'
     | '/audit'
     | '/auditoria'
     | '/calendar'
@@ -340,6 +351,7 @@ export interface FileRouteTypes {
     | '/_auth'
     | '/login'
     | '/_auth/alertas'
+    | '/_auth/atrasos'
     | '/_auth/audit'
     | '/_auth/auditoria'
     | '/_auth/calendar'
@@ -536,6 +548,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthAuditRouteImport;
       parentRoute: typeof AuthRoute;
     };
+    '/_auth/atrasos': {
+      id: '/_auth/atrasos';
+      path: '/atrasos';
+      fullPath: '/atrasos';
+      preLoaderRoute: typeof AuthAtrasosRouteImport;
+      parentRoute: typeof AuthRoute;
+    };
     '/_auth/alertas': {
       id: '/_auth/alertas';
       path: '/alertas';
@@ -605,6 +624,7 @@ const AuthCursosRouteWithChildren = AuthCursosRoute._addFileChildren(AuthCursosR
 
 interface AuthRouteChildren {
   AuthAlertasRoute: typeof AuthAlertasRoute;
+  AuthAtrasosRoute: typeof AuthAtrasosRoute;
   AuthAuditRoute: typeof AuthAuditRoute;
   AuthAuditoriaRoute: typeof AuthAuditoriaRoute;
   AuthCalendarRoute: typeof AuthCalendarRoute;
@@ -632,6 +652,7 @@ interface AuthRouteChildren {
 
 const AuthRouteChildren: AuthRouteChildren = {
   AuthAlertasRoute: AuthAlertasRoute,
+  AuthAtrasosRoute: AuthAtrasosRoute,
   AuthAuditRoute: AuthAuditRoute,
   AuthAuditoriaRoute: AuthAuditoriaRoute,
   AuthCalendarRoute: AuthCalendarRoute,

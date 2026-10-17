@@ -26,6 +26,10 @@ type StudentStat = {
   present: number;
   absent: number;
   justified: number;
+  /** Atrasos del período (pendientes + resueltos). */
+  late?: number;
+  /** Atrasos aún sin resolver: no cuentan en el %. */
+  pendingLate?: number;
   rate: number | null;
 };
 
@@ -124,6 +128,7 @@ export function CourseStatsTab({ courseId }: { courseId: string }) {
       : null;
   const overallRate = insights?.attendanceRate ?? fallbackAvgRate;
 
+  const totalPendingLate = students.reduce((acc, s) => acc + (s.pendingLate ?? 0), 0);
   const atRisk = students.filter((s) => s.rate != null && s.rate < 0.75).length;
   const sorted = [...students].sort((a, b) => (a.rate ?? -1) - (b.rate ?? -1));
   const best = [...students].sort((a, b) => (b.rate ?? -1) - (a.rate ?? -1))[0] ?? null;
@@ -168,7 +173,13 @@ export function CourseStatsTab({ courseId }: { courseId: string }) {
           label="Asistencia general"
           value={overallRate != null ? `${(overallRate * 100).toFixed(1)}%` : '—'}
           color={rateColor(overallRate)}
-          sub={`${students.length} alumnos`}
+          sub={
+            totalPendingLate > 0
+              ? `${students.length} alumnos · ${totalPendingLate} ${
+                  totalPendingLate === 1 ? 'atraso pendiente' : 'atrasos pendientes'
+                }`
+              : `${students.length} alumnos`
+          }
           loading={matrixLoading}
         />
         <KpiCard
@@ -315,7 +326,7 @@ export function CourseStatsTab({ courseId }: { courseId: string }) {
                   : s === 'ABSENT'
                     ? 'Ausente'
                     : s === 'LATE'
-                      ? 'Atraso'
+                      ? 'Atraso pendiente'
                       : 'Justificado'}
               </div>
             ))}
@@ -342,6 +353,7 @@ export function CourseStatsTab({ courseId }: { courseId: string }) {
                   <th className="text-center px-3 py-2.5">Presentes</th>
                   <th className="text-center px-3 py-2.5">Ausentes</th>
                   <th className="text-center px-3 py-2.5">Justif.</th>
+                  <th className="text-center px-3 py-2.5">Atrasos</th>
                   <th className="text-right px-5 py-2.5">%</th>
                 </tr>
               </thead>
@@ -358,6 +370,17 @@ export function CourseStatsTab({ courseId }: { courseId: string }) {
                     </td>
                     <td className="px-3 py-2.5 text-center tabular-nums text-yellow-600 dark:text-yellow-400">
                       {s.justified}
+                    </td>
+                    <td className="px-3 py-2.5 text-center tabular-nums text-orange-600 dark:text-orange-400">
+                      {s.late ?? 0}
+                      {(s.pendingLate ?? 0) > 0 && (
+                        <span
+                          className="block text-[10px] font-normal leading-tight"
+                          title={`${s.pendingLate} ${s.pendingLate === 1 ? 'atraso pendiente' : 'atrasos pendientes'} de resolver (no cuenta${s.pendingLate === 1 ? '' : 'n'} en el %)`}
+                        >
+                          {s.pendingLate} pend.
+                        </span>
+                      )}
                     </td>
                     <td className="px-5 py-2.5 text-right">
                       <span

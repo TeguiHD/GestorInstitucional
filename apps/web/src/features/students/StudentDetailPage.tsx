@@ -17,7 +17,10 @@ type StudentStats = {
   total: number;
   present: number;
   absent: number;
+  /** Atrasos del período (pendientes + resueltos). */
   late: number;
+  /** Atrasos aún sin resolver: no cuentan en el %. */
+  pendingLate?: number;
   justified: number;
   attendanceRate: number;
 };
@@ -50,7 +53,7 @@ type Guardian = {
 const STATUS_LABELS: Record<string, { label: string; color: string }> = {
   PRESENT: { label: 'Presente', color: '#22c55e' },
   ABSENT: { label: 'Ausente', color: '#ef4444' },
-  LATE: { label: 'Atraso', color: '#f97316' },
+  LATE: { label: 'Atraso pendiente', color: '#f97316' },
   JUSTIFIED: { label: 'Justificado', color: '#eab308' },
 };
 
@@ -266,24 +269,28 @@ export function StudentDetailPage() {
         : '#ef4444';
 
   const byMonth = records?.reduce<
-    Record<string, { present: number; absent: number; month: string }>
+    Record<string, { present: number; absent: number; pendingLate: number; month: string }>
   >((acc, r) => {
     const key = r.date.slice(0, 7);
     acc[key] ??= {
       present: 0,
       absent: 0,
+      pendingLate: 0,
       month:
         parseDayLocal(r.date)?.toLocaleString('es-CL', {
           month: 'short',
           year: '2-digit',
         }) ?? '—',
     };
-    if (r.status === 'PRESENT' || r.status === 'LATE') acc[key]!.present++;
+    // V2: un atraso pendiente no es asistencia ni inasistencia; va en su propia barra.
+    if (r.status === 'PRESENT') acc[key]!.present++;
     else if (r.status === 'ABSENT') acc[key]!.absent++;
+    else if (r.status === 'LATE') acc[key]!.pendingLate++;
     return acc;
   }, {});
 
   const chartData = Object.values(byMonth ?? {});
+  const chartHasPendingLate = chartData.some((m) => m.pendingLate > 0);
 
   const absencePatterns = records
     ? [0, 1, 2, 3, 4, 5, 6]
@@ -376,6 +383,7 @@ export function StudentDetailPage() {
             label="Asistencia"
             value={`${(stats.attendanceRate * 100).toFixed(1)}%`}
             color={rateColor(stats.attendanceRate)}
+            hint={pendingLateLabel(stats.pendingLate)}
           />
           <StatCard label="Presentes" value={String(stats.present)} color="#22c55e" />
           <StatCard label="Ausentes" value={String(stats.absent)} color="#ef4444" />
@@ -410,6 +418,14 @@ export function StudentDetailPage() {
               <Tooltip />
               <Bar dataKey="present" fill="#22c55e" name="Presente" radius={[3, 3, 0, 0]} />
               <Bar dataKey="absent" fill="#ef4444" name="Ausente" radius={[3, 3, 0, 0]} />
+              {chartHasPendingLate && (
+                <Bar
+                  dataKey="pendingLate"
+                  fill="#f97316"
+                  name="Atraso pendiente"
+                  radius={[3, 3, 0, 0]}
+                />
+              )}
             </BarChart>
           </ResponsiveContainer>
         </div>
@@ -632,13 +648,30 @@ export function StudentDetailPage() {
   );
 }
 
-function StatCard({ label, value, color }: { label: string; value: string; color: string }) {
+/** Aviso de atrasos sin resolver por Inspectoría (no cuentan en el %). */
+function pendingLateLabel(n: number | undefined): string | undefined {
+  if (!n || n <= 0) return undefined;
+  return n === 1 ? '1 atraso pendiente de resolver' : `${n} atrasos pendientes de resolver`;
+}
+
+function StatCard({
+  label,
+  value,
+  color,
+  hint,
+}: {
+  label: string;
+  value: string;
+  color: string;
+  hint?: string | undefined;
+}) {
   return (
     <div className="rounded-xl border border-border bg-background p-4 space-y-1">
       <p className="text-xs text-muted-foreground uppercase tracking-wide">{label}</p>
       <p className="text-2xl font-bold" style={{ color }}>
         {value}
       </p>
+      {hint && <p className="text-[11px] text-orange-600 dark:text-orange-400">{hint}</p>}
     </div>
   );
 }

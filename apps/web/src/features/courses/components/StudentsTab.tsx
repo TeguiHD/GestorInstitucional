@@ -18,6 +18,7 @@ type StudentStat = {
   present: number;
   absent: number;
   late: number;
+  pendingLate?: number;
   justified: number;
   rate: number | null;
   totalClasses?: number;
@@ -86,14 +87,19 @@ function RateBar({ rate }: { rate: number | null }) {
   );
 }
 
+/** V2: presentes / (clases − atrasos pendientes). */
 export function attendanceFractionLabel(student: {
   present?: number | null;
-  late?: number | null;
+  attended?: number | null;
+  pendingLate?: number | null;
   total?: number | null;
   totalClasses?: number | null;
 }): string {
-  const attended = (student.present ?? 0) + (student.late ?? 0);
-  const totalClasses = student.totalClasses ?? student.total ?? 0;
+  const attended = student.attended ?? student.present ?? 0;
+  const totalClasses = Math.max(
+    0,
+    (student.totalClasses ?? student.total ?? 0) - (student.pendingLate ?? 0),
+  );
   return `${attended}/${totalClasses} clases`;
 }
 
