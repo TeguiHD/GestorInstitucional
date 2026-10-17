@@ -208,9 +208,9 @@ function MatricularDialog({
         transferOriginSchool: isTransfer ? originSchool.trim() : undefined,
       }),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['school-active', schoolId] });
-      qc.invalidateQueries({ queryKey: ['movements', schoolId] });
-      qc.invalidateQueries({
+      void qc.invalidateQueries({ queryKey: ['school-active', schoolId] });
+      void qc.invalidateQueries({ queryKey: ['movements', schoolId] });
+      void qc.invalidateQueries({
         predicate: (q) => q.queryKey[0] === 'course' || q.queryKey[0] === 'course-students',
       });
       toast.success('Alumno matriculado', {
@@ -384,10 +384,10 @@ function DarDeBajaDialog({ student, onClose }: { student: ActiveStudent; onClose
         transferredToSchool: isTransfer ? destinationSchool.trim() : undefined,
       }),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['school-active', schoolId] });
-      qc.invalidateQueries({ queryKey: ['withdrawn', schoolId] });
-      qc.invalidateQueries({ queryKey: ['movements', schoolId] });
-      qc.invalidateQueries({
+      void qc.invalidateQueries({ queryKey: ['school-active', schoolId] });
+      void qc.invalidateQueries({ queryKey: ['withdrawn', schoolId] });
+      void qc.invalidateQueries({ queryKey: ['movements', schoolId] });
+      void qc.invalidateQueries({
         predicate: (q) => q.queryKey[0] === 'course' || q.queryKey[0] === 'course-students',
       });
       toast.success(
@@ -542,10 +542,10 @@ function ReingresarDialog({
         reason: reason.trim() || undefined,
       }),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['school-active', schoolId] });
-      qc.invalidateQueries({ queryKey: ['withdrawn', schoolId] });
-      qc.invalidateQueries({ queryKey: ['movements', schoolId] });
-      qc.invalidateQueries({
+      void qc.invalidateQueries({ queryKey: ['school-active', schoolId] });
+      void qc.invalidateQueries({ queryKey: ['withdrawn', schoolId] });
+      void qc.invalidateQueries({ queryKey: ['movements', schoolId] });
+      void qc.invalidateQueries({
         predicate: (q) => q.queryKey[0] === 'course' || q.queryKey[0] === 'course-students',
       });
       toast.success(`${fmtName(student)} reingresado`);
@@ -647,9 +647,9 @@ function EditarFechaIngresoDialog({
   const mutation = useMutation({
     mutationFn: () => api.patch(`/students/${student.id}/enrolled-at`, { enrolledAt }),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['school-active', schoolId] });
-      qc.invalidateQueries({ queryKey: ['movements', schoolId] });
-      qc.invalidateQueries({
+      void qc.invalidateQueries({ queryKey: ['school-active', schoolId] });
+      void qc.invalidateQueries({ queryKey: ['movements', schoolId] });
+      void qc.invalidateQueries({
         predicate: (q) => q.queryKey[0] === 'course' || q.queryKey[0] === 'course-students',
       });
       toast.success('Fecha de ingreso actualizada');
@@ -768,11 +768,11 @@ function EditarMovimientoDialog({
         ...(isTransferOut ? { transferredToSchool: transferredToSchool.trim() } : {}),
       }),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['withdrawn', schoolId] });
-      qc.invalidateQueries({ queryKey: ['school-active', schoolId] });
-      qc.invalidateQueries({ queryKey: ['movements', schoolId] });
-      qc.invalidateQueries({ queryKey: ['enrollment-events', student.id] });
-      qc.invalidateQueries({
+      void qc.invalidateQueries({ queryKey: ['withdrawn', schoolId] });
+      void qc.invalidateQueries({ queryKey: ['school-active', schoolId] });
+      void qc.invalidateQueries({ queryKey: ['movements', schoolId] });
+      void qc.invalidateQueries({ queryKey: ['enrollment-events', student.id] });
+      void qc.invalidateQueries({
         predicate: (q) => q.queryKey[0] === 'course' || q.queryKey[0] === 'course-students',
       });
       toast.success('Movimiento actualizado');
@@ -882,10 +882,10 @@ function AnularMovimientoDialog({ event, onClose }: { event: MovementEvent; onCl
     mutationFn: () =>
       api.delWithBody(`/students/movements/${event.id}`, { voidReason: voidReason.trim() }),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['movements', schoolId] });
-      qc.invalidateQueries({ queryKey: ['school-active', schoolId] });
-      qc.invalidateQueries({ queryKey: ['withdrawn', schoolId] });
-      qc.invalidateQueries({
+      void qc.invalidateQueries({ queryKey: ['movements', schoolId] });
+      void qc.invalidateQueries({ queryKey: ['school-active', schoolId] });
+      void qc.invalidateQueries({ queryKey: ['withdrawn', schoolId] });
+      void qc.invalidateQueries({
         predicate: (q) => q.queryKey[0] === 'course' || q.queryKey[0] === 'course-students',
       });
       toast.success('Movimiento anulado');
