@@ -4,9 +4,17 @@ import { join } from 'node:path';
 import ExcelJS from 'exceljs';
 import PDFDocument from 'pdfkit';
 import { Injectable } from '@nestjs/common';
+import { AttendanceStatus } from '@prisma/client';
 
 import { WITHDRAWAL_REASONS, type WithdrawalReason } from '@asistencia/shared';
 
+import {
+  addAttendanceStatus,
+  buildAttendanceSummary,
+  emptyAttendanceCounts,
+  type AttendanceCounts,
+  type AttendanceSummary,
+} from '../attendance/attendance-calculation.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { AuditService } from '../audit/audit.service.js';
 import { CalendarService } from '../calendar/calendar.service.js';
@@ -41,9 +49,102 @@ const MONTH_NAMES_ES = [
 ];
 const DOW_LABELS = ['D', 'L', 'M', 'M', 'J', 'V', 'S'];
 
-export function calculateReportAttendanceRate(attended: number, totalClasses: number): number {
-  return totalClasses > 0 ? attended / totalClasses : 0;
+/**
+ * % de asistencia de un informe (fórmula V2): presentes / (total clases − atrasos pendientes).
+ * Devuelve 0 cuando el denominador es 0 (las celdas Excel no aceptan null).
+ */
+export function calculateReportAttendanceRate(
+  present: number,
+  totalClasses: number,
+  pendingLate = 0,
+): number {
+  return (
+    buildAttendanceSummary({ ...emptyAttendanceCounts(), present, pendingLate }, totalClasses)
+      .attendanceRate ?? 0
+  );
 }
+
+type ReportAttendanceRecord = {
+  status: AttendanceStatus | string;
+  wasLate?: boolean | null;
+};
+
+/** Cuenta P/A/J, atrasos (con marca, pendientes + resueltos) y atrasos pendientes. */
+export function countReportRecords(records: Iterable<ReportAttendanceRecord>): AttendanceCounts {
+  const counts = emptyAttendanceCounts();
+  for (const r of records) addAttendanceStatus(counts, r.status, r.wasLate === true);
+  return counts;
+}
+
+/** Resumen de un período: % sobre clases efectivas (total − atrasos pendientes). */
+export function summarizeReportRecords(
+  records: Iterable<ReportAttendanceRecord>,
+  totalClasses: number,
+): AttendanceSummary {
+  return buildAttendanceSummary(countReportRecords(records), totalClasses);
+}
+
+function addAttendanceCounts(target: AttendanceCounts, source: AttendanceCounts): void {
+  target.present += source.present;
+  target.absent += source.absent;
+  target.justified += source.justified;
+  target.late += source.late;
+  target.pendingLate += source.pendingLate;
+}
+
+/** Símbolo de celda: solo un atraso pendiente se ve como AT; uno resuelto muestra su estado final. */
+const REPORT_SYMBOL: Record<string, string> = {
+  PRESENT: '1',
+  ABSENT: '0',
+  LATE: 'AT',
+  JUSTIFIED: 'J',
+  WITHDRAWN: '-',
+};
+const SYMBOL_STATUS: Record<string, AttendanceStatus> = {
+  '1': AttendanceStatus.PRESENT,
+  '0': AttendanceStatus.ABSENT,
+  AT: AttendanceStatus.LATE,
+  J: AttendanceStatus.JUSTIFIED,
+};
+
+/** Celda de grilla: símbolo visible + marca de atraso (para el total AT con resueltos). */
+type GridCell = { sym: string; wasLate: boolean };
+
+function toGridCell(record: ReportAttendanceRecord): GridCell {
+  return { sym: REPORT_SYMBOL[record.status] ?? '-', wasLate: record.wasLate === true };
+}
+
+/** Suma una celda visible de la grilla ('1' / '0' / 'J' / 'AT'); '-' y vacías no cuentan. */
+function addGridSymbol(counts: AttendanceCounts, sym: string, wasLate = false): void {
+  const status = SYMBOL_STATUS[sym];
+  if (status) addAttendanceStatus(counts, status, wasLate);
+}
+
+const RATE_FORMULA_EXPR = 'Presentes * 100 / (Total clases - Atrasos pendientes)';
+const RATE_FORMULA_TEXT = `% = ${RATE_FORMULA_EXPR}`;
+const PENDING_LATE_LEGEND = 'AT = Atraso pendiente de resolver por Inspectoría (no cuenta en el %)';
+const LATE_TOTAL_LEGEND = 'Columna AT = atrasos del período (incluye resueltos)';
+const GRID_PDF_LEGEND =
+  `Leyenda: 1 = Presente  ·  0 = Ausente  ·  J = Justificado  ·  ${PENDING_LATE_LEGEND}\n` +
+  `${LATE_TOTAL_LEGEND}  ·  ${RATE_FORMULA_TEXT}`;
+
+/** Aviso visible cuando el período tiene atrasos sin resolver; null si no hay. */
+export function pendingLateWarning(pendingLate: number): string | null {
+  if (pendingLate <= 0) return null;
+  return pendingLate === 1
+    ? 'Hay 1 atraso pendiente de resolver: no se cuenta en el porcentaje hasta que Inspectoría lo resuelva.'
+    : `Hay ${pendingLate} atrasos pendientes de resolver: no se cuentan en el porcentaje hasta que Inspectoría los resuelva.`;
+}
+
+/** Fórmula con los números del período, p. ej. "18 * 100 / (20 - 1)". */
+function rateCalculationText(summary: AttendanceSummary): string {
+  return summary.pendingLate > 0
+    ? `${summary.present} * 100 / (${summary.totalClasses} - ${summary.pendingLate})`
+    : `${summary.present} * 100 / ${summary.totalClasses}`;
+}
+
+const PENDING_WARNING_PDF_COLOR = '#B45309';
+const PENDING_WARNING_XLSX_COLOR = 'FFB45309';
 
 @Injectable()
 export class ReportsService {
@@ -77,7 +178,7 @@ export class ReportsService {
 
     const records = await this.prisma.attendanceRecord.findMany({
       where: { courseId, date: { gte: from, lte: to } },
-      select: { studentId: true, date: true, status: true },
+      select: { studentId: true, date: true, status: true, wasLate: true },
     });
 
     // P3: load enrollment events for the period (incorporated and withdrawn students)
@@ -94,18 +195,11 @@ export class ReportsService {
       orderBy: { effectiveDate: 'asc' },
     });
 
-    const recordMap = new Map<string, Map<string, string>>();
-    const SYMBOL: Record<string, string> = {
-      PRESENT: '1',
-      ABSENT: '0',
-      LATE: 'AT',
-      JUSTIFIED: 'J',
-      WITHDRAWN: '-',
-    };
+    const recordMap = new Map<string, Map<string, GridCell>>();
     for (const r of records) {
       const key = this.schoolConfig.formatDate(r.date);
       if (!recordMap.has(r.studentId)) recordMap.set(r.studentId, new Map());
-      recordMap.get(r.studentId)!.set(key, SYMBOL[r.status] ?? '-');
+      recordMap.get(r.studentId)!.set(key, toGridCell(r));
     }
 
     const nonSchoolDays = await this.calendar.getNonSchoolDays(course.school.id, from, to);
@@ -162,20 +256,16 @@ export class ReportsService {
 
     const records = await this.prisma.attendanceRecord.findMany({
       where: { courseId, date: { gte: from, lte: to } },
-      select: { studentId: true, status: true },
+      select: { studentId: true, status: true, wasLate: true },
     });
 
     const nonSchoolDays = await this.calendar.getNonSchoolDays(course.school.id, from, to);
 
-    const perStudent = new Map<string, { p: number; a: number; l: number; j: number }>();
-    for (const s of course.students) perStudent.set(s.id, { p: 0, a: 0, l: 0, j: 0 });
+    const perStudent = new Map<string, AttendanceCounts>();
+    for (const s of course.students) perStudent.set(s.id, emptyAttendanceCounts());
     for (const r of records) {
       const e = perStudent.get(r.studentId);
-      if (!e) continue;
-      if (r.status === 'PRESENT') e.p++;
-      else if (r.status === 'ABSENT') e.a++;
-      else if (r.status === 'LATE') e.l++;
-      else if (r.status === 'JUSTIFIED') e.j++;
+      if (e) addAttendanceStatus(e, r.status, r.wasLate);
     }
 
     const doc = new PDFDocument({ size: 'A4', margin: 48 });
@@ -254,15 +344,17 @@ export class ReportsService {
     doc.font('Helvetica').fontSize(9).fillColor('#000');
     let totalRate = 0;
     let totalStudents = 0;
+    let totalPendingLate = 0;
     for (const [i, s] of course.students.entries()) {
       if (y > 760) {
         doc.addPage();
         y = 60;
       }
-      const c = perStudent.get(s.id)!;
       const activeDays = this.countActiveSchoolDays(s, from, to, nonSchoolDays);
-      const rate = activeDays > 0 ? (c.p + c.l) / activeDays : 0;
-      if (activeDays > 0) {
+      const c = buildAttendanceSummary(perStudent.get(s.id)!, activeDays);
+      const rate = c.attendanceRate ?? 0;
+      totalPendingLate += c.pendingLate;
+      if (c.attendanceRate !== null) {
         totalRate += rate;
         totalStudents++;
       }
@@ -277,21 +369,26 @@ export class ReportsService {
         { width: cols.name.w, ellipsis: true },
       );
       doc.text(s.rut, cols.rut.x, y + 5, { width: cols.rut.w });
-      doc.text(String(c.p), cols.p.x, y + 5, { width: cols.p.w, align: 'center' });
-      doc.text(String(c.a), cols.a.x, y + 5, { width: cols.a.w, align: 'center' });
-      doc.text(String(c.l), cols.l.x, y + 5, { width: cols.l.w, align: 'center' });
-      doc.text(String(c.j), cols.j.x, y + 5, { width: cols.j.w, align: 'center' });
-      doc.text(String(c.p + c.l), cols.attended.x, y + 5, {
+      doc.text(String(c.present), cols.p.x, y + 5, { width: cols.p.w, align: 'center' });
+      doc.text(String(c.absent), cols.a.x, y + 5, { width: cols.a.w, align: 'center' });
+      doc.text(String(c.late), cols.l.x, y + 5, { width: cols.l.w, align: 'center' });
+      doc.text(String(c.justified), cols.j.x, y + 5, { width: cols.j.w, align: 'center' });
+      doc.text(String(c.attended), cols.attended.x, y + 5, {
         width: cols.attended.w,
         align: 'center',
       });
       doc.text(String(activeDays), cols.total.x, y + 5, { width: cols.total.w, align: 'center' });
       const rateColor = rate >= 0.9 ? '#15803d' : rate >= 0.7 ? '#b45309' : '#b91c1c';
       doc.fillColor(rateColor).font('Helvetica-Bold');
-      doc.text(activeDays > 0 ? `${(rate * 100).toFixed(1)}%` : '—', cols.rate.x, y + 5, {
-        width: cols.rate.w,
-        align: 'center',
-      });
+      doc.text(
+        c.attendanceRate !== null ? `${(rate * 100).toFixed(1)}%` : '—',
+        cols.rate.x,
+        y + 5,
+        {
+          width: cols.rate.w,
+          align: 'center',
+        },
+      );
       doc.fillColor('#000').font('Helvetica');
       y += rowH;
     }
@@ -306,11 +403,13 @@ export class ReportsService {
     y += 48;
     doc.fillColor('#555').font('Helvetica-Oblique').fontSize(8);
     doc.text(
-      '% = (Asist. * 100) / Total. Asist. = Presentes + Atrasos; Total = días lectivos trabajados con matrícula activa.',
+      `${RATE_FORMULA_TEXT}. Asist. = Presentes; Total = días lectivos trabajados con matrícula activa. ` +
+        `${PENDING_LATE_LEGEND}. ${LATE_TOTAL_LEGEND}.`,
       48,
       y - 16,
       { width: 499 },
     );
+    y = Math.max(y, this.drawPdfPendingLateWarning(doc, totalPendingLate, 48, doc.y + 2, 499));
 
     if (y > 720) {
       doc.addPage();
@@ -372,23 +471,16 @@ export class ReportsService {
 
     const records = await this.prisma.attendanceRecord.findMany({
       where: { courseId, date: { gte: from, lte: to } },
-      select: { studentId: true, date: true, status: true },
+      select: { studentId: true, date: true, status: true, wasLate: true },
     });
 
     const nonSchoolDays = await this.calendar.getNonSchoolDays(course.school.id, from, to);
 
-    const SYMBOL: Record<string, string> = {
-      PRESENT: '1',
-      ABSENT: '0',
-      LATE: 'AT',
-      JUSTIFIED: 'J',
-      WITHDRAWN: '-',
-    };
-    const recordMap = new Map<string, Map<number, string>>();
+    const recordMap = new Map<string, Map<number, GridCell>>();
     for (const r of records) {
       const day = r.date.getUTCDate();
       if (!recordMap.has(r.studentId)) recordMap.set(r.studentId, new Map());
-      recordMap.get(r.studentId)!.set(day, SYMBOL[r.status] ?? '-');
+      recordMap.get(r.studentId)!.set(day, toGridCell(r));
     }
 
     const doc = new PDFDocument({ size: 'A4', layout: 'landscape', margin: 28 });
@@ -489,6 +581,7 @@ export class ReportsService {
     doc.font('Helvetica').fontSize(7);
     let totalRate = 0;
     let totalStudents = 0;
+    let totalPendingLate = 0;
 
     for (const [i, s] of course.students.entries()) {
       if (y + ROW_H > 560) {
@@ -508,10 +601,7 @@ export class ReportsService {
       doc.text(fullName, x + 3, y + 4, { width: NAME_W - 5, ellipsis: true, lineBreak: false });
       x += NAME_W;
 
-      let p = 0,
-        a = 0,
-        l = 0,
-        j = 0;
+      const counts = emptyAttendanceCounts();
       for (let d = 1; d <= daysInMonth; d++) {
         const date = new Date(year, month - 1, d);
         const dow = date.getDay();
@@ -519,26 +609,24 @@ export class ReportsService {
         if (isWeekend) {
           doc.rect(x, y, DAY_W, ROW_H).fill('#E8EDF1');
         }
-        const sym = this.attendanceSymbolFor(s, date, recordMap.get(s.id)?.get(d));
+        const gridCell = recordMap.get(s.id)?.get(d);
+        const sym = this.attendanceSymbolFor(s, date, gridCell?.sym);
         if (sym) {
+          addGridSymbol(counts, sym, gridCell?.wasLate);
           let bg = '#FFFFFF';
           let fg = '#000';
           if (sym === '1') {
             bg = '#16A34A';
             fg = '#fff';
-            p++;
           } else if (sym === '0') {
             bg = '#DC2626';
             fg = '#fff';
-            a++;
           } else if (sym === 'AT') {
             bg = '#EA580C';
             fg = '#fff';
-            l++;
           } else if (sym === 'J') {
             bg = '#FACC15';
             fg = '#000';
-            j++;
           }
           doc.rect(x, y, DAY_W, ROW_H).fill(bg);
           doc.fillColor(fg).font('Helvetica-Bold').fontSize(6.5);
@@ -549,24 +637,26 @@ export class ReportsService {
       }
 
       const activeDays = this.countActiveSchoolDays(s, from, to, nonSchoolDays);
-      const rate = activeDays > 0 ? (p + l) / activeDays : 0;
-      if (activeDays > 0) {
+      const summary = buildAttendanceSummary(counts, activeDays);
+      const rate = summary.attendanceRate ?? 0;
+      totalPendingLate += summary.pendingLate;
+      if (summary.attendanceRate !== null) {
         totalRate += rate;
         totalStudents++;
       }
 
       doc.fillColor('#000').font('Helvetica');
-      doc.text(String(p), x, y + 4, { width: SUM_W, align: 'center' });
+      doc.text(String(summary.present), x, y + 4, { width: SUM_W, align: 'center' });
       x += SUM_W;
-      doc.text(String(a), x, y + 4, { width: SUM_W, align: 'center' });
+      doc.text(String(summary.absent), x, y + 4, { width: SUM_W, align: 'center' });
       x += SUM_W;
-      doc.text(String(l), x, y + 4, { width: SUM_W, align: 'center' });
+      doc.text(String(summary.late), x, y + 4, { width: SUM_W, align: 'center' });
       x += SUM_W;
-      doc.text(String(j), x, y + 4, { width: SUM_W, align: 'center' });
+      doc.text(String(summary.justified), x, y + 4, { width: SUM_W, align: 'center' });
       x += SUM_W;
       const rateColor = rate >= 0.9 ? '#15803d' : rate >= 0.7 ? '#b45309' : '#b91c1c';
       doc.fillColor(rateColor).font('Helvetica-Bold');
-      doc.text(activeDays > 0 ? `${(rate * 100).toFixed(1)}%` : '—', x, y + 4, {
+      doc.text(summary.attendanceRate !== null ? `${(rate * 100).toFixed(1)}%` : '—', x, y + 4, {
         width: PCT_W,
         align: 'center',
       });
@@ -577,7 +667,7 @@ export class ReportsService {
 
     const avg = totalStudents > 0 ? totalRate / totalStudents : 0;
     y += 6;
-    if (y + 60 > 580) {
+    if (y + 90 > 580) {
       doc.addPage();
       y = 80;
     }
@@ -587,12 +677,15 @@ export class ReportsService {
     y += 36;
 
     doc.fillColor('#000').font('Helvetica').fontSize(8);
-    doc.text(
-      'Leyenda: 1 = Presente  ·  0 = Ausente  ·  AT = Atraso  ·  J = Justificado  ·  % = (Presentes + Atrasos) * 100 / Total clases',
+    doc.text(GRID_PDF_LEGEND, NAV_X, y, { width: PAGE_W - NAV_X * 2 });
+    const legendEnd = this.drawPdfPendingLateWarning(
+      doc,
+      totalPendingLate,
       NAV_X,
-      y,
+      doc.y + 2,
+      PAGE_W - NAV_X * 2,
     );
-    y += 28;
+    y = Math.max(y + 28, legendEnd + 10);
     doc.text('_______________________________', NAV_X + 60, y);
     doc.text('_______________________________', PAGE_W - NAV_X - 220, y);
     doc.fontSize(8).text('Profesor Jefe', NAV_X + 110, y + 14);
@@ -645,23 +738,17 @@ export class ReportsService {
 
     const records = await this.prisma.attendanceRecord.findMany({
       where: { courseId, date: { gte: start, lte: end } },
-      select: { studentId: true, date: true, status: true },
+      select: { studentId: true, date: true, status: true, wasLate: true },
     });
     const nonSchoolDays = await this.calendar.getNonSchoolDays(course.school.id, start, end);
 
-    const SYMBOL: Record<string, string> = {
-      PRESENT: '1',
-      ABSENT: '0',
-      LATE: 'AT',
-      JUSTIFIED: 'J',
-      WITHDRAWN: '-',
-    };
-    const recordMap = new Map<string, Map<string, string>>();
+    const recordMap = new Map<string, Map<string, GridCell>>();
     for (const r of records) {
       const key = this.schoolConfig.formatDate(r.date);
       if (!recordMap.has(r.studentId)) recordMap.set(r.studentId, new Map());
-      recordMap.get(r.studentId)!.set(key, SYMBOL[r.status] ?? '-');
+      recordMap.get(r.studentId)!.set(key, toGridCell(r));
     }
+    let totalPendingLate = 0;
 
     const wb = new ExcelJS.Workbook();
     wb.creator = 'Asistencia CSSP';
@@ -738,12 +825,11 @@ export class ReportsService {
         `${student.lastName}${student.secondLastName ? ' ' + student.secondLastName : ''}, ${student.firstName}`;
       ws.getCell(r, 2).border = borderAll;
 
-      let present = 0,
-        absent = 0,
-        justified = 0;
+      const counts = emptyAttendanceCounts();
       days.forEach((d, di) => {
         const key = this.schoolConfig.formatDate(d);
-        const sym = this.attendanceSymbolFor(student, d, recordMap.get(student.id)?.get(key));
+        const gridCell = recordMap.get(student.id)?.get(key);
+        const sym = this.attendanceSymbolFor(student, d, gridCell?.sym);
         const cell = ws.getCell(r, 3 + di);
         cell.border = borderAll;
         cell.alignment = centerMid;
@@ -754,26 +840,26 @@ export class ReportsService {
         }
         if (!sym) return;
         cell.value = sym;
+        addGridSymbol(counts, sym, gridCell?.wasLate);
         if (sym === '1') {
           cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: GREEN } };
           cell.font = { bold: true, size: 9, color: { argb: 'FFFFFFFF' } };
-          present++;
         } else if (sym === '0') {
           cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: RED } };
           cell.font = { bold: true, size: 9, color: { argb: 'FFFFFFFF' } };
-          absent++;
         } else if (sym === 'J') {
           cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: YELLOW } };
-          justified++;
         } else if (sym === 'AT') {
           cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: ORANGE } };
           cell.font = { bold: true, size: 9, color: { argb: 'FFFFFFFF' } };
-          present++;
         }
       });
 
       const activeDays = this.countActiveSchoolDays(student, start, end, nonSchoolDays);
-      const pct = calculateReportAttendanceRate(present, activeDays);
+      const summary = buildAttendanceSummary(counts, activeDays);
+      totalPendingLate += summary.pendingLate;
+      const { present, absent, justified } = summary;
+      const pct = summary.attendanceRate ?? 0;
       ws.getCell(r, 10).value = present;
       ws.getCell(r, 10).border = borderAll;
       ws.getCell(r, 10).alignment = centerMid;
@@ -806,10 +892,10 @@ export class ReportsService {
     const formulaRow = course.students.length + 5;
     ws.mergeCells(`A${formulaRow}:N${formulaRow}`);
     const formulaCell = ws.getCell(formulaRow, 1);
-    formulaCell.value =
-      '% = (Presentes + Atrasos) * 100 / Total clases. Justificados y sin registro no suman asistencia.';
+    formulaCell.value = `${RATE_FORMULA_TEXT}. Justificados y sin registro no suman asistencia. ${PENDING_LATE_LEGEND}.`;
     formulaCell.font = { italic: true, size: 9, color: { argb: 'FF666666' } };
     formulaCell.alignment = { horizontal: 'left', vertical: 'middle' };
+    this.writeXlsxPendingLateWarning(ws, formulaRow + 1, 1, 14, totalPendingLate);
 
     await this.audit.log({
       userId: requestedById,
@@ -857,25 +943,18 @@ export class ReportsService {
       },
     });
 
-    const SYMBOL: Record<string, string> = {
-      PRESENT: '1',
-      ABSENT: '0',
-      LATE: 'AT',
-      JUSTIFIED: 'J',
-      WITHDRAWN: '-',
-    };
     const wb = new ExcelJS.Workbook();
     wb.creator = 'Asistencia CSSP';
 
-    const summary = new Map<string, { p: number; a: number; j: number; byMonth: number[] }>();
-    for (const s of course.students) summary.set(s.id, { p: 0, a: 0, j: 0, byMonth: [] });
+    const summary = new Map<string, AttendanceCounts>();
+    for (const s of course.students) summary.set(s.id, emptyAttendanceCounts());
 
     // Single query for all semester months — group in memory by month
     const allRecords = await this.prisma.attendanceRecord.findMany({
       where: { courseId, ...this.schoolConfig.attendanceWhereForRanges(ranges) },
-      select: { studentId: true, date: true, status: true },
+      select: { studentId: true, date: true, status: true, wasLate: true },
     });
-    const byMonth = new Map<number, Array<{ studentId: string; date: Date; status: string }>>();
+    const byMonth = new Map<number, typeof allRecords>();
     for (const r of allRecords) {
       const m = r.date.getMonth() + 1;
       if (!byMonth.has(m)) byMonth.set(m, []);
@@ -900,11 +979,11 @@ export class ReportsService {
       const records = (byMonth.get(month) ?? []).filter((record) =>
         this.schoolConfig.isDateInRanges(record.date, [monthRange]),
       );
-      const recordMap = new Map<string, Map<string, string>>();
+      const recordMap = new Map<string, Map<string, GridCell>>();
       for (const r of records) {
         const key = this.schoolConfig.formatDate(r.date);
         if (!recordMap.has(r.studentId)) recordMap.set(r.studentId, new Map());
-        recordMap.get(r.studentId)!.set(key, SYMBOL[r.status] ?? '-');
+        recordMap.get(r.studentId)!.set(key, toGridCell(r));
       }
       this.buildMonthSheet(wb, {
         course,
@@ -932,10 +1011,7 @@ export class ReportsService {
 
       for (const r of records) {
         const e = summary.get(r.studentId);
-        if (!e) continue;
-        if (r.status === 'PRESENT' || r.status === 'LATE') e.p++;
-        else if (r.status === 'ABSENT') e.a++;
-        else if (r.status === 'JUSTIFIED') e.j++;
+        if (e) addAttendanceStatus(e, r.status, r.wasLate);
       }
     }
 
@@ -971,16 +1047,22 @@ export class ReportsService {
     });
 
     let rowIdx = 0;
+    let totalPendingLate = 0;
     course.students.forEach((student) => {
       const r = rowIdx + 3;
-      const e = summary.get(student.id) ?? { p: 0, a: 0, j: 0 };
       // P2 FIX: denominator = active school days over the whole semester period
       const activeDays = this.schoolConfig.countActiveSchoolDaysInRanges(
         student,
         ranges,
         nonSchoolDays,
       );
-      const pct = activeDays > 0 ? e.p / activeDays : 0;
+      const totals = buildAttendanceSummary(
+        summary.get(student.id) ?? emptyAttendanceCounts(),
+        activeDays,
+      );
+      totalPendingLate += totals.pendingLate;
+      const e = { p: totals.present, a: totals.absent, j: totals.justified };
+      const pct = totals.attendanceRate ?? 0;
       // P2: use real enrollmentNumber
       ws.getCell(r, 1).value = student.enrollmentNumber;
       ws.getCell(r, 1).border = borderAll;
@@ -1021,8 +1103,11 @@ export class ReportsService {
     const formulaRow = course.students.length + 4;
     ws.mergeCells(`A${formulaRow}:G${formulaRow}`);
     ws.getCell(formulaRow, 1).value =
-      '% = (Asist. * 100) / Total clases. Asist. = Presentes + Atrasos.';
+      `${RATE_FORMULA_TEXT}. Asist. = Presentes. ${PENDING_LATE_LEGEND}.`;
     ws.getCell(formulaRow, 1).font = { italic: true, size: 9, color: { argb: 'FF666666' } };
+    ws.getCell(formulaRow, 1).alignment = { wrapText: true, vertical: 'top' };
+    ws.getRow(formulaRow).height = 26;
+    this.writeXlsxPendingLateWarning(ws, formulaRow + 1, 1, 7, totalPendingLate, 26);
 
     await this.audit.log({
       userId: requestedById,
@@ -1064,25 +1149,18 @@ export class ReportsService {
       },
     });
 
-    const SYMBOL: Record<string, string> = {
-      PRESENT: '1',
-      ABSENT: '0',
-      LATE: 'AT',
-      JUSTIFIED: 'J',
-      WITHDRAWN: '-',
-    };
     const wb = new ExcelJS.Workbook();
     wb.creator = 'Asistencia CSSP';
 
-    const summary = new Map<string, { p: number; a: number; j: number }>();
-    for (const s of course.students) summary.set(s.id, { p: 0, a: 0, j: 0 });
+    const summary = new Map<string, AttendanceCounts>();
+    for (const s of course.students) summary.set(s.id, emptyAttendanceCounts());
 
     // Single query for entire year — group in memory by month
     const allRecords = await this.prisma.attendanceRecord.findMany({
       where: { courseId, ...this.schoolConfig.attendanceWhereForRanges(ranges) },
-      select: { studentId: true, date: true, status: true },
+      select: { studentId: true, date: true, status: true, wasLate: true },
     });
-    const byMonth = new Map<number, Array<{ studentId: string; date: Date; status: string }>>();
+    const byMonth = new Map<number, typeof allRecords>();
     for (const r of allRecords) {
       const m = r.date.getMonth() + 1;
       if (!byMonth.has(m)) byMonth.set(m, []);
@@ -1094,11 +1172,11 @@ export class ReportsService {
       const records = (byMonth.get(month) ?? []).filter((record) =>
         this.schoolConfig.isDateInRanges(record.date, [monthRange]),
       );
-      const recordMap = new Map<string, Map<string, string>>();
+      const recordMap = new Map<string, Map<string, GridCell>>();
       for (const r of records) {
         const key = this.schoolConfig.formatDate(r.date);
         if (!recordMap.has(r.studentId)) recordMap.set(r.studentId, new Map());
-        recordMap.get(r.studentId)!.set(key, SYMBOL[r.status] ?? '-');
+        recordMap.get(r.studentId)!.set(key, toGridCell(r));
       }
       this.buildMonthSheet(wb, {
         course,
@@ -1112,10 +1190,7 @@ export class ReportsService {
 
       for (const r of records) {
         const e = summary.get(r.studentId);
-        if (!e) continue;
-        if (r.status === 'PRESENT' || r.status === 'LATE') e.p++;
-        else if (r.status === 'ABSENT') e.a++;
-        else if (r.status === 'JUSTIFIED') e.j++;
+        if (e) addAttendanceStatus(e, r.status, r.wasLate);
       }
     }
 
@@ -1148,15 +1223,21 @@ export class ReportsService {
       c.border = borderAll;
     });
 
+    let totalPendingLate = 0;
     course.students.forEach((student, idx) => {
       const r = idx + 3;
-      const e = summary.get(student.id) ?? { p: 0, a: 0, j: 0 };
       const activeDays = this.schoolConfig.countActiveSchoolDaysInRanges(
         student,
         ranges,
         nonSchoolDays,
       );
-      const pct = activeDays > 0 ? e.p / activeDays : 0;
+      const totals = buildAttendanceSummary(
+        summary.get(student.id) ?? emptyAttendanceCounts(),
+        activeDays,
+      );
+      totalPendingLate += totals.pendingLate;
+      const e = { p: totals.present, a: totals.absent, j: totals.justified };
+      const pct = totals.attendanceRate ?? 0;
       ws.getCell(r, 1).value = idx + 1;
       ws.getCell(r, 1).border = borderAll;
       ws.getCell(r, 1).alignment = centerMid;
@@ -1195,8 +1276,11 @@ export class ReportsService {
     const formulaRow = course.students.length + 4;
     ws.mergeCells(`A${formulaRow}:G${formulaRow}`);
     ws.getCell(formulaRow, 1).value =
-      '% = (Asist. * 100) / Total clases. Asist. = Presentes + Atrasos.';
+      `${RATE_FORMULA_TEXT}. Asist. = Presentes. ${PENDING_LATE_LEGEND}.`;
     ws.getCell(formulaRow, 1).font = { italic: true, size: 9, color: { argb: 'FF666666' } };
+    ws.getCell(formulaRow, 1).alignment = { wrapText: true, vertical: 'top' };
+    ws.getRow(formulaRow).height = 26;
+    this.writeXlsxPendingLateWarning(ws, formulaRow + 1, 1, 7, totalPendingLate, 26);
 
     await this.audit.log({
       userId: requestedById,
@@ -1245,21 +1329,17 @@ export class ReportsService {
       },
     });
 
-    const perStudent = new Map<string, { p: number; a: number; l: number; j: number }>();
-    for (const s of course.students) perStudent.set(s.id, { p: 0, a: 0, l: 0, j: 0 });
+    const perStudent = new Map<string, AttendanceCounts>();
+    for (const s of course.students) perStudent.set(s.id, emptyAttendanceCounts());
 
     // Single query for all semester months
     const allSemRecords = await this.prisma.attendanceRecord.findMany({
       where: { courseId, ...this.schoolConfig.attendanceWhereForRanges(ranges) },
-      select: { studentId: true, status: true },
+      select: { studentId: true, status: true, wasLate: true },
     });
     for (const r of allSemRecords) {
       const e = perStudent.get(r.studentId);
-      if (!e) continue;
-      if (r.status === 'PRESENT') e.p++;
-      else if (r.status === 'ABSENT') e.a++;
-      else if (r.status === 'LATE') e.l++;
-      else if (r.status === 'JUSTIFIED') e.j++;
+      if (e) addAttendanceStatus(e, r.status, r.wasLate);
     }
 
     const doc = new PDFDocument({ size: 'A4', margin: 48 });
@@ -1341,15 +1421,17 @@ export class ReportsService {
     doc.font('Helvetica').fontSize(9).fillColor('#000');
     let totalRate = 0;
     let totalStudents = 0;
+    let totalPendingLate = 0;
     for (const [i, s] of course.students.entries()) {
       if (y > 760) {
         doc.addPage();
         y = 60;
       }
-      const c = perStudent.get(s.id)!;
       const activeDays = this.schoolConfig.countActiveSchoolDaysInRanges(s, ranges, nonSchoolDays);
-      const rate = activeDays > 0 ? (c.p + c.l) / activeDays : 0;
-      if (activeDays > 0) {
+      const c = buildAttendanceSummary(perStudent.get(s.id)!, activeDays);
+      const rate = c.attendanceRate ?? 0;
+      totalPendingLate += c.pendingLate;
+      if (c.attendanceRate !== null) {
         totalRate += rate;
         totalStudents++;
       }
@@ -1364,21 +1446,26 @@ export class ReportsService {
         { width: cols.name.w, ellipsis: true },
       );
       doc.text(s.rut, cols.rut.x, y + 5, { width: cols.rut.w });
-      doc.text(String(c.p), cols.p.x, y + 5, { width: cols.p.w, align: 'center' });
-      doc.text(String(c.a), cols.a.x, y + 5, { width: cols.a.w, align: 'center' });
-      doc.text(String(c.l), cols.l.x, y + 5, { width: cols.l.w, align: 'center' });
-      doc.text(String(c.j), cols.j.x, y + 5, { width: cols.j.w, align: 'center' });
-      doc.text(String(c.p + c.l), cols.attended.x, y + 5, {
+      doc.text(String(c.present), cols.p.x, y + 5, { width: cols.p.w, align: 'center' });
+      doc.text(String(c.absent), cols.a.x, y + 5, { width: cols.a.w, align: 'center' });
+      doc.text(String(c.late), cols.l.x, y + 5, { width: cols.l.w, align: 'center' });
+      doc.text(String(c.justified), cols.j.x, y + 5, { width: cols.j.w, align: 'center' });
+      doc.text(String(c.attended), cols.attended.x, y + 5, {
         width: cols.attended.w,
         align: 'center',
       });
       doc.text(String(activeDays), cols.total.x, y + 5, { width: cols.total.w, align: 'center' });
       const rateColor = rate >= 0.9 ? '#15803d' : rate >= 0.7 ? '#b45309' : '#b91c1c';
       doc.fillColor(rateColor).font('Helvetica-Bold');
-      doc.text(activeDays > 0 ? `${(rate * 100).toFixed(1)}%` : '—', cols.rate.x, y + 5, {
-        width: cols.rate.w,
-        align: 'center',
-      });
+      doc.text(
+        c.attendanceRate !== null ? `${(rate * 100).toFixed(1)}%` : '—',
+        cols.rate.x,
+        y + 5,
+        {
+          width: cols.rate.w,
+          align: 'center',
+        },
+      );
       doc.fillColor('#000').font('Helvetica');
       y += rowH;
     }
@@ -1393,11 +1480,13 @@ export class ReportsService {
     y += 48;
     doc.fillColor('#555').font('Helvetica-Oblique').fontSize(8);
     doc.text(
-      '% = (Asist. * 100) / Total. Asist. = Presentes + Atrasos; Total = días lectivos trabajados con matrícula activa.',
+      `${RATE_FORMULA_TEXT}. Asist. = Presentes; Total = días lectivos trabajados con matrícula activa. ` +
+        `${PENDING_LATE_LEGEND}. ${LATE_TOTAL_LEGEND}.`,
       48,
       y - 16,
       { width: 499 },
     );
+    y = Math.max(y, this.drawPdfPendingLateWarning(doc, totalPendingLate, 48, doc.y + 2, 499));
     if (y > 720) {
       doc.addPage();
       y = 80;
@@ -1454,21 +1543,17 @@ export class ReportsService {
       },
     });
 
-    const perStudent = new Map<string, { p: number; a: number; l: number; j: number }>();
-    for (const s of course.students) perStudent.set(s.id, { p: 0, a: 0, l: 0, j: 0 });
+    const perStudent = new Map<string, AttendanceCounts>();
+    for (const s of course.students) perStudent.set(s.id, emptyAttendanceCounts());
 
     // Single query for entire year
     const allAnnualRecords = await this.prisma.attendanceRecord.findMany({
       where: { courseId, ...this.schoolConfig.attendanceWhereForRanges(ranges) },
-      select: { studentId: true, status: true },
+      select: { studentId: true, status: true, wasLate: true },
     });
     for (const r of allAnnualRecords) {
       const e = perStudent.get(r.studentId);
-      if (!e) continue;
-      if (r.status === 'PRESENT') e.p++;
-      else if (r.status === 'ABSENT') e.a++;
-      else if (r.status === 'LATE') e.l++;
-      else if (r.status === 'JUSTIFIED') e.j++;
+      if (e) addAttendanceStatus(e, r.status, r.wasLate);
     }
 
     const doc = new PDFDocument({ size: 'A4', margin: 48 });
@@ -1545,15 +1630,17 @@ export class ReportsService {
     doc.font('Helvetica').fontSize(9).fillColor('#000');
     let totalRate = 0;
     let totalStudents = 0;
+    let totalPendingLate = 0;
     for (const [i, s] of course.students.entries()) {
       if (y > 760) {
         doc.addPage();
         y = 60;
       }
-      const c = perStudent.get(s.id)!;
       const activeDays = this.schoolConfig.countActiveSchoolDaysInRanges(s, ranges, nonSchoolDays);
-      const rate = activeDays > 0 ? (c.p + c.l) / activeDays : 0;
-      if (activeDays > 0) {
+      const c = buildAttendanceSummary(perStudent.get(s.id)!, activeDays);
+      const rate = c.attendanceRate ?? 0;
+      totalPendingLate += c.pendingLate;
+      if (c.attendanceRate !== null) {
         totalRate += rate;
         totalStudents++;
       }
@@ -1568,21 +1655,26 @@ export class ReportsService {
         { width: cols.name.w, ellipsis: true },
       );
       doc.text(s.rut, cols.rut.x, y + 5, { width: cols.rut.w });
-      doc.text(String(c.p), cols.p.x, y + 5, { width: cols.p.w, align: 'center' });
-      doc.text(String(c.a), cols.a.x, y + 5, { width: cols.a.w, align: 'center' });
-      doc.text(String(c.l), cols.l.x, y + 5, { width: cols.l.w, align: 'center' });
-      doc.text(String(c.j), cols.j.x, y + 5, { width: cols.j.w, align: 'center' });
-      doc.text(String(c.p + c.l), cols.attended.x, y + 5, {
+      doc.text(String(c.present), cols.p.x, y + 5, { width: cols.p.w, align: 'center' });
+      doc.text(String(c.absent), cols.a.x, y + 5, { width: cols.a.w, align: 'center' });
+      doc.text(String(c.late), cols.l.x, y + 5, { width: cols.l.w, align: 'center' });
+      doc.text(String(c.justified), cols.j.x, y + 5, { width: cols.j.w, align: 'center' });
+      doc.text(String(c.attended), cols.attended.x, y + 5, {
         width: cols.attended.w,
         align: 'center',
       });
       doc.text(String(activeDays), cols.total.x, y + 5, { width: cols.total.w, align: 'center' });
       const rateColor = rate >= 0.9 ? '#15803d' : rate >= 0.7 ? '#b45309' : '#b91c1c';
       doc.fillColor(rateColor).font('Helvetica-Bold');
-      doc.text(activeDays > 0 ? `${(rate * 100).toFixed(1)}%` : '—', cols.rate.x, y + 5, {
-        width: cols.rate.w,
-        align: 'center',
-      });
+      doc.text(
+        c.attendanceRate !== null ? `${(rate * 100).toFixed(1)}%` : '—',
+        cols.rate.x,
+        y + 5,
+        {
+          width: cols.rate.w,
+          align: 'center',
+        },
+      );
       doc.fillColor('#000').font('Helvetica');
       y += rowH;
     }
@@ -1597,11 +1689,13 @@ export class ReportsService {
     y += 48;
     doc.fillColor('#555').font('Helvetica-Oblique').fontSize(8);
     doc.text(
-      '% = (Asist. * 100) / Total. Asist. = Presentes + Atrasos; Total = días lectivos trabajados con matrícula activa.',
+      `${RATE_FORMULA_TEXT}. Asist. = Presentes; Total = días lectivos trabajados con matrícula activa. ` +
+        `${PENDING_LATE_LEGEND}. ${LATE_TOTAL_LEGEND}.`,
       48,
       y - 16,
       { width: 499 },
     );
+    y = Math.max(y, this.drawPdfPendingLateWarning(doc, totalPendingLate, 48, doc.y + 2, 499));
     if (y > 720) {
       doc.addPage();
       y = 80;
@@ -1656,26 +1750,15 @@ export class ReportsService {
 
     const records = await this.prisma.attendanceRecord.findMany({
       where: { studentId, date: { gte: from, lte: to } },
-      select: { date: true, status: true },
+      select: { date: true, status: true, wasLate: true },
       orderBy: { date: 'asc' },
     });
 
     const daysInMonth = to.getDate();
-    let p = 0,
-      a = 0,
-      l = 0,
-      j = 0;
-    for (const r of records) {
-      if (r.status === 'PRESENT') p++;
-      else if (r.status === 'ABSENT') a++;
-      else if (r.status === 'LATE') l++;
-      else if (r.status === 'JUSTIFIED') j++;
-    }
-
     const nonSchoolDays = await this.calendar.getNonSchoolDays(student.course.school.id, from, to);
     const activeDays = this.countActiveSchoolDays(student, from, to, nonSchoolDays);
-    const attendedDays = p + l;
-    const rate = calculateReportAttendanceRate(attendedDays, activeDays);
+    const summary = summarizeReportRecords(records, activeDays);
+    const rate = summary.attendanceRate ?? 0;
 
     const doc = new PDFDocument({ size: 'A4', margin: 48 });
     const chunks: Buffer[] = [];
@@ -1747,7 +1830,7 @@ export class ReportsService {
     const STATUS_LABELS: Record<string, { label: string; color: string }> = {
       PRESENT: { label: 'Presente', color: '#16A34A' },
       ABSENT: { label: 'Ausente', color: '#DC2626' },
-      LATE: { label: 'Atraso', color: '#EA580C' },
+      LATE: { label: 'Atraso pendiente', color: '#EA580C' },
       JUSTIFIED: { label: 'Justificado', color: '#FACC15' },
     };
 
@@ -1776,17 +1859,13 @@ export class ReportsService {
         doc.text(String(d), 54, y + 5, { width: 40 });
         doc.text(DOW_NAMES[dow] ?? '', 100, y + 5, { width: 80 });
         doc.fillColor(cfg?.color ?? '#000').font('Helvetica-Bold');
-        doc.text(cfg?.label ?? record.status, 186, y + 5, { width: 120 });
+        const label = cfg?.label ?? record.status;
+        // Atraso ya resuelto: se ve su estado final, con la marca de atraso como nota.
+        const resolvedLate = record.wasLate && record.status !== 'LATE';
+        doc.text(resolvedLate ? `${label} (atraso)` : label, 186, y + 5, { width: 120 });
         doc.font('Helvetica');
         doc.fillColor('#000');
-        const sym =
-          record.status === 'PRESENT'
-            ? '1'
-            : record.status === 'ABSENT'
-              ? '0'
-              : record.status === 'LATE'
-                ? 'AT'
-                : 'J';
+        const sym = REPORT_SYMBOL[record.status] ?? '-';
         doc.text(sym, 312, y + 5, { width: 60, align: 'center' });
       } else {
         doc.text(String(d), 54, y + 5, { width: 40 });
@@ -1807,16 +1886,19 @@ export class ReportsService {
     doc.fillColor('#1F4E79').font('Helvetica-Bold').fontSize(11);
     doc.text('RESUMEN ESTADÍSTICO', 56, y + 8);
     doc.font('Helvetica').fontSize(10).fillColor('#000');
-    doc.text(`Presentes (P): ${p}`, 56, y + 28);
-    doc.text(`Ausentes (A): ${a}`, 56, y + 44);
-    doc.text(`Atrasos (AT): ${l}`, 220, y + 28);
-    doc.text(`Justificados (J): ${j}`, 220, y + 44);
-    doc.text(`Días asistidos (P+AT): ${attendedDays}`, 56, y + 64);
+    doc.text(`Presentes (P): ${summary.present}`, 56, y + 28);
+    doc.text(`Ausentes (A): ${summary.absent}`, 56, y + 44);
+    doc.text(`Atrasos (AT): ${summary.late}`, 220, y + 28);
+    doc.text(`Justificados (J): ${summary.justified}`, 220, y + 44);
+    doc.text(`Días asistidos (P): ${summary.attended}`, 56, y + 64);
     doc.text(`Total clases: ${activeDays}`, 220, y + 64);
     doc
       .fontSize(8)
       .fillColor('#555')
-      .text(`Fórmula: ${attendedDays} * 100 / ${activeDays}`, 56, y + 82, { width: 260 });
+      .text(`Fórmula: ${rateCalculationText(summary)}`, 56, y + 82, { width: 160 });
+    doc.text(`AT incluye resueltos · pendientes: ${summary.pendingLate}`, 220, y + 82, {
+      width: 175,
+    });
     const rateColor = rate >= 0.9 ? '#15803d' : rate >= 0.7 ? '#b45309' : '#b91c1c';
     doc.fillColor(rateColor).font('Helvetica-Bold').fontSize(14);
     doc.text(`${(rate * 100).toFixed(1)}%`, 400, y + 32, { width: 100, align: 'center' });
@@ -1834,12 +1916,16 @@ export class ReportsService {
       .font('Helvetica-Oblique')
       .text(
         'Documento emitido conforme al Decreto 67/2018 del MINEDUC y Ley 19.799 (FES). ' +
-          'El porcentaje se calcula como (Presentes + Atrasos) * 100 / Total clases con matrícula activa.',
+          'El porcentaje se calcula como Presentes * 100 / (Total clases con matrícula activa - Atrasos pendientes). ' +
+          `${PENDING_LATE_LEGEND}.`,
         48,
         y,
         { width: 499 },
       );
-    y += 40;
+    y = Math.max(
+      y + 40,
+      this.drawPdfPendingLateWarning(doc, summary.pendingLate, 48, doc.y + 2, 499) + 8,
+    );
 
     doc.fillColor('#000').font('Helvetica').fontSize(9);
     doc.text('_______________________________________', 80, y + 40);
@@ -1905,39 +1991,27 @@ export class ReportsService {
 
     const records = await this.prisma.attendanceRecord.findMany({
       where: { studentId, ...this.schoolConfig.attendanceWhereForRanges(ranges) },
-      select: { date: true, status: true },
+      select: { date: true, status: true, wasLate: true },
       orderBy: { date: 'asc' },
     });
 
-    const byMonth = new Map<number, { p: number; a: number; l: number; j: number }>();
-    for (const range of monthRanges) byMonth.set(range.month, { p: 0, a: 0, l: 0, j: 0 });
+    const byMonth = new Map<number, AttendanceCounts>();
+    for (const range of monthRanges) byMonth.set(range.month, emptyAttendanceCounts());
     for (const r of records) {
       const m = r.date.getMonth() + 1;
       const e = byMonth.get(m);
-      if (!e) continue;
-      if (r.status === 'PRESENT') e.p++;
-      else if (r.status === 'ABSENT') e.a++;
-      else if (r.status === 'LATE') e.l++;
-      else if (r.status === 'JUSTIFIED') e.j++;
+      if (e) addAttendanceStatus(e, r.status, r.wasLate);
     }
 
-    let totalP = 0,
-      totalA = 0,
-      totalL = 0,
-      totalJ = 0;
-    for (const e of byMonth.values()) {
-      totalP += e.p;
-      totalA += e.a;
-      totalL += e.l;
-      totalJ += e.j;
-    }
+    const totals = emptyAttendanceCounts();
+    for (const e of byMonth.values()) addAttendanceCounts(totals, e);
     const activeDays = this.schoolConfig.countActiveSchoolDaysInRanges(
       student,
       ranges,
       nonSchoolDays,
     );
-    const attendedDays = totalP + totalL;
-    const rate = calculateReportAttendanceRate(attendedDays, activeDays);
+    const summary = buildAttendanceSummary(totals, activeDays);
+    const rate = summary.attendanceRate ?? 0;
 
     const doc = new PDFDocument({ size: 'A4', margin: 48 });
     const chunks: Buffer[] = [];
@@ -2010,26 +2084,26 @@ export class ReportsService {
     doc.font('Helvetica').fontSize(9).fillColor('#000');
     for (const [i, monthRange] of monthRanges.entries()) {
       const m = monthRange.month;
-      const e = byMonth.get(m)!;
       const monthActiveDays = this.schoolConfig.countActiveSchoolDaysInRanges(
         student,
         [monthRange],
         nonSchoolDays,
       );
-      const monthRate = calculateReportAttendanceRate(e.p + e.l, monthActiveDays);
+      const e = buildAttendanceSummary(byMonth.get(m)!, monthActiveDays);
+      const monthRate = e.attendanceRate ?? 0;
       const band = i % 2 === 0 ? '#F5F8FB' : '#FFFFFF';
       doc.rect(48, y, 499, rowH).fill(band);
       doc.fillColor('#000');
       doc.text(MONTH_NAMES_ES[m - 1] ?? '', 54, y + 5, { width: 98 });
-      doc.text(String(e.p), 158, y + 5, { width: 28, align: 'center' });
-      doc.text(String(e.a), 190, y + 5, { width: 28, align: 'center' });
-      doc.text(String(e.l), 222, y + 5, { width: 30, align: 'center' });
-      doc.text(String(e.j), 256, y + 5, { width: 28, align: 'center' });
-      doc.text(String(e.p + e.l), 288, y + 5, { width: 42, align: 'center' });
+      doc.text(String(e.present), 158, y + 5, { width: 28, align: 'center' });
+      doc.text(String(e.absent), 190, y + 5, { width: 28, align: 'center' });
+      doc.text(String(e.late), 222, y + 5, { width: 30, align: 'center' });
+      doc.text(String(e.justified), 256, y + 5, { width: 28, align: 'center' });
+      doc.text(String(e.attended), 288, y + 5, { width: 42, align: 'center' });
       doc.text(String(monthActiveDays), 334, y + 5, { width: 42, align: 'center' });
       const rateColor = monthRate >= 0.9 ? '#15803d' : monthRate >= 0.7 ? '#b45309' : '#b91c1c';
       doc.fillColor(rateColor).font('Helvetica-Bold');
-      doc.text(monthActiveDays > 0 ? `${(monthRate * 100).toFixed(1)}%` : '—', 382, y + 5, {
+      doc.text(e.attendanceRate !== null ? `${(monthRate * 100).toFixed(1)}%` : '—', 382, y + 5, {
         width: 74,
         align: 'center',
       });
@@ -2044,16 +2118,16 @@ export class ReportsService {
     y += 40;
 
     doc.fillColor('#000').font('Helvetica').fontSize(9);
-    doc.text(`Total Presentes: ${totalP}`, 56, y);
-    doc.text(`Total Ausentes: ${totalA}`, 56, y + 14);
-    doc.text(`Total Atrasos: ${totalL}`, 220, y);
-    doc.text(`Total Justificados: ${totalJ}`, 220, y + 14);
-    doc.text(`Días asistidos (P+AT): ${attendedDays}`, 56, y + 32);
+    doc.text(`Total Presentes: ${summary.present}`, 56, y);
+    doc.text(`Total Ausentes: ${summary.absent}`, 56, y + 14);
+    doc.text(`Total Atrasos (incluye resueltos): ${summary.late}`, 220, y);
+    doc.text(`Total Justificados: ${summary.justified}`, 220, y + 14);
+    doc.text(`Días asistidos (P): ${summary.attended}`, 56, y + 32);
     doc.text(`Total clases: ${activeDays}`, 220, y + 32);
     doc
       .fontSize(8)
       .fillColor('#555')
-      .text(`Fórmula: ${attendedDays} * 100 / ${activeDays}`, 56, y + 48, { width: 260 });
+      .text(`Fórmula: ${rateCalculationText(summary)}`, 56, y + 48, { width: 260 });
     y += 66;
 
     if (y > 720) {
@@ -2066,12 +2140,16 @@ export class ReportsService {
       .font('Helvetica-Oblique')
       .text(
         'Documento emitido conforme al Decreto 67/2018 del MINEDUC y Ley 19.799 (FES). ' +
-          'El porcentaje se calcula como (Presentes + Atrasos) * 100 / Total clases con matrícula activa.',
+          'El porcentaje se calcula como Presentes * 100 / (Total clases con matrícula activa - Atrasos pendientes). ' +
+          `${PENDING_LATE_LEGEND}.`,
         48,
         y,
         { width: 499 },
       );
-    y += 40;
+    y = Math.max(
+      y + 40,
+      this.drawPdfPendingLateWarning(doc, summary.pendingLate, 48, doc.y + 2, 499) + 8,
+    );
 
     doc.fillColor('#000').font('Helvetica').fontSize(9);
     doc.text('_______________________________________', 80, y + 40);
@@ -2130,39 +2208,27 @@ export class ReportsService {
 
     const records = await this.prisma.attendanceRecord.findMany({
       where: { studentId, ...this.schoolConfig.attendanceWhereForRanges(ranges) },
-      select: { date: true, status: true },
+      select: { date: true, status: true, wasLate: true },
       orderBy: { date: 'asc' },
     });
 
-    const byMonth = new Map<number, { p: number; a: number; l: number; j: number }>();
-    for (const range of monthRanges) byMonth.set(range.month, { p: 0, a: 0, l: 0, j: 0 });
+    const byMonth = new Map<number, AttendanceCounts>();
+    for (const range of monthRanges) byMonth.set(range.month, emptyAttendanceCounts());
     for (const r of records) {
       const m = r.date.getMonth() + 1;
       const e = byMonth.get(m);
-      if (!e) continue;
-      if (r.status === 'PRESENT') e.p++;
-      else if (r.status === 'ABSENT') e.a++;
-      else if (r.status === 'LATE') e.l++;
-      else if (r.status === 'JUSTIFIED') e.j++;
+      if (e) addAttendanceStatus(e, r.status, r.wasLate);
     }
 
-    let totalP = 0,
-      totalA = 0,
-      totalL = 0,
-      totalJ = 0;
-    for (const e of byMonth.values()) {
-      totalP += e.p;
-      totalA += e.a;
-      totalL += e.l;
-      totalJ += e.j;
-    }
+    const totals = emptyAttendanceCounts();
+    for (const e of byMonth.values()) addAttendanceCounts(totals, e);
     const activeDays = this.schoolConfig.countActiveSchoolDaysInRanges(
       student,
       ranges,
       nonSchoolDays,
     );
-    const attendedDays = totalP + totalL;
-    const rate = calculateReportAttendanceRate(attendedDays, activeDays);
+    const summary = buildAttendanceSummary(totals, activeDays);
+    const rate = summary.attendanceRate ?? 0;
 
     const doc = new PDFDocument({ size: 'A4', margin: 48 });
     const chunks: Buffer[] = [];
@@ -2239,26 +2305,26 @@ export class ReportsService {
         doc.addPage();
         y = 60;
       }
-      const e = byMonth.get(m)!;
       const monthActiveDays = this.schoolConfig.countActiveSchoolDaysInRanges(
         student,
         [monthRange],
         nonSchoolDays,
       );
-      const monthRate = calculateReportAttendanceRate(e.p + e.l, monthActiveDays);
+      const e = buildAttendanceSummary(byMonth.get(m)!, monthActiveDays);
+      const monthRate = e.attendanceRate ?? 0;
       const band = i % 2 === 0 ? '#F5F8FB' : '#FFFFFF';
       doc.rect(48, y, 499, rowH).fill(band);
       doc.fillColor('#000');
       doc.text(MONTH_NAMES_ES[m - 1] ?? '', 54, y + 5, { width: 98 });
-      doc.text(String(e.p), 158, y + 5, { width: 28, align: 'center' });
-      doc.text(String(e.a), 190, y + 5, { width: 28, align: 'center' });
-      doc.text(String(e.l), 222, y + 5, { width: 30, align: 'center' });
-      doc.text(String(e.j), 256, y + 5, { width: 28, align: 'center' });
-      doc.text(String(e.p + e.l), 288, y + 5, { width: 42, align: 'center' });
+      doc.text(String(e.present), 158, y + 5, { width: 28, align: 'center' });
+      doc.text(String(e.absent), 190, y + 5, { width: 28, align: 'center' });
+      doc.text(String(e.late), 222, y + 5, { width: 30, align: 'center' });
+      doc.text(String(e.justified), 256, y + 5, { width: 28, align: 'center' });
+      doc.text(String(e.attended), 288, y + 5, { width: 42, align: 'center' });
       doc.text(String(monthActiveDays), 334, y + 5, { width: 42, align: 'center' });
       const rateColor = monthRate >= 0.9 ? '#15803d' : monthRate >= 0.7 ? '#b45309' : '#b91c1c';
       doc.fillColor(rateColor).font('Helvetica-Bold');
-      doc.text(monthActiveDays > 0 ? `${(monthRate * 100).toFixed(1)}%` : '—', 382, y + 5, {
+      doc.text(e.attendanceRate !== null ? `${(monthRate * 100).toFixed(1)}%` : '—', 382, y + 5, {
         width: 74,
         align: 'center',
       });
@@ -2273,16 +2339,16 @@ export class ReportsService {
     y += 40;
 
     doc.fillColor('#000').font('Helvetica').fontSize(9);
-    doc.text(`Total Presentes: ${totalP}`, 56, y);
-    doc.text(`Total Ausentes: ${totalA}`, 56, y + 14);
-    doc.text(`Total Atrasos: ${totalL}`, 220, y);
-    doc.text(`Total Justificados: ${totalJ}`, 220, y + 14);
-    doc.text(`Días asistidos (P+AT): ${attendedDays}`, 56, y + 32);
+    doc.text(`Total Presentes: ${summary.present}`, 56, y);
+    doc.text(`Total Ausentes: ${summary.absent}`, 56, y + 14);
+    doc.text(`Total Atrasos (incluye resueltos): ${summary.late}`, 220, y);
+    doc.text(`Total Justificados: ${summary.justified}`, 220, y + 14);
+    doc.text(`Días asistidos (P): ${summary.attended}`, 56, y + 32);
     doc.text(`Total clases: ${activeDays}`, 220, y + 32);
     doc
       .fontSize(8)
       .fillColor('#555')
-      .text(`Fórmula: ${attendedDays} * 100 / ${activeDays}`, 56, y + 48, { width: 260 });
+      .text(`Fórmula: ${rateCalculationText(summary)}`, 56, y + 48, { width: 260 });
     y += 66;
 
     if (y > 720) {
@@ -2295,12 +2361,16 @@ export class ReportsService {
       .font('Helvetica-Oblique')
       .text(
         'Documento emitido conforme al Decreto 67/2018 del MINEDUC y Ley 19.799 (FES). ' +
-          'El porcentaje se calcula como (Presentes + Atrasos) * 100 / Total clases con matrícula activa.',
+          'El porcentaje se calcula como Presentes * 100 / (Total clases con matrícula activa - Atrasos pendientes). ' +
+          `${PENDING_LATE_LEGEND}.`,
         48,
         y,
         { width: 499 },
       );
-    y += 40;
+    y = Math.max(
+      y + 40,
+      this.drawPdfPendingLateWarning(doc, summary.pendingLate, 48, doc.y + 2, 499) + 8,
+    );
 
     doc.fillColor('#000').font('Helvetica').fontSize(9);
     doc.text('_______________________________________', 80, y + 40);
@@ -2355,14 +2425,14 @@ export class ReportsService {
 
     const records = await this.prisma.attendanceRecord.findMany({
       where: { studentId, date: { gte: from, lte: to } },
-      select: { date: true, status: true },
+      select: { date: true, status: true, wasLate: true },
       orderBy: { date: 'asc' },
     });
 
     const daysInMonth = to.getDate();
-    const recordMap = new Map<number, string>();
+    const recordMap = new Map<number, (typeof records)[number]>();
     for (const r of records) {
-      recordMap.set(r.date.getDate(), r.status);
+      recordMap.set(r.date.getDate(), r);
     }
 
     const wb = new ExcelJS.Workbook();
@@ -2432,19 +2502,17 @@ export class ReportsService {
     const STATUS_LABELS: Record<string, { label: string; color: string; sym: string }> = {
       PRESENT: { label: 'Presente', color: GREEN, sym: '1' },
       ABSENT: { label: 'Ausente', color: RED, sym: '0' },
-      LATE: { label: 'Atraso', color: ORANGE, sym: 'AT' },
+      LATE: { label: 'Atraso pendiente', color: ORANGE, sym: 'AT' },
       JUSTIFIED: { label: 'Justificado', color: YELLOW, sym: 'J' },
     };
 
-    let p = 0,
-      a = 0,
-      l = 0,
-      j = 0;
+    const counts = emptyAttendanceCounts();
     for (let d = 1; d <= daysInMonth; d++) {
       const date = new Date(year, month - 1, d);
       const dow = date.getDay();
       const isWeekend = dow === 0 || dow === 6;
-      const status = recordMap.get(d);
+      const record = recordMap.get(d);
+      const status = record?.status;
 
       ws.getCell(r, 1).value = d;
       ws.getCell(r, 1).alignment = centerMid;
@@ -2477,10 +2545,13 @@ export class ReportsService {
             ws.getCell(r, 4).font = { bold: true, color: { argb: 'FFFFFFFF' } };
           }
         }
-        if (status === 'PRESENT') p++;
-        else if (status === 'ABSENT') a++;
-        else if (status === 'LATE') l++;
-        else if (status === 'JUSTIFIED') j++;
+        addAttendanceStatus(counts, status, record?.wasLate);
+        if (status === 'LATE') {
+          ws.getCell(r, 5).value = 'Pendiente Inspectoría';
+        } else if (record?.wasLate) {
+          ws.getCell(r, 5).value = 'Atraso resuelto';
+        }
+        ws.getCell(r, 5).font = { italic: true, size: 9, color: { argb: 'FF666666' } };
       } else {
         ws.getCell(r, 3).value = 'Sin registro';
         ws.getCell(r, 3).font = { italic: true, color: { argb: 'FF999999' } };
@@ -2502,29 +2573,29 @@ export class ReportsService {
 
     const nonSchoolDays = await this.calendar.getNonSchoolDays(student.course.school.id, from, to);
     const activeDays = this.countActiveSchoolDays(student, from, to, nonSchoolDays);
-    const attendedDays = p + l;
-    const rate = calculateReportAttendanceRate(attendedDays, activeDays);
+    const summary = buildAttendanceSummary(counts, activeDays);
+    const rate = summary.attendanceRate ?? 0;
 
     ws.getCell(r, 1).value = 'Presentes:';
     ws.getCell(r, 1).font = { bold: true };
-    ws.getCell(r, 2).value = p;
+    ws.getCell(r, 2).value = summary.present;
     ws.getCell(r, 2).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFE2EFDA' } };
     ws.getCell(r, 3).value = 'Ausentes:';
     ws.getCell(r, 3).font = { bold: true };
-    ws.getCell(r, 4).value = a;
+    ws.getCell(r, 4).value = summary.absent;
     ws.getCell(r, 4).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFCE4E4' } };
     r++;
     ws.getCell(r, 1).value = 'Atrasos:';
     ws.getCell(r, 1).font = { bold: true };
-    ws.getCell(r, 2).value = l;
+    ws.getCell(r, 2).value = summary.late;
     ws.getCell(r, 3).value = 'Justificados:';
     ws.getCell(r, 3).font = { bold: true };
-    ws.getCell(r, 4).value = j;
+    ws.getCell(r, 4).value = summary.justified;
     ws.getCell(r, 4).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFFF2CC' } };
     r++;
     ws.getCell(r, 1).value = 'Días asistidos:';
     ws.getCell(r, 1).font = { bold: true };
-    ws.getCell(r, 2).value = attendedDays;
+    ws.getCell(r, 2).value = summary.attended;
     ws.getCell(r, 2).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFE2EFDA' } };
     ws.getCell(r, 3).value = 'Total clases:';
     ws.getCell(r, 3).font = { bold: true };
@@ -2547,10 +2618,12 @@ export class ReportsService {
     ws.mergeCells(r, 1, r, 5);
     ws.getCell(r, 1).value =
       'Documento emitido conforme al Decreto 67/2018 del MINEDUC y Ley 19.799 (FES). ' +
-      `El porcentaje se calcula como (Presentes + Atrasos) * 100 / Total clases: ${attendedDays} * 100 / ${activeDays}.`;
+      `El porcentaje se calcula como ${RATE_FORMULA_EXPR}: ${rateCalculationText(summary)}. ` +
+      `${PENDING_LATE_LEGEND}. Atrasos = incluye resueltos.`;
     ws.getCell(r, 1).font = { italic: true, size: 8, color: { argb: 'FF666666' } };
     ws.getCell(r, 1).alignment = { wrapText: true };
-    ws.getRow(r).height = 30;
+    ws.getRow(r).height = 44;
+    this.writeXlsxPendingLateWarning(ws, r + 1, 1, 5, summary.pendingLate, 30);
 
     const meta = wb.addWorksheet('RESUMEN');
     meta.getColumn(1).width = 20;
@@ -2612,11 +2685,11 @@ export class ReportsService {
 
     const allRecords = await this.prisma.attendanceRecord.findMany({
       where: { studentId, ...this.schoolConfig.attendanceWhereForRanges(ranges) },
-      select: { date: true, status: true },
+      select: { date: true, status: true, wasLate: true },
       orderBy: { date: 'asc' },
     });
 
-    const byMonth = new Map<number, Array<{ date: Date; status: string }>>();
+    const byMonth = new Map<number, typeof allRecords>();
     for (const r of allRecords) {
       const m = r.date.getMonth() + 1;
       if (!byMonth.has(m)) byMonth.set(m, []);
@@ -2640,7 +2713,7 @@ export class ReportsService {
     const STATUS_MAP: Record<string, { label: string; color: string; sym: string }> = {
       PRESENT: { label: 'Presente', color: GREEN, sym: '1' },
       ABSENT: { label: 'Ausente', color: RED, sym: '0' },
-      LATE: { label: 'Atraso', color: ORANGE, sym: 'AT' },
+      LATE: { label: 'Atraso pendiente', color: ORANGE, sym: 'AT' },
       JUSTIFIED: { label: 'Justificado', color: YELLOW, sym: 'J' },
     };
 
@@ -2651,9 +2724,9 @@ export class ReportsService {
       const records = (byMonth.get(month) ?? []).filter((record) =>
         this.schoolConfig.isDateInRanges(record.date, [monthRange]),
       );
-      const recordMap = new Map<number, string>();
+      const recordMap = new Map<number, (typeof records)[number]>();
       for (const r of records) {
-        recordMap.set(r.date.getDate(), r.status);
+        recordMap.set(r.date.getDate(), r);
       }
 
       const ws = wb.addWorksheet(monthName.toUpperCase(), { views: [{ showGridLines: false }] });
@@ -2689,16 +2762,14 @@ export class ReportsService {
       });
       r++;
 
-      let p = 0,
-        a = 0,
-        l = 0,
-        j = 0;
+      const counts = emptyAttendanceCounts();
       for (let d = 1; d <= daysInMonth; d++) {
         const date = new Date(year, month - 1, d);
         const dow = date.getDay();
         const isWeekend = dow === 0 || dow === 6;
         const outsidePeriod = !this.schoolConfig.isDateInRanges(date, [monthRange]);
-        const status = recordMap.get(d);
+        const record = recordMap.get(d);
+        const status = record?.status;
 
         ws.getCell(r, 1).value = d;
         ws.getCell(r, 1).alignment = centerMid;
@@ -2732,10 +2803,7 @@ export class ReportsService {
               ws.getCell(r, 4).font = { bold: true, color: { argb: 'FFFFFFFF' } };
             }
           }
-          if (status === 'PRESENT') p++;
-          else if (status === 'ABSENT') a++;
-          else if (status === 'LATE') l++;
-          else if (status === 'JUSTIFIED') j++;
+          addAttendanceStatus(counts, status, record?.wasLate);
         } else {
           ws.getCell(r, 3).value = 'Sin registro';
           ws.getCell(r, 3).font = { italic: true, color: { argb: 'FF999999' } };
@@ -2752,24 +2820,25 @@ export class ReportsService {
         [monthRange],
         nonSchoolDays,
       );
-      const rate = activeDays > 0 ? (p + l) / activeDays : 0;
+      const monthSummary = buildAttendanceSummary(counts, activeDays);
+      const rate = monthSummary.attendanceRate ?? 0;
       ws.getCell(r, 1).value = 'P:';
       ws.getCell(r, 1).font = { bold: true };
-      ws.getCell(r, 2).value = p;
+      ws.getCell(r, 2).value = monthSummary.present;
       ws.getCell(r, 3).value = 'A:';
       ws.getCell(r, 3).font = { bold: true };
-      ws.getCell(r, 4).value = a;
+      ws.getCell(r, 4).value = monthSummary.absent;
       r++;
       ws.getCell(r, 1).value = 'AT:';
       ws.getCell(r, 1).font = { bold: true };
-      ws.getCell(r, 2).value = l;
+      ws.getCell(r, 2).value = monthSummary.late;
       ws.getCell(r, 3).value = 'J:';
       ws.getCell(r, 3).font = { bold: true };
-      ws.getCell(r, 4).value = j;
+      ws.getCell(r, 4).value = monthSummary.justified;
       r++;
       ws.getCell(r, 1).value = 'Asist.:';
       ws.getCell(r, 1).font = { bold: true };
-      ws.getCell(r, 2).value = p + l;
+      ws.getCell(r, 2).value = monthSummary.attended;
       ws.getCell(r, 3).value = 'Total clases:';
       ws.getCell(r, 3).font = { bold: true };
       ws.getCell(r, 4).value = activeDays;
@@ -2780,6 +2849,14 @@ export class ReportsService {
       pctCell.value = rate;
       pctCell.numFmt = '0.0%';
       pctCell.font = { bold: true };
+      r += 2;
+      ws.mergeCells(r, 1, r, 4);
+      ws.getCell(r, 1).value =
+        `${RATE_FORMULA_TEXT}. ${PENDING_LATE_LEGEND}. ${LATE_TOTAL_LEGEND}.`;
+      ws.getCell(r, 1).font = { italic: true, size: 8, color: { argb: 'FF666666' } };
+      ws.getCell(r, 1).alignment = { wrapText: true, vertical: 'top' };
+      ws.getRow(r).height = 44;
+      this.writeXlsxPendingLateWarning(ws, r + 1, 1, 4, monthSummary.pendingLate, 30);
     }
 
     const summary = wb.addWorksheet('RESUMEN SEMESTRAL', { views: [{ showGridLines: false }] });
@@ -2809,53 +2886,39 @@ export class ReportsService {
       c.border = borderAll;
     });
 
-    let totalP = 0,
-      totalA = 0,
-      totalL = 0,
-      totalJ = 0;
+    const totals = emptyAttendanceCounts();
     for (const [i, monthRange] of monthRanges.entries()) {
       const month = monthRange.month;
       const monthRecords = (byMonth.get(month) ?? []).filter((record) =>
         this.schoolConfig.isDateInRanges(record.date, [monthRange]),
       );
-      let mp = 0,
-        ma = 0,
-        ml = 0,
-        mj = 0;
-      for (const r of monthRecords) {
-        if (r.status === 'PRESENT') mp++;
-        else if (r.status === 'ABSENT') ma++;
-        else if (r.status === 'LATE') ml++;
-        else if (r.status === 'JUSTIFIED') mj++;
-      }
-      totalP += mp;
-      totalA += ma;
-      totalL += ml;
-      totalJ += mj;
+      const monthCounts = countReportRecords(monthRecords);
+      addAttendanceCounts(totals, monthCounts);
 
       const activeDays = this.schoolConfig.countActiveSchoolDaysInRanges(
         student,
         [monthRange],
         nonSchoolDays,
       );
-      const rate = activeDays > 0 ? (mp + ml) / activeDays : 0;
+      const monthSummary = buildAttendanceSummary(monthCounts, activeDays);
+      const rate = monthSummary.attendanceRate ?? 0;
 
       const r = i + 3;
       summary.getCell(r, 1).value = MONTH_NAMES_ES[month - 1] ?? '';
       summary.getCell(r, 1).border = borderAll;
-      summary.getCell(r, 2).value = mp;
+      summary.getCell(r, 2).value = monthSummary.present;
       summary.getCell(r, 2).alignment = centerMid;
       summary.getCell(r, 2).border = borderAll;
-      summary.getCell(r, 3).value = ma;
+      summary.getCell(r, 3).value = monthSummary.absent;
       summary.getCell(r, 3).alignment = centerMid;
       summary.getCell(r, 3).border = borderAll;
-      summary.getCell(r, 4).value = ml;
+      summary.getCell(r, 4).value = monthSummary.late;
       summary.getCell(r, 4).alignment = centerMid;
       summary.getCell(r, 4).border = borderAll;
-      summary.getCell(r, 5).value = mj;
+      summary.getCell(r, 5).value = monthSummary.justified;
       summary.getCell(r, 5).alignment = centerMid;
       summary.getCell(r, 5).border = borderAll;
-      summary.getCell(r, 6).value = mp + ml;
+      summary.getCell(r, 6).value = monthSummary.attended;
       summary.getCell(r, 6).alignment = centerMid;
       summary.getCell(r, 6).border = borderAll;
       summary.getCell(r, 7).value = activeDays;
@@ -2879,8 +2942,8 @@ export class ReportsService {
       ranges,
       nonSchoolDays,
     );
-    const semesterAttendedDays = totalP + totalL;
-    const semesterRate = calculateReportAttendanceRate(semesterAttendedDays, semesterActiveDays);
+    const semesterSummary = buildAttendanceSummary(totals, semesterActiveDays);
+    const semesterRate = semesterSummary.attendanceRate ?? 0;
     const totalRow = monthRanges.length + 3;
     for (let c = 1; c <= 8; c++) {
       const cell = summary.getCell(totalRow, c);
@@ -2890,11 +2953,11 @@ export class ReportsService {
       cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFDCE6F1' } };
     }
     summary.getCell(totalRow, 1).value = 'TOTAL';
-    summary.getCell(totalRow, 2).value = totalP;
-    summary.getCell(totalRow, 3).value = totalA;
-    summary.getCell(totalRow, 4).value = totalL;
-    summary.getCell(totalRow, 5).value = totalJ;
-    summary.getCell(totalRow, 6).value = semesterAttendedDays;
+    summary.getCell(totalRow, 2).value = semesterSummary.present;
+    summary.getCell(totalRow, 3).value = semesterSummary.absent;
+    summary.getCell(totalRow, 4).value = semesterSummary.late;
+    summary.getCell(totalRow, 5).value = semesterSummary.justified;
+    summary.getCell(totalRow, 6).value = semesterSummary.attended;
     summary.getCell(totalRow, 7).value = semesterActiveDays;
     const semesterPctCell = summary.getCell(totalRow, 8);
     semesterPctCell.value = semesterRate;
@@ -2909,8 +2972,19 @@ export class ReportsService {
     const formulaRow = totalRow + 2;
     summary.mergeCells(formulaRow, 1, formulaRow, 8);
     summary.getCell(formulaRow, 1).value =
-      `% = (Presentes + Atrasos) * 100 / Total clases. Cálculo total: ${semesterAttendedDays} * 100 / ${semesterActiveDays}.`;
+      `${RATE_FORMULA_TEXT}. Cálculo total: ${rateCalculationText(semesterSummary)}. ` +
+      `${PENDING_LATE_LEGEND}. ${LATE_TOTAL_LEGEND}.`;
     summary.getCell(formulaRow, 1).font = { italic: true, size: 9, color: { argb: 'FF666666' } };
+    summary.getCell(formulaRow, 1).alignment = { wrapText: true, vertical: 'top' };
+    summary.getRow(formulaRow).height = 40;
+    this.writeXlsxPendingLateWarning(
+      summary,
+      formulaRow + 1,
+      1,
+      8,
+      semesterSummary.pendingLate,
+      26,
+    );
 
     await this.audit.log({
       userId: requestedById,
@@ -2950,11 +3024,11 @@ export class ReportsService {
 
     const allRecords = await this.prisma.attendanceRecord.findMany({
       where: { studentId, ...this.schoolConfig.attendanceWhereForRanges(ranges) },
-      select: { date: true, status: true },
+      select: { date: true, status: true, wasLate: true },
       orderBy: { date: 'asc' },
     });
 
-    const byMonth = new Map<number, Array<{ date: Date; status: string }>>();
+    const byMonth = new Map<number, typeof allRecords>();
     for (const r of allRecords) {
       const m = r.date.getMonth() + 1;
       if (!byMonth.has(m)) byMonth.set(m, []);
@@ -2978,7 +3052,7 @@ export class ReportsService {
     const STATUS_MAP: Record<string, { label: string; color: string; sym: string }> = {
       PRESENT: { label: 'Presente', color: GREEN, sym: '1' },
       ABSENT: { label: 'Ausente', color: RED, sym: '0' },
-      LATE: { label: 'Atraso', color: ORANGE, sym: 'AT' },
+      LATE: { label: 'Atraso pendiente', color: ORANGE, sym: 'AT' },
       JUSTIFIED: { label: 'Justificado', color: YELLOW, sym: 'J' },
     };
 
@@ -2989,9 +3063,9 @@ export class ReportsService {
       const records = (byMonth.get(month) ?? []).filter((record) =>
         this.schoolConfig.isDateInRanges(record.date, [monthRange]),
       );
-      const recordMap = new Map<number, string>();
+      const recordMap = new Map<number, (typeof records)[number]>();
       for (const r of records) {
-        recordMap.set(r.date.getDate(), r.status);
+        recordMap.set(r.date.getDate(), r);
       }
 
       const ws = wb.addWorksheet(monthName.toUpperCase(), { views: [{ showGridLines: false }] });
@@ -3027,16 +3101,14 @@ export class ReportsService {
       });
       r++;
 
-      let p = 0,
-        a = 0,
-        l = 0,
-        j = 0;
+      const counts = emptyAttendanceCounts();
       for (let d = 1; d <= daysInMonth; d++) {
         const date = new Date(year, month - 1, d);
         const dow = date.getDay();
         const isWeekend = dow === 0 || dow === 6;
         const outsidePeriod = !this.schoolConfig.isDateInRanges(date, [monthRange]);
-        const status = recordMap.get(d);
+        const record = recordMap.get(d);
+        const status = record?.status;
 
         ws.getCell(r, 1).value = d;
         ws.getCell(r, 1).alignment = centerMid;
@@ -3070,10 +3142,7 @@ export class ReportsService {
               ws.getCell(r, 4).font = { bold: true, color: { argb: 'FFFFFFFF' } };
             }
           }
-          if (status === 'PRESENT') p++;
-          else if (status === 'ABSENT') a++;
-          else if (status === 'LATE') l++;
-          else if (status === 'JUSTIFIED') j++;
+          addAttendanceStatus(counts, status, record?.wasLate);
         } else {
           ws.getCell(r, 3).value = 'Sin registro';
           ws.getCell(r, 3).font = { italic: true, color: { argb: 'FF999999' } };
@@ -3090,24 +3159,25 @@ export class ReportsService {
         [monthRange],
         nonSchoolDays,
       );
-      const rate = activeDays > 0 ? (p + l) / activeDays : 0;
+      const monthSummary = buildAttendanceSummary(counts, activeDays);
+      const rate = monthSummary.attendanceRate ?? 0;
       ws.getCell(r, 1).value = 'P:';
       ws.getCell(r, 1).font = { bold: true };
-      ws.getCell(r, 2).value = p;
+      ws.getCell(r, 2).value = monthSummary.present;
       ws.getCell(r, 3).value = 'A:';
       ws.getCell(r, 3).font = { bold: true };
-      ws.getCell(r, 4).value = a;
+      ws.getCell(r, 4).value = monthSummary.absent;
       r++;
       ws.getCell(r, 1).value = 'AT:';
       ws.getCell(r, 1).font = { bold: true };
-      ws.getCell(r, 2).value = l;
+      ws.getCell(r, 2).value = monthSummary.late;
       ws.getCell(r, 3).value = 'J:';
       ws.getCell(r, 3).font = { bold: true };
-      ws.getCell(r, 4).value = j;
+      ws.getCell(r, 4).value = monthSummary.justified;
       r++;
       ws.getCell(r, 1).value = 'Asist.:';
       ws.getCell(r, 1).font = { bold: true };
-      ws.getCell(r, 2).value = p + l;
+      ws.getCell(r, 2).value = monthSummary.attended;
       ws.getCell(r, 3).value = 'Total clases:';
       ws.getCell(r, 3).font = { bold: true };
       ws.getCell(r, 4).value = activeDays;
@@ -3118,6 +3188,14 @@ export class ReportsService {
       pctCell.value = rate;
       pctCell.numFmt = '0.0%';
       pctCell.font = { bold: true };
+      r += 2;
+      ws.mergeCells(r, 1, r, 4);
+      ws.getCell(r, 1).value =
+        `${RATE_FORMULA_TEXT}. ${PENDING_LATE_LEGEND}. ${LATE_TOTAL_LEGEND}.`;
+      ws.getCell(r, 1).font = { italic: true, size: 8, color: { argb: 'FF666666' } };
+      ws.getCell(r, 1).alignment = { wrapText: true, vertical: 'top' };
+      ws.getRow(r).height = 44;
+      this.writeXlsxPendingLateWarning(ws, r + 1, 1, 4, monthSummary.pendingLate, 30);
     }
 
     const summary = wb.addWorksheet('RESUMEN ANUAL', { views: [{ showGridLines: false }] });
@@ -3147,53 +3225,39 @@ export class ReportsService {
       c.border = borderAll;
     });
 
-    let totalP = 0,
-      totalA = 0,
-      totalL = 0,
-      totalJ = 0;
+    const totals = emptyAttendanceCounts();
     for (const [i, monthRange] of monthRanges.entries()) {
       const month = monthRange.month;
       const monthRecords = (byMonth.get(month) ?? []).filter((record) =>
         this.schoolConfig.isDateInRanges(record.date, [monthRange]),
       );
-      let mp = 0,
-        ma = 0,
-        ml = 0,
-        mj = 0;
-      for (const r of monthRecords) {
-        if (r.status === 'PRESENT') mp++;
-        else if (r.status === 'ABSENT') ma++;
-        else if (r.status === 'LATE') ml++;
-        else if (r.status === 'JUSTIFIED') mj++;
-      }
-      totalP += mp;
-      totalA += ma;
-      totalL += ml;
-      totalJ += mj;
+      const monthCounts = countReportRecords(monthRecords);
+      addAttendanceCounts(totals, monthCounts);
 
       const activeDays = this.schoolConfig.countActiveSchoolDaysInRanges(
         student,
         [monthRange],
         nonSchoolDays,
       );
-      const rate = activeDays > 0 ? (mp + ml) / activeDays : 0;
+      const monthSummary = buildAttendanceSummary(monthCounts, activeDays);
+      const rate = monthSummary.attendanceRate ?? 0;
 
       const r = i + 3;
       summary.getCell(r, 1).value = MONTH_NAMES_ES[month - 1] ?? '';
       summary.getCell(r, 1).border = borderAll;
-      summary.getCell(r, 2).value = mp;
+      summary.getCell(r, 2).value = monthSummary.present;
       summary.getCell(r, 2).alignment = centerMid;
       summary.getCell(r, 2).border = borderAll;
-      summary.getCell(r, 3).value = ma;
+      summary.getCell(r, 3).value = monthSummary.absent;
       summary.getCell(r, 3).alignment = centerMid;
       summary.getCell(r, 3).border = borderAll;
-      summary.getCell(r, 4).value = ml;
+      summary.getCell(r, 4).value = monthSummary.late;
       summary.getCell(r, 4).alignment = centerMid;
       summary.getCell(r, 4).border = borderAll;
-      summary.getCell(r, 5).value = mj;
+      summary.getCell(r, 5).value = monthSummary.justified;
       summary.getCell(r, 5).alignment = centerMid;
       summary.getCell(r, 5).border = borderAll;
-      summary.getCell(r, 6).value = mp + ml;
+      summary.getCell(r, 6).value = monthSummary.attended;
       summary.getCell(r, 6).alignment = centerMid;
       summary.getCell(r, 6).border = borderAll;
       summary.getCell(r, 7).value = activeDays;
@@ -3221,30 +3285,30 @@ export class ReportsService {
       pattern: 'solid',
       fgColor: { argb: 'FFDCE6F1' },
     };
-    summary.getCell(totalRow, 2).value = totalP;
-    summary.getCell(totalRow, 2).alignment = centerMid;
-    summary.getCell(totalRow, 2).border = borderAll;
-    summary.getCell(totalRow, 2).font = { bold: true };
-    summary.getCell(totalRow, 3).value = totalA;
-    summary.getCell(totalRow, 3).alignment = centerMid;
-    summary.getCell(totalRow, 3).border = borderAll;
-    summary.getCell(totalRow, 3).font = { bold: true };
-    summary.getCell(totalRow, 4).value = totalL;
-    summary.getCell(totalRow, 4).alignment = centerMid;
-    summary.getCell(totalRow, 4).border = borderAll;
-    summary.getCell(totalRow, 4).font = { bold: true };
-    summary.getCell(totalRow, 5).value = totalJ;
-    summary.getCell(totalRow, 5).alignment = centerMid;
-    summary.getCell(totalRow, 5).border = borderAll;
-    summary.getCell(totalRow, 5).font = { bold: true };
-
     const annualActiveDays = this.schoolConfig.countActiveSchoolDaysInRanges(
       student,
       ranges,
       nonSchoolDays,
     );
-    const annualAttendedDays = totalP + totalL;
-    summary.getCell(totalRow, 6).value = annualAttendedDays;
+    const annualSummary = buildAttendanceSummary(totals, annualActiveDays);
+    summary.getCell(totalRow, 2).value = annualSummary.present;
+    summary.getCell(totalRow, 2).alignment = centerMid;
+    summary.getCell(totalRow, 2).border = borderAll;
+    summary.getCell(totalRow, 2).font = { bold: true };
+    summary.getCell(totalRow, 3).value = annualSummary.absent;
+    summary.getCell(totalRow, 3).alignment = centerMid;
+    summary.getCell(totalRow, 3).border = borderAll;
+    summary.getCell(totalRow, 3).font = { bold: true };
+    summary.getCell(totalRow, 4).value = annualSummary.late;
+    summary.getCell(totalRow, 4).alignment = centerMid;
+    summary.getCell(totalRow, 4).border = borderAll;
+    summary.getCell(totalRow, 4).font = { bold: true };
+    summary.getCell(totalRow, 5).value = annualSummary.justified;
+    summary.getCell(totalRow, 5).alignment = centerMid;
+    summary.getCell(totalRow, 5).border = borderAll;
+    summary.getCell(totalRow, 5).font = { bold: true };
+
+    summary.getCell(totalRow, 6).value = annualSummary.attended;
     summary.getCell(totalRow, 6).alignment = centerMid;
     summary.getCell(totalRow, 6).border = borderAll;
     summary.getCell(totalRow, 6).font = { bold: true };
@@ -3252,7 +3316,7 @@ export class ReportsService {
     summary.getCell(totalRow, 7).alignment = centerMid;
     summary.getCell(totalRow, 7).border = borderAll;
     summary.getCell(totalRow, 7).font = { bold: true };
-    const annualRate = calculateReportAttendanceRate(annualAttendedDays, annualActiveDays);
+    const annualRate = annualSummary.attendanceRate ?? 0;
     const annualPct = summary.getCell(totalRow, 8);
     annualPct.value = annualRate;
     annualPct.numFmt = '0.0%';
@@ -3270,8 +3334,12 @@ export class ReportsService {
     const formulaRow = totalRow + 2;
     summary.mergeCells(formulaRow, 1, formulaRow, 8);
     summary.getCell(formulaRow, 1).value =
-      `% = (Presentes + Atrasos) * 100 / Total clases. Cálculo total: ${annualAttendedDays} * 100 / ${annualActiveDays}.`;
+      `${RATE_FORMULA_TEXT}. Cálculo total: ${rateCalculationText(annualSummary)}. ` +
+      `${PENDING_LATE_LEGEND}. ${LATE_TOTAL_LEGEND}.`;
     summary.getCell(formulaRow, 1).font = { italic: true, size: 9, color: { argb: 'FF666666' } };
+    summary.getCell(formulaRow, 1).alignment = { wrapText: true, vertical: 'top' };
+    summary.getRow(formulaRow).height = 40;
+    this.writeXlsxPendingLateWarning(summary, formulaRow + 1, 1, 8, annualSummary.pendingLate, 26);
 
     await this.audit.log({
       userId: requestedById,
@@ -3305,7 +3373,7 @@ export class ReportsService {
       month: number;
       from?: Date;
       to: Date;
-      records: Map<string, Map<string, string>>;
+      records: Map<string, Map<string, GridCell>>;
       nonSchoolDays?: Set<string>;
     },
   ) {
@@ -3495,6 +3563,7 @@ export class ReportsService {
     // P2: We need the period boundaries to compute correct denominators
     const periodFrom = from;
     const periodTo = to;
+    let sheetPendingLate = 0;
 
     for (const student of course.students) {
       const row = ws.getRow(r);
@@ -3515,10 +3584,7 @@ export class ReportsService {
       nameCell.alignment = { horizontal: 'left', vertical: 'middle' };
       nameCell.border = borderAll;
 
-      let present = 0,
-        absent = 0,
-        justified = 0,
-        late = 0;
+      const counts = emptyAttendanceCounts();
 
       for (let d = 1; d <= daysInMonth; d++) {
         const c = 4 + d;
@@ -3538,26 +3604,24 @@ export class ReportsService {
         }
 
         const key = this.schoolConfig.formatDate(date);
-        const sym = this.attendanceSymbolFor(student, date, records.get(student.id)?.get(key));
+        const gridCell = records.get(student.id)?.get(key);
+        const sym = this.attendanceSymbolFor(student, date, gridCell?.sym);
         if (!sym) continue;
 
         cell.value = sym;
+        addGridSymbol(counts, sym, gridCell?.wasLate);
         if (sym === '1') {
           cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: GREEN } };
           cell.font = { size: 9, bold: true, color: { argb: 'FFFFFFFF' } };
-          present++;
         } else if (sym === '0') {
           cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: RED } };
           cell.font = { size: 9, bold: true, color: { argb: 'FFFFFFFF' } };
-          absent++;
         } else if (sym === 'J') {
           cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: YELLOW } };
-          justified++;
         } else if (sym === 'AT') {
+          // Atraso pendiente: fuera del numerador y del denominador hasta que se resuelva.
           cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: ORANGE } };
           cell.font = { size: 9, bold: true, color: { argb: 'FFFFFFFF' } };
-          late++;
-          present++; // late counts as present for attendance %
         } else if (sym === '-') {
           // Withdrawn — grey cell
           cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: GRAY } };
@@ -3573,16 +3637,18 @@ export class ReportsService {
         periodTo,
         ctx.nonSchoolDays,
       );
-      const pct = activeDays > 0 ? present / activeDays : 0;
+      const summaryRow = buildAttendanceSummary(counts, activeDays);
+      sheetPendingLate += summaryRow.pendingLate;
+      const pct = summaryRow.attendanceRate ?? 0;
 
       const a = ws.getCell(r, 36);
-      a.value = present;
+      a.value = summaryRow.present;
       a.alignment = centerMid;
       a.border = borderAll;
       a.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFE2EFDA' } };
 
       const b = ws.getCell(r, 37);
-      b.value = absent;
+      b.value = summaryRow.absent;
       b.alignment = centerMid;
       b.border = borderAll;
       b.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFCE4E4' } };
@@ -3606,13 +3672,10 @@ export class ReportsService {
       };
 
       const j = ws.getCell(r, 40);
-      j.value = justified;
+      j.value = summaryRow.justified;
       j.alignment = centerMid;
       j.border = borderAll;
       j.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFFF2CC' } };
-
-      // silence unused var warning for late (used in present calc)
-      void late;
 
       r++;
     }
@@ -3626,7 +3689,7 @@ export class ReportsService {
       ['1', 'Asistencia', GREEN],
       ['0', 'Ausencia', RED],
       ['J', 'Justificación', YELLOW],
-      ['AT', 'Atraso', ORANGE],
+      ['AT', 'Atraso pendiente de resolver por Inspectoría (no cuenta en el %)', ORANGE],
     ];
     for (const [sym, label, color] of legend) {
       const symC = ws.getCell(r, 2);
@@ -3640,6 +3703,47 @@ export class ReportsService {
       ws.getCell(r, 3).font = { size: 10 };
       r++;
     }
+    ws.getCell(r, 3).value = `${RATE_FORMULA_TEXT}. Atraso resuelto = su estado final.`;
+    ws.getCell(r, 3).font = { italic: true, size: 9, color: { argb: 'FF666666' } };
+    r++;
+    this.writeXlsxPendingLateWarning(ws, r, 3, 3, sheetPendingLate);
+  }
+
+  /** Dibuja el aviso de atrasos pendientes (si hay) y devuelve la `y` bajo el texto. */
+  private drawPdfPendingLateWarning(
+    doc: PDFKit.PDFDocument,
+    pendingLate: number,
+    x: number,
+    y: number,
+    width: number,
+  ): number {
+    const warning = pendingLateWarning(pendingLate);
+    if (!warning) return y;
+    doc.fillColor(PENDING_WARNING_PDF_COLOR).font('Helvetica-Bold').fontSize(8);
+    doc.text(warning, x, y, { width });
+    const end = doc.y;
+    doc.fillColor('#000').font('Helvetica');
+    return end;
+  }
+
+  /** Escribe el aviso de atrasos pendientes (si hay) en una fila combinada. Devuelve si escribió. */
+  private writeXlsxPendingLateWarning(
+    ws: ExcelJS.Worksheet,
+    row: number,
+    fromCol: number,
+    toCol: number,
+    pendingLate: number,
+    rowHeight?: number,
+  ): boolean {
+    const warning = pendingLateWarning(pendingLate);
+    if (!warning) return false;
+    if (toCol > fromCol) ws.mergeCells(row, fromCol, row, toCol);
+    const cell = ws.getCell(row, fromCol);
+    cell.value = warning;
+    cell.font = { italic: true, bold: true, size: 9, color: { argb: PENDING_WARNING_XLSX_COLOR } };
+    cell.alignment = { horizontal: 'left', vertical: 'middle', wrapText: rowHeight !== undefined };
+    if (rowHeight !== undefined) ws.getRow(row).height = rowHeight;
+    return true;
   }
 
   private activeDuringPeriodWhere(from: Date, to: Date) {
@@ -3944,7 +4048,7 @@ export class ReportsService {
     },
     year: number,
     month: number,
-    recordMap: Map<string, Map<number, string>>,
+    recordMap: Map<string, Map<number, GridCell>>,
     options?: { isFirstMonth?: boolean; from?: Date; to?: Date; nonSchoolDays?: Set<string> },
   ): void {
     const daysInMonth = new Date(year, month, 0).getDate();
@@ -4043,6 +4147,7 @@ export class ReportsService {
     doc.font('Helvetica').fontSize(7);
     let totalRate = 0;
     let totalStudents = 0;
+    let totalPendingLate = 0;
 
     for (const [i, s] of course.students.entries()) {
       if (y + ROW_H > 560) {
@@ -4062,10 +4167,7 @@ export class ReportsService {
       doc.text(fullName, x + 3, y + 4, { width: NAME_W - 5, ellipsis: true, lineBreak: false });
       x += NAME_W;
 
-      let p = 0,
-        a = 0,
-        l = 0,
-        j = 0;
+      const counts = emptyAttendanceCounts();
       for (let d = 1; d <= daysInMonth; d++) {
         const date = new Date(year, month - 1, d);
         const dow = date.getDay();
@@ -4073,26 +4175,24 @@ export class ReportsService {
         if (isWeekend) {
           doc.rect(x, y, DAY_W, ROW_H).fill('#E8EDF1');
         }
-        const sym = this.attendanceSymbolFor(s, date, recordMap.get(s.id)?.get(d));
+        const gridCell = recordMap.get(s.id)?.get(d);
+        const sym = this.attendanceSymbolFor(s, date, gridCell?.sym);
         if (sym) {
+          addGridSymbol(counts, sym, gridCell?.wasLate);
           let bg = '#FFFFFF';
           let fg = '#000';
           if (sym === '1') {
             bg = '#16A34A';
             fg = '#fff';
-            p++;
           } else if (sym === '0') {
             bg = '#DC2626';
             fg = '#fff';
-            a++;
           } else if (sym === 'AT') {
             bg = '#EA580C';
             fg = '#fff';
-            l++;
           } else if (sym === 'J') {
             bg = '#FACC15';
             fg = '#000';
-            j++;
           }
           doc.rect(x, y, DAY_W, ROW_H).fill(bg);
           doc.fillColor(fg).font('Helvetica-Bold').fontSize(6.5);
@@ -4108,24 +4208,26 @@ export class ReportsService {
         options?.to ?? new Date(year, month, 0, 23, 59, 59, 999),
         options?.nonSchoolDays ?? new Set(),
       );
-      const rate = calculateReportAttendanceRate(p + l, activeDays);
-      if (activeDays > 0) {
+      const summary = buildAttendanceSummary(counts, activeDays);
+      const rate = summary.attendanceRate ?? 0;
+      totalPendingLate += summary.pendingLate;
+      if (summary.attendanceRate !== null) {
         totalRate += rate;
         totalStudents++;
       }
 
       doc.fillColor('#000').font('Helvetica');
-      doc.text(String(p), x, y + 4, { width: SUM_W, align: 'center' });
+      doc.text(String(summary.present), x, y + 4, { width: SUM_W, align: 'center' });
       x += SUM_W;
-      doc.text(String(a), x, y + 4, { width: SUM_W, align: 'center' });
+      doc.text(String(summary.absent), x, y + 4, { width: SUM_W, align: 'center' });
       x += SUM_W;
-      doc.text(String(l), x, y + 4, { width: SUM_W, align: 'center' });
+      doc.text(String(summary.late), x, y + 4, { width: SUM_W, align: 'center' });
       x += SUM_W;
-      doc.text(String(j), x, y + 4, { width: SUM_W, align: 'center' });
+      doc.text(String(summary.justified), x, y + 4, { width: SUM_W, align: 'center' });
       x += SUM_W;
       const rateColor = rate >= 0.9 ? '#15803d' : rate >= 0.7 ? '#b45309' : '#b91c1c';
       doc.fillColor(rateColor).font('Helvetica-Bold');
-      doc.text(activeDays > 0 ? `${(rate * 100).toFixed(1)}%` : '—', x, y + 4, {
+      doc.text(summary.attendanceRate !== null ? `${(rate * 100).toFixed(1)}%` : '—', x, y + 4, {
         width: PCT_W,
         align: 'center',
       });
@@ -4136,7 +4238,7 @@ export class ReportsService {
 
     const avg = totalStudents > 0 ? totalRate / totalStudents : 0;
     y += 6;
-    if (y + 60 > 580) {
+    if (y + 90 > 580) {
       doc.addPage();
       y = 80;
     }
@@ -4146,11 +4248,8 @@ export class ReportsService {
     y += 36;
 
     doc.fillColor('#000').font('Helvetica').fontSize(8);
-    doc.text(
-      'Leyenda: 1 = Presente  ·  0 = Ausente  ·  AT = Atraso  ·  J = Justificado  ·  % = (Presentes + Atrasos) * 100 / Total clases',
-      NAV_X,
-      y,
-    );
+    doc.text(GRID_PDF_LEGEND, NAV_X, y, { width: PAGE_W - NAV_X * 2 });
+    this.drawPdfPendingLateWarning(doc, totalPendingLate, NAV_X, doc.y + 2, PAGE_W - NAV_X * 2);
   }
 
   /** MINEDUC-style semester PDF: one month grid page per month in the semester period. */
@@ -4190,21 +4289,13 @@ export class ReportsService {
 
     const records = await this.prisma.attendanceRecord.findMany({
       where: { courseId, date: { gte: globalFrom, lte: globalTo } },
-      select: { studentId: true, date: true, status: true },
+      select: { studentId: true, date: true, status: true, wasLate: true },
     });
     const nonSchoolDays = await this.calendar.getNonSchoolDays(
       courseHead.schoolId,
       globalFrom,
       globalTo,
     );
-
-    const SYMBOL: Record<string, string> = {
-      PRESENT: '1',
-      ABSENT: '0',
-      LATE: 'AT',
-      JUSTIFIED: 'J',
-      WITHDRAWN: '-',
-    };
 
     const doc = new PDFDocument({ size: 'A4', layout: 'landscape', margin: 28 });
     const chunks: Buffer[] = [];
@@ -4214,13 +4305,13 @@ export class ReportsService {
     for (const [idx, mr] of monthRanges.entries()) {
       const monthFrom = mr.from;
       const monthTo = mr.to;
-      const recordMap = new Map<string, Map<number, string>>();
+      const recordMap = new Map<string, Map<number, GridCell>>();
       for (const r of records) {
         const rDate = r.date;
         if (rDate < monthFrom || rDate > monthTo) continue;
         const day = rDate.getUTCDate();
         if (!recordMap.has(r.studentId)) recordMap.set(r.studentId, new Map());
-        recordMap.get(r.studentId)!.set(day, SYMBOL[r.status] ?? '-');
+        recordMap.get(r.studentId)!.set(day, toGridCell(r));
       }
       this.renderMonthGridPage(doc, course, monthFrom.getFullYear(), mr.month, recordMap, {
         isFirstMonth: idx === 0,
@@ -4275,21 +4366,13 @@ export class ReportsService {
 
     const records = await this.prisma.attendanceRecord.findMany({
       where: { courseId, date: { gte: globalFrom, lte: globalTo } },
-      select: { studentId: true, date: true, status: true },
+      select: { studentId: true, date: true, status: true, wasLate: true },
     });
     const nonSchoolDays = await this.calendar.getNonSchoolDays(
       courseHead.schoolId,
       globalFrom,
       globalTo,
     );
-
-    const SYMBOL: Record<string, string> = {
-      PRESENT: '1',
-      ABSENT: '0',
-      LATE: 'AT',
-      JUSTIFIED: 'J',
-      WITHDRAWN: '-',
-    };
 
     const doc = new PDFDocument({ size: 'A4', layout: 'landscape', margin: 28 });
     const chunks: Buffer[] = [];
@@ -4299,13 +4382,13 @@ export class ReportsService {
     for (const [idx, mr] of monthRanges.entries()) {
       const monthFrom = mr.from;
       const monthTo = mr.to;
-      const recordMap = new Map<string, Map<number, string>>();
+      const recordMap = new Map<string, Map<number, GridCell>>();
       for (const r of records) {
         const rDate = r.date;
         if (rDate < monthFrom || rDate > monthTo) continue;
         const day = rDate.getUTCDate();
         if (!recordMap.has(r.studentId)) recordMap.set(r.studentId, new Map());
-        recordMap.get(r.studentId)!.set(day, SYMBOL[r.status] ?? '-');
+        recordMap.get(r.studentId)!.set(day, toGridCell(r));
       }
       this.renderMonthGridPage(doc, course, monthFrom.getFullYear(), mr.month, recordMap, {
         isFirstMonth: idx === 0,
