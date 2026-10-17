@@ -254,6 +254,29 @@ describe('ReportsService attendance formulas', () => {
     );
   });
 
+  // Un informe del mes en curso no puede contar como "sin registro" días que
+  // todavía no ocurren: antes, el 10-mar dividía por los 22 días hábiles del mes.
+  it('un informe del mes en curso solo cuenta los días hábiles hasta hoy', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date('2026-03-10T15:00:00.000Z')); // 10-mar, 12:00 en Chile
+    try {
+      const service = makeStudentMonthlyService([
+        { day: 2, status: 'PRESENT', wasLate: false },
+        { day: 3, status: 'PRESENT', wasLate: false },
+      ]);
+      const buffer = await service.generateStudentMonthlyExcel('student-1', 2026, 3, 'user-1');
+      const workbook = new ExcelJS.Workbook();
+      await workbook.xlsx.load(buffer as unknown as Parameters<typeof workbook.xlsx.load>[0]);
+      const sheet = workbook.getWorksheet('ASISTENCIA');
+
+      const attendedRow = findRowByLabel(sheet, 'Días asistidos:');
+      // Hábiles del 2 al 10 de marzo: 2, 3, 4, 5, 6, 9 y 10.
+      expect(sheet?.getCell(attendedRow, 4).value).toBe(7);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('genera Excel semanal con justificados, sin registro y atrasos pendientes fuera del %', async () => {
     const { service, audit, calendar } = makeWeeklyService();
 
@@ -345,5 +368,19 @@ describe('ReportsService attendance formulas', () => {
       service.generateStudentAnnualExcel('student-1', 2026, 'user-1'),
     ]);
     for (const xlsx of excels) expect(xlsx.length).toBeGreaterThan(0);
+  });
+
+  // El pie "Documento generado automáticamente" se escribía bajo el margen
+  // inferior y PDFKit abría una hoja extra en blanco solo para él.
+  it('el pie de página no agrega una hoja en blanco al final del PDF', async () => {
+    const service = makeCourseService();
+    const pageCount = (pdf: Buffer) => pdf.toString('latin1').match(/\/Type \/Page[^s]/g)?.length;
+    const pdfs = await Promise.all([
+      service.generateCoursePdf('course-1', 2026, 3, 'user-1'),
+      service.generateMonthlyGridPdf('course-1', 2026, 3, 'user-1'),
+      service.generateStudentMonthlyPdf('student-1', 2026, 3, 'user-1'),
+    ]);
+    // Antes: [2, 2, 3]. El del alumno ocupa 2 páginas reales (31 filas diarias).
+    expect(pdfs.map(pageCount)).toEqual([1, 1, 2]);
   });
 });

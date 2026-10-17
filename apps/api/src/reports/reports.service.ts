@@ -15,6 +15,7 @@ import {
   type AttendanceCounts,
   type AttendanceSummary,
 } from '../attendance/attendance-calculation.js';
+import { chileTodayKey } from '../common/date-only.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { AuditService } from '../audit/audit.service.js';
 import { CalendarService } from '../calendar/calendar.service.js';
@@ -421,15 +422,14 @@ export class ReportsService {
     doc.text('Profesor Jefe', 130, y + 55);
     doc.text('Dirección', 400, y + 55);
 
-    doc
-      .fontSize(7)
-      .fillColor('#999')
-      .text(
-        `Documento generado automáticamente — ${course.school.name} · ${new Date().toISOString()}`,
-        48,
-        800,
-        { width: 499, align: 'center' },
-      );
+    doc.fontSize(7).fillColor('#999');
+    this.writePageFooter(
+      doc,
+      `Documento generado automáticamente — ${course.school.name} · ${new Date().toISOString()}`,
+      48,
+      800,
+      499,
+    );
 
     doc.end();
     await done;
@@ -691,15 +691,14 @@ export class ReportsService {
     doc.fontSize(8).text('Profesor Jefe', NAV_X + 110, y + 14);
     doc.text('Dirección', PAGE_W - NAV_X - 150, y + 14);
 
-    doc
-      .fontSize(6)
-      .fillColor('#999')
-      .text(
-        `Documento generado automáticamente — ${course.school.name} · ${new Date().toISOString()}`,
-        NAV_X,
-        575,
-        { width: TABLE_W, align: 'center' },
-      );
+    doc.fontSize(6).fillColor('#999');
+    this.writePageFooter(
+      doc,
+      `Documento generado automáticamente — ${course.school.name} · ${new Date().toISOString()}`,
+      NAV_X,
+      575,
+      TABLE_W,
+    );
 
     doc.end();
     await done;
@@ -1496,15 +1495,14 @@ export class ReportsService {
     doc.text('_______________________________________', 340, y + 40);
     doc.text('Profesor Jefe', 130, y + 55);
     doc.text('Dirección', 400, y + 55);
-    doc
-      .fontSize(7)
-      .fillColor('#999')
-      .text(
-        `Documento generado automáticamente — ${course.school.name} · ${new Date().toISOString()}`,
-        48,
-        800,
-        { width: 499, align: 'center' },
-      );
+    doc.fontSize(7).fillColor('#999');
+    this.writePageFooter(
+      doc,
+      `Documento generado automáticamente — ${course.school.name} · ${new Date().toISOString()}`,
+      48,
+      800,
+      499,
+    );
 
     doc.end();
     await done;
@@ -1705,15 +1703,14 @@ export class ReportsService {
     doc.text('_______________________________________', 340, y + 40);
     doc.text('Profesor Jefe', 130, y + 55);
     doc.text('Dirección', 400, y + 55);
-    doc
-      .fontSize(7)
-      .fillColor('#999')
-      .text(
-        `Documento generado automáticamente — ${course.school.name} · ${new Date().toISOString()}`,
-        48,
-        800,
-        { width: 499, align: 'center' },
-      );
+    doc.fontSize(7).fillColor('#999');
+    this.writePageFooter(
+      doc,
+      `Documento generado automáticamente — ${course.school.name} · ${new Date().toISOString()}`,
+      48,
+      800,
+      499,
+    );
 
     doc.end();
     await done;
@@ -1933,15 +1930,14 @@ export class ReportsService {
     doc.text('Profesor Jefe', 130, y + 55);
     doc.text('Director/a', 400, y + 55);
 
-    doc
-      .fontSize(7)
-      .fillColor('#999')
-      .text(
-        `Documento generado automáticamente — ${student.course.school.name} · ${new Date().toISOString()}`,
-        48,
-        800,
-        { width: 499, align: 'center' },
-      );
+    doc.fontSize(7).fillColor('#999');
+    this.writePageFooter(
+      doc,
+      `Documento generado automáticamente — ${student.course.school.name} · ${new Date().toISOString()}`,
+      48,
+      800,
+      499,
+    );
 
     doc.end();
     await done;
@@ -2157,15 +2153,14 @@ export class ReportsService {
     doc.text('Profesor Jefe', 130, y + 55);
     doc.text('Director/a', 400, y + 55);
 
-    doc
-      .fontSize(7)
-      .fillColor('#999')
-      .text(
-        `Documento generado automáticamente — ${student.course.school.name} · ${new Date().toISOString()}`,
-        48,
-        800,
-        { width: 499, align: 'center' },
-      );
+    doc.fontSize(7).fillColor('#999');
+    this.writePageFooter(
+      doc,
+      `Documento generado automáticamente — ${student.course.school.name} · ${new Date().toISOString()}`,
+      48,
+      800,
+      499,
+    );
 
     doc.end();
     await done;
@@ -2378,15 +2373,14 @@ export class ReportsService {
     doc.text('Profesor Jefe', 130, y + 55);
     doc.text('Director/a', 400, y + 55);
 
-    doc
-      .fontSize(7)
-      .fillColor('#999')
-      .text(
-        `Documento generado automáticamente — ${student.course.school.name} · ${new Date().toISOString()}`,
-        48,
-        800,
-        { width: 499, align: 'center' },
-      );
+    doc.fontSize(7).fillColor('#999');
+    this.writePageFooter(
+      doc,
+      `Documento generado automáticamente — ${student.course.school.name} · ${new Date().toISOString()}`,
+      48,
+      800,
+      499,
+    );
 
     doc.end();
     await done;
@@ -3778,6 +3772,23 @@ export class ReportsService {
    * and days after withdrawnAt (i.e., only days the student was enrolled).
    * Also excludes weekends and non-school days (holidays/suspended).
    */
+  /**
+   * Escribe el pie dentro del margen inferior. Un `text()` bajo el margen hace que
+   * PDFKit abra una página nueva solo para el pie (hoja extra en blanco).
+   */
+  private writePageFooter(
+    doc: PDFKit.PDFDocument,
+    text: string,
+    x: number,
+    y: number,
+    width: number,
+  ): void {
+    const bottom = doc.page.margins.bottom;
+    doc.page.margins.bottom = 0;
+    doc.text(text, x, y, { width, align: 'center', lineBreak: false });
+    doc.page.margins.bottom = bottom;
+  }
+
   private countActiveSchoolDays(
     student: { enrolledAt: Date; withdrawnAt: Date | null },
     from: Date,
@@ -3790,11 +3801,15 @@ export class ReportsService {
         ? this.previousCalendarDay(student.withdrawnAt)
         : to;
     const end = this.startOfDay(withdrawnEnd);
+    // Un informe del mes en curso no cuenta días que aún no ocurren (si no, se
+    // leerían como "sin registro" y bajarían el %).
+    const todayKey = chileTodayKey();
     let days = 0;
     const cursor = new Date(start);
     while (cursor <= end) {
       const dow = cursor.getDay();
       const key = `${cursor.getFullYear()}-${String(cursor.getMonth() + 1).padStart(2, '0')}-${String(cursor.getDate()).padStart(2, '0')}`;
+      if (key > todayKey) break;
       if (dow !== 0 && dow !== 6 && !nonSchoolDays.has(key)) days++;
       cursor.setDate(cursor.getDate() + 1);
     }
