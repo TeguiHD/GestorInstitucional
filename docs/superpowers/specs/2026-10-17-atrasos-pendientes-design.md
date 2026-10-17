@@ -23,9 +23,9 @@ la inspectora.
 2. **Marca de atraso** = nueva columna `wasLate`. Se pone en `true` al registrar
    `LATE` y **sobrevive** a la resolución: el conteo de atrasos no baja porque
    alguien resolvió el caso.
-3. **Resolución**: Inspectoría (SUPER*ADMIN, DIRECTOR, UTP, INSPECTORIA) pasa el
-   atraso a `PRESENT` o `ABSENT`, sin plazo. Desde la pantalla \_Atrasos* (en lote)
-   o desde la grilla del curso.
+3. **Resolución**: Inspectoría (`SUPER_ADMIN`, `DIRECTOR`, `UTP`, `INSPECTORIA`) pasa
+   el atraso a `PRESENT` o `ABSENT`, sin plazo. Desde la pantalla **Atrasos** (en
+   lote) o desde la grilla del curso.
 4. **Justificación aprobada** de un atraso (pendiente o ya resuelto) ⇒ `PRESENT`.
    Una inasistencia normal justificada sigue quedando `JUSTIFIED` (sin cambios).
 5. **Corrección del profesor**: si un PROFESOR cambia en la grilla un `LATE` a otro
@@ -64,7 +64,7 @@ Mismo patrón visual que _Justificaciones_: pestañas **Pendientes (n)** /
 **Resueltos**, filtro por curso, búsqueda por alumno/RUT, paginación de 50.
 Cada fila: casilla, alumno, RUT, curso, fecha. Acciones en lote sobre lo
 seleccionado: **Marcar presente** / **Marcar ausente** (con confirmación que
-indica cuántos). Visible para SUPER_ADMIN, DIRECTOR, UTP e INSPECTORIA.
+indica cuántos). Visible para `SUPER_ADMIN`, `DIRECTOR`, `UTP` e `INSPECTORIA`.
 
 ## API
 
