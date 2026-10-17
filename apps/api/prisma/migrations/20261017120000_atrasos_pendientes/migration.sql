@@ -11,6 +11,9 @@ ALTER TABLE `attendance_records` ADD COLUMN `wasLate` BOOLEAN NOT NULL DEFAULT f
 -- recibe una bandeja con cientos de casos antiguos.
 --
 -- La lista exacta de registros convertidos queda en la auditoría (reversible).
+-- JSON_ARRAYAGG respeta group_concat_max_len y trunca en silencio: se sube en
+-- la sesión para que la lista de IDs quede siempre completa.
+SET SESSION group_concat_max_len = 16777216;
 SET @converted_ids = (
   SELECT JSON_ARRAYAGG(`id`) FROM `attendance_records` WHERE `status` = 'LATE'
 );

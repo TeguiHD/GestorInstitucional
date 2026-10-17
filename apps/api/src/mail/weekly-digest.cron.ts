@@ -111,7 +111,8 @@ export class WeeklyDigestCron {
           justified: summary.justified,
           missing: summary.missing,
           total: summary.totalClasses,
-          rate: summary.attendanceRate ?? 0,
+          // null: toda la semana son atrasos pendientes; no hay % que informar.
+          rate: summary.attendanceRate,
         };
 
         const { subject, html, text } = this.mail.templates.weeklyDigest({

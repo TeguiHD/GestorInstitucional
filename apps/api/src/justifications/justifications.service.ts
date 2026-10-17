@@ -284,7 +284,13 @@ export class JustificationsService {
     if (!j) throw new NotFoundException('Justificación no encontrada');
     this.assertCanAccessSchool(reviewer, j.record.student.schoolId);
     if (j.status !== 'PENDING') throw new ForbiddenException('Ya fue revisada');
-    if (decision === 'APPROVED' && j.record.status !== 'ABSENT' && j.record.status !== 'LATE') {
+    // Un atraso ya resuelto como presente sigue siendo justificable (queda igual):
+    // rechazarlo avisaría al apoderado que su justificación fue rechazada.
+    const justifiable =
+      j.record.status === 'ABSENT' ||
+      j.record.status === 'LATE' ||
+      (j.record.wasLate && j.record.status === 'PRESENT');
+    if (decision === 'APPROVED' && !justifiable) {
       throw new BadRequestException('El registro ya no es justificable');
     }
 

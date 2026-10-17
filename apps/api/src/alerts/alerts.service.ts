@@ -272,9 +272,11 @@ export class AlertsService {
           totalClasses: summary.totalClasses,
           missing: summary.missing,
           rate: summary.attendanceRate ?? 0,
+          effectiveClasses: summary.effectiveClasses,
         };
       })
-      .filter((s) => s.totalClasses >= 5 && s.rate < threshold);
+      // effectiveClasses: un alumno con puros atrasos pendientes no tiene % (no es 0 %).
+      .filter((s) => s.effectiveClasses >= 5 && s.rate < threshold);
 
     if (atRisk.length === 0) return 0;
 
@@ -350,7 +352,8 @@ export class AlertsService {
       );
       if (totalClasses < 10) continue;
       const summary = buildAttendanceSummary(counts, totalClasses);
-      const rate = summary.attendanceRate ?? 0;
+      if (summary.attendanceRate === null) continue;
+      const rate = summary.attendanceRate;
       if (rate < threshold) atRisk.push({ code: course.code, name: course.name, rate });
     }
 

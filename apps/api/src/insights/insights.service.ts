@@ -222,10 +222,12 @@ export class InsightsService {
           rate: summary.attendanceRate ?? 0,
           total: summary.totalClasses,
           totalClasses: summary.totalClasses,
+          effectiveClasses: summary.effectiveClasses,
           missing: summary.missing,
         };
       })
-      .filter((s) => s.totalClasses >= 5 && s.rate < 0.7)
+      // effectiveClasses: un alumno con puros atrasos pendientes no tiene % (no es 0 %).
+      .filter((s) => s.effectiveClasses >= 5 && s.rate < 0.7)
       .sort((a, b) => a.rate - b.rate);
     if (atRisk.length > 0) {
       const top = atRisk.slice(0, 5);
@@ -429,9 +431,10 @@ export class InsightsService {
           totalClasses: summary.totalClasses,
           missing: summary.missing,
           attendanceRate: summary.attendanceRate ?? 0,
+          effectiveClasses: summary.effectiveClasses,
         };
       })
-      .filter((s) => s.totalClasses >= 5 && s.attendanceRate < 0.7)
+      .filter((s) => s.effectiveClasses >= 5 && s.attendanceRate < 0.7)
       .sort((a, b) => a.attendanceRate - b.attendanceRate);
 
     return {

@@ -289,14 +289,16 @@ export function weeklyDigest(p: {
     justified: number;
     missing?: number;
     total?: number;
-    rate: number;
+    rate: number | null;
   };
   absentDates: string[];
   portalUrl: string;
 }): { subject: string; html: string; text: string } {
-  const pct = (p.stats.rate * 100).toFixed(1);
-  const rateColor = p.stats.rate >= 0.9 ? '#16a34a' : p.stats.rate >= 0.75 ? '#f59e0b' : '#dc2626';
-  const subject = `Resumen semanal — ${p.studentName} (${pct}%)`;
+  const rate = p.stats.rate;
+  const pct = rate === null ? '—' : `${(rate * 100).toFixed(1)}%`;
+  const rateColor =
+    rate === null ? '#64748b' : rate >= 0.9 ? '#16a34a' : rate >= 0.75 ? '#f59e0b' : '#dc2626';
+  const subject = `Resumen semanal — ${p.studentName} (${pct})`;
 
   const kpi = (label: string, value: number | string, color: string) =>
     `<td align="center" style="padding:10px;background:#f8fafc;border-radius:8px">
@@ -312,7 +314,7 @@ export function weeklyDigest(p: {
     </p>
     <table role="presentation" width="100%" cellpadding="0" cellspacing="6" style="margin:12px 0">
       <tr>
-        ${kpi('Asistencia', pct + '%', rateColor)}
+        ${kpi('Asistencia', pct, rateColor)}
         ${kpi('Presente', String(p.stats.present), '#16a34a')}
         ${kpi('Ausente', String(p.stats.absent), '#dc2626')}
         ${kpi('Atrasos', String(p.stats.late), '#f97316')}
@@ -339,7 +341,7 @@ export function weeklyDigest(p: {
     </div>
     <p style="margin:16px 0 0;font-size:13px;color:#475569">Atentamente,<br/>${BRAND.name}</p>`;
 
-  const text = `${subject}\n\n${p.studentName} ${p.courseName}\nAsistencia: ${pct}%\nFórmula: Presentes / (Total clases − atrasos pendientes de resolver)\nPresente ${p.stats.present} · Ausente ${p.stats.absent} · Atrasos ${p.stats.late} · Justif ${p.stats.justified} · Total clases ${p.stats.total ?? '—'}${p.stats.missing ? ` · Sin registro ${p.stats.missing}` : ''}${p.absentDates.length ? `\nAusencias: ${p.absentDates.join(', ')}` : ''}\n\n${p.portalUrl}/my-children`;
+  const text = `${subject}\n\n${p.studentName} ${p.courseName}\nAsistencia: ${pct}\nFórmula: Presentes / (Total clases − atrasos pendientes de resolver)\nPresente ${p.stats.present} · Ausente ${p.stats.absent} · Atrasos ${p.stats.late} · Justif ${p.stats.justified} · Total clases ${p.stats.total ?? '—'}${p.stats.missing ? ` · Sin registro ${p.stats.missing}` : ''}${p.absentDates.length ? `\nAusencias: ${p.absentDates.join(', ')}` : ''}\n\n${p.portalUrl}/my-children`;
 
   return { subject, html: shell(subject, body), text };
 }

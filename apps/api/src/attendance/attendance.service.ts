@@ -84,6 +84,22 @@ export class AttendanceService {
     const changeAudit = await this.buildAttendanceChangeAudit(dto, existingRecords, recordedById);
     const existingByStudent = new Map(existingRecords.map((record) => [record.studentId, record]));
 
+    // Un atraso ya resuelto por Inspectoría solo lo cambia Inspectoría: si no, un
+    // profesor (o una grilla desactualizada / cola offline) desharía la decisión.
+    if (!resolvesLate) {
+      const locked = day.entries.filter((entry) => {
+        const existing = existingByStudent.get(entry.studentId);
+        return existing?.wasLate && existing.status !== 'LATE' && existing.status !== entry.status;
+      }).length;
+      if (locked > 0) {
+        throw new ForbiddenException(
+          `${locked} registro${locked !== 1 ? 's' : ''} del ${day.date} ${
+            locked !== 1 ? 'son atrasos ya resueltos' : 'es un atraso ya resuelto'
+          } por Inspectoría. Solo Inspectoría puede cambiarlo${locked !== 1 ? 's' : ''}.`,
+        );
+      }
+    }
+
     const writes = day.entries.map((entry) => {
       const existing = existingByStudent.get(entry.studentId);
       const data = {

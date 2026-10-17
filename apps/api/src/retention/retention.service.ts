@@ -221,6 +221,7 @@ export class RetentionService {
         date: true,
         courseId: true,
         status: true,
+        wasLate: true,
         course: { select: { schoolId: true, code: true, name: true } },
       },
     });
@@ -256,8 +257,10 @@ export class RetentionService {
       entry.total += 1;
       if (record.status === 'PRESENT') entry.present += 1;
       else if (record.status === 'ABSENT') entry.absent += 1;
-      else if (record.status === 'LATE') entry.late += 1;
       else if (record.status === 'JUSTIFIED') entry.justified += 1;
+      // Atrasos = con marca (pendientes + resueltos); los resueltos cuentan además
+      // por su estado final, igual que en attendance-calculation.ts.
+      if (record.status === 'LATE' || record.wasLate) entry.late += 1;
       byCourse.set(record.courseId, entry);
     }
 

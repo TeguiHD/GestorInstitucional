@@ -59,14 +59,9 @@ describe('InsightsService attendance formulas', () => {
 
     // 5 días lectivos − 1 atraso pendiente = 4; 1 presente → 25 %.
     expect(result.attendanceRate).toBe(0.25);
+    // Con el atraso pendiente quedan 4 clases efectivas (< 5): todavía no se
+    // marca en riesgo, para no alarmar con un % que Inspectoría aún no resolvió.
     const risk = result.insights.find((insight) => insight.type === 'risk_students');
-    expect(risk?.meta?.students).toEqual([
-      expect.objectContaining({
-        id: student.id,
-        rate: 0.25,
-        totalClasses: 5,
-        missing: 1,
-      }),
-    ]);
+    expect(risk).toBeUndefined();
   });
 });

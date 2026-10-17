@@ -1,4 +1,4 @@
-import { BadRequestException } from '@nestjs/common';
+import { BadRequestException, ForbiddenException } from '@nestjs/common';
 import { AttendanceStatus } from '@prisma/client';
 import { describe, expect, it, vi } from 'vitest';
 
@@ -18,6 +18,7 @@ type RawExisting = {
   studentId: string;
   date: Date;
   status?: AttendanceStatus;
+  wasLate?: boolean;
 };
 
 function makeService(params: {
@@ -39,6 +40,7 @@ function makeService(params: {
     status: r.status ?? AttendanceStatus.PRESENT,
     lateMinutes: null,
     note: null,
+    wasLate: r.wasLate ?? false,
   }));
   const prisma = {
     student: {
@@ -260,5 +262,50 @@ describe('AttendanceService.getMissingAttendance', () => {
     expect(result).toEqual([
       expect.objectContaining({ courseId: 'course-1', missingDates: ['2026-06-16'] }),
     ]);
+  });
+});
+
+describe('AttendanceService atrasos ya resueltos', () => {
+  const resolved = (status: AttendanceStatus) => ({
+    activeStudentIds: ['s1'],
+    existingRecords: [
+      { studentId: 's1', date: new Date('2026-05-12T00:00:00.000Z'), status, wasLate: true },
+    ],
+  });
+
+  it('un profesor no puede cambiar un atraso que Inspectoría ya resolvió', async () => {
+    const { service, prisma } = makeService(resolved(AttendanceStatus.PRESENT));
+
+    await expect(
+      service.recordBulk(dto([{ studentId: 's1', status: AttendanceStatus.LATE }]), 'prof', false),
+    ).rejects.toBeInstanceOf(ForbiddenException);
+    expect(prisma.$transaction).not.toHaveBeenCalled();
+  });
+
+  it('el profesor puede reenviar el mismo estado (grilla sin cambios en esa celda)', async () => {
+    const { service } = makeService(resolved(AttendanceStatus.PRESENT));
+
+    await expect(
+      service.recordBulk(
+        dto([{ studentId: 's1', status: AttendanceStatus.PRESENT }]),
+        'prof',
+        false,
+      ),
+    ).resolves.toEqual({ upserted: 1 });
+  });
+
+  it('Inspectoría sí puede cambiar un atraso resuelto y conserva la marca', async () => {
+    const { service, prisma } = makeService(resolved(AttendanceStatus.PRESENT));
+
+    await service.recordBulk(
+      dto([{ studentId: 's1', status: AttendanceStatus.ABSENT }]),
+      'insp',
+      true,
+    );
+    expect(prisma.attendanceRecord.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ status: 'ABSENT', wasLate: true }),
+      }),
+    );
   });
 });
