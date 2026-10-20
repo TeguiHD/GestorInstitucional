@@ -11,6 +11,7 @@ import {
 import { SystemRole, type UserStatus } from '@prisma/client';
 
 import { PasswordService } from '../auth/services/password.service.js';
+import { isMfaExempt } from '../auth/mfa-exemption.js';
 import { AuditService } from '../audit/audit.service.js';
 import { MailService } from '../mail/mail.service.js';
 import { PrismaService } from '../prisma/prisma.service.js';
@@ -76,12 +77,19 @@ export class UsersService {
         avatarUpdatedAt: true,
         schoolRoles: { where: { schoolId }, select: { role: true } },
         totpSecrets: { select: { verified: true } },
+        mfaExemptAt: true,
+        mfaExemptUntil: true,
       },
       orderBy: [{ lastName: 'asc' }, { firstName: 'asc' }],
     });
-    return users.map(({ avatarPath, ...user }) => ({
+    return users.map(({ avatarPath, mfaExemptAt, mfaExemptUntil, ...user }) => ({
       ...user,
       hasAvatar: Boolean(avatarPath),
+      mfa: {
+        enabled: user.totpSecrets.some((t) => t.verified),
+        exempt: isMfaExempt({ mfaExemptAt, mfaExemptUntil }),
+        exemptUntil: mfaExemptUntil?.toISOString() ?? null,
+      },
     }));
   }
 

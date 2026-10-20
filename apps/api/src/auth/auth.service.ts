@@ -15,6 +15,7 @@ import { TotpService } from './services/totp.service.js';
 import type { LoginDto } from './dto/login.dto.js';
 import type { RegisterDto } from './dto/register.dto.js';
 import { ROLES_REQUIRING_2FA } from '@asistencia/shared';
+import { isMfaExempt } from './mfa-exemption.js';
 
 const MAX_FAILED_LOGINS = 10;
 const LOCKOUT_MINUTES = 30;
@@ -90,10 +91,12 @@ export class AuthService {
     if (user.status !== 'ACTIVE')
       throw new UnauthorizedException('Cuenta inactiva. Contacta al administrador.');
 
-    // 2FA check
+    // 2FA check. Una exención vigente (dada por un SUPER_ADMIN) omite el código y
+    // la configuración obligatoria; no borra el autenticador del usuario.
+    const mfaExempt = isMfaExempt(user);
     const totpEnabled = await this.totp.isEnabled(user.id);
     let totpSkipped = false;
-    if (totpEnabled) {
+    if (totpEnabled && !mfaExempt) {
       if (dto.deviceToken) {
         totpSkipped = await this.totp.isDeviceTrusted(user.id, dto.deviceToken);
       }
@@ -124,7 +127,7 @@ export class AuthService {
 
     // Check if any active-school role requires 2FA but user hasn't set it up
     const requires2fa = userRoles.some((r) => ROLES_REQUIRING_2FA.includes(r));
-    if (requires2fa && !totpEnabled) {
+    if (requires2fa && !totpEnabled && !mfaExempt) {
       const setupToken = await this.tokens.issueSetupToken(
         user.id,
         user.email,
@@ -147,15 +150,27 @@ export class AuthService {
     }
 
     const pair = await this.tokens.issueTokenPair(
-      { sub: user.id, email: user.email, schoolId, roles: userRoles, totpVerified: totpEnabled },
+      {
+        sub: user.id,
+        email: user.email,
+        schoolId,
+        roles: userRoles,
+        totpVerified: totpEnabled || mfaExempt,
+      },
       ip,
       ua,
     );
 
-    await this.audit.log({ userId: user.id, action: 'LOGIN', ip, ua });
+    await this.audit.log({
+      userId: user.id,
+      action: 'LOGIN',
+      ip,
+      ua,
+      ...(mfaExempt && totpEnabled ? { meta: { mfaExempt: true } } : {}),
+    });
 
     let deviceToken: string | undefined;
-    if (totpEnabled && !totpSkipped && dto.rememberDevice) {
+    if (totpEnabled && !mfaExempt && !totpSkipped && dto.rememberDevice) {
       deviceToken = await this.totp.trustDevice(user.id, ua);
     }
 

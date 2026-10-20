@@ -9,6 +9,7 @@ import {
   Param,
   Patch,
   Post,
+  Put,
   Query,
   Req,
   Res,
@@ -20,6 +21,7 @@ import {
   IsEmail,
   IsEnum,
   IsArray,
+  IsISO8601,
   IsOptional,
   IsString,
   MaxLength,
@@ -35,6 +37,7 @@ import { RolesGuard } from '../common/guards/roles.guard.js';
 import { Roles } from '../common/decorators/roles.decorator.js';
 import { CurrentUser, type JwtPayload } from '../common/decorators/current-user.decorator.js';
 import { PrismaService } from '../prisma/prisma.service.js';
+import { UserMfaAdminService } from './user-mfa-admin.service.js';
 import { UsersService } from './users.service.js';
 
 class CreateUserDto {
@@ -126,6 +129,23 @@ class ChangeOwnPasswordDto {
   newPassword!: string;
 }
 
+class SetMfaExemptionDto {
+  @ApiProperty({
+    required: false,
+    nullable: true,
+    description: 'Fin de la exención (ISO 8601). Omitido o null: indefinida.',
+  })
+  @IsOptional()
+  @IsISO8601({ strict: true })
+  until?: string | null;
+
+  @ApiProperty({ required: false, description: 'Motivo (queda en auditoría)' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(200)
+  reason?: string;
+}
+
 class SetPasswordDto {
   @ApiProperty({ description: 'Nueva contraseña para el usuario' })
   @IsString()
@@ -180,7 +200,10 @@ export class SchoolsController {
 @ApiBearerAuth()
 @Controller('users')
 export class UsersController {
-  constructor(private readonly users: UsersService) {}
+  constructor(
+    private readonly users: UsersService,
+    private readonly mfaAdmin: UserMfaAdminService,
+  ) {}
 
   @Get('me')
   @ApiOperation({ summary: 'Perfil propio' })
@@ -298,6 +321,37 @@ export class UsersController {
   @ApiOperation({ summary: 'Resetear contraseña (genera temporal)' })
   resetPassword(@Param('id') id: string, @CurrentUser() actor: JwtPayload) {
     return this.users.resetPassword(id, actor);
+  }
+
+  @Post(':id/mfa/reset')
+  @HttpCode(HttpStatus.OK)
+  @Roles(SystemRole.SUPER_ADMIN)
+  @ApiOperation({ summary: 'Restablecer el autenticador de otro usuario (solo SUPER_ADMIN)' })
+  resetMfa(@Param('id') id: string, @CurrentUser() actor: JwtPayload) {
+    return this.mfaAdmin.reset(actor, id);
+  }
+
+  @Put(':id/mfa/exemption')
+  @Roles(SystemRole.SUPER_ADMIN)
+  @ApiOperation({
+    summary: 'Desactivar el 2FA de otro usuario, temporal o indefinidamente (solo SUPER_ADMIN)',
+  })
+  setMfaExemption(
+    @Param('id') id: string,
+    @Body() dto: SetMfaExemptionDto,
+    @CurrentUser() actor: JwtPayload,
+  ) {
+    return this.mfaAdmin.setExemption(actor, id, {
+      until: dto.until ? new Date(dto.until) : null,
+      ...(dto.reason !== undefined ? { reason: dto.reason } : {}),
+    });
+  }
+
+  @Delete(':id/mfa/exemption')
+  @Roles(SystemRole.SUPER_ADMIN)
+  @ApiOperation({ summary: 'Reactivar el 2FA de otro usuario (solo SUPER_ADMIN)' })
+  clearMfaExemption(@Param('id') id: string, @CurrentUser() actor: JwtPayload) {
+    return this.mfaAdmin.clearExemption(actor, id);
   }
 
   @Post(':id/set-password')

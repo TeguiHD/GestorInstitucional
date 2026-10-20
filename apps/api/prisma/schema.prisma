@@ -176,6 +176,12 @@ model User {
   avatarPath      String?    @db.VarChar(500)
   avatarMime      String?    @db.VarChar(80)
   avatarUpdatedAt DateTime?
+  // Exención de 2FA dada por un SUPER_ADMIN (p. ej. perdió el teléfono). Con
+  // mfaExemptAt y sin mfaExemptUntil es indefinida; con fecha, vence sola.
+  mfaExemptAt     DateTime?
+  mfaExemptUntil  DateTime?
+  mfaExemptById   String?    @db.Char(36)
+  mfaExemptReason String?    @db.VarChar(200)
   createdAt       DateTime   @default(now())
   updatedAt       DateTime   @updatedAt
   deletedAt       DateTime?
