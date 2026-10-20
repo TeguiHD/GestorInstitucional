@@ -13,6 +13,8 @@ import {
   Plus,
   Search,
   Shield,
+  ShieldCheck,
+  ShieldOff,
   Unlock,
   UserX,
   Users,
@@ -47,6 +49,8 @@ type User = {
   lastLoginAt: string | null;
   schoolRoles: SchoolRole[];
   twoFactorEnabled?: boolean;
+  /** Estado del 2FA (solo informativo para el panel). */
+  mfa?: { enabled: boolean; exempt: boolean; exemptUntil: string | null };
 };
 
 type SystemRole = 'SUPER_ADMIN' | 'DIRECTOR' | 'UTP' | 'INSPECTORIA' | 'PROFESOR' | 'APODERADO';
@@ -155,9 +159,11 @@ function ActionMenu({
   onUnlock,
   onResetPassword,
   onSetPassword,
+  onManageMfa,
   onDelete,
   canEdit,
   isSuperAdmin,
+  isSelf,
 }: {
   user: User;
   onEdit: () => void;
@@ -165,9 +171,11 @@ function ActionMenu({
   onUnlock: () => void;
   onResetPassword: () => void;
   onSetPassword: () => void;
+  onManageMfa: () => void;
   onDelete: () => void;
   canEdit: boolean;
   isSuperAdmin: boolean;
+  isSelf: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const [menuPos, setMenuPos] = useState<{ top?: number; bottom?: number; right: number }>({
@@ -179,7 +187,7 @@ function ActionMenu({
   const handleOpen = () => {
     if (btnRef.current) {
       const r = btnRef.current.getBoundingClientRect();
-      const MENU_H = 252;
+      const MENU_H = 290;
       const spaceBelow = window.innerHeight - r.bottom;
       if (spaceBelow < MENU_H) {
         setMenuPos({ bottom: window.innerHeight - r.top + 4, right: window.innerWidth - r.right });
@@ -255,6 +263,17 @@ function ActionMenu({
                 <Edit2 className="h-3.5 w-3.5" /> Cambiar contraseña
               </button>
             )}
+            {isSuperAdmin && !isSelf && (
+              <button
+                onClick={() => {
+                  onManageMfa();
+                  setOpen(false);
+                }}
+                className="w-full text-left px-4 py-2 hover:bg-muted transition-colors flex items-center gap-2"
+              >
+                <ShieldCheck className="h-3.5 w-3.5" /> Verificación en dos pasos
+              </button>
+            )}
             <div className="border-t border-border my-1" />
             <button
               onClick={() => {
@@ -278,6 +297,7 @@ type ModalState =
   | { type: 'edit'; user: User }
   | { type: 'password'; userId: string; tempPassword: string }
   | { type: 'setPassword'; user: User }
+  | { type: 'mfa'; user: User }
   | null;
 
 function UserModal({
@@ -686,6 +706,203 @@ function SetPasswordModal({
   );
 }
 
+// ── 2FA modal (SUPER_ADMIN) ──────────────────────────────────────────────────
+type MfaDuration = '1' | '7' | '30' | 'date' | 'indefinite';
+
+function formatMfaDate(iso: string): string {
+  return new Date(iso).toLocaleString('es-CL', {
+    day: '2-digit',
+    month: 'short',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+}
+
+function MfaModal({
+  user,
+  schoolId,
+  onClose,
+}: {
+  user: User;
+  schoolId: string;
+  onClose: () => void;
+}) {
+  const qc = useQueryClient();
+  const [duration, setDuration] = useState<MfaDuration>('7');
+  const [untilDate, setUntilDate] = useState('');
+  const [reason, setReason] = useState('');
+  const isTargetSuperAdmin = user.schoolRoles.some((r) => r.role === 'SUPER_ADMIN');
+  const mfa = user.mfa ?? { enabled: !!user.twoFactorEnabled, exempt: false, exemptUntil: null };
+  const name = `${user.firstName} ${user.lastName}`;
+
+  const done = (message: string) => {
+    void qc.invalidateQueries({ queryKey: ['users', schoolId] });
+    toast.success(message);
+    onClose();
+  };
+
+  const until = (): string | null => {
+    if (duration === 'indefinite') return null;
+    if (duration === 'date')
+      return untilDate ? new Date(`${untilDate}T23:59:59`).toISOString() : '';
+    return new Date(Date.now() + Number(duration) * 86_400_000).toISOString();
+  };
+
+  const exempt = useMutation({
+    mutationFn: () => api.put(`/users/${user.id}/mfa/exemption`, { until: until(), reason }),
+    onSuccess: () => done(`Verificación en dos pasos desactivada para ${name}`),
+    onError: (e: Error) => toast.error(e.message),
+  });
+  const reactivate = useMutation({
+    mutationFn: () => api.del(`/users/${user.id}/mfa/exemption`),
+    onSuccess: () => done(`Verificación en dos pasos reactivada para ${name}`),
+    onError: (e: Error) => toast.error(e.message),
+  });
+  const reset = useMutation({
+    mutationFn: () => api.post(`/users/${user.id}/mfa/reset`, {}),
+    onSuccess: () => done(`Autenticador restablecido para ${name}`),
+    onError: (e: Error) => toast.error(e.message),
+  });
+  const busy = exempt.isPending || reactivate.isPending || reset.isPending;
+
+  const status = mfa.exempt
+    ? {
+        tone: 'border-amber-200 bg-amber-50 text-amber-800 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-300',
+        text: mfa.exemptUntil
+          ? `Desactivada hasta el ${formatMfaDate(mfa.exemptUntil)}. Después se volverá a pedir.`
+          : 'Desactivada indefinidamente: no se pide código al iniciar sesión.',
+      }
+    : mfa.enabled
+      ? {
+          tone: 'border-green-200 bg-green-50 text-green-800 dark:border-green-800 dark:bg-green-950/40 dark:text-green-300',
+          text: 'Activa: pide el código del autenticador al iniciar sesión.',
+        }
+      : {
+          tone: 'border-border bg-muted/40 text-muted-foreground',
+          text: isTargetSuperAdmin
+            ? 'No configurada: se le pedirá configurarla al iniciar sesión.'
+            : 'No configurada: inicia sesión solo con contraseña.',
+        };
+
+  return (
+    <Modal onClose={onClose} title={`Verificación en dos pasos — ${name}`}>
+      <div className="space-y-5">
+        <div className={`rounded-lg border px-4 py-3 text-sm ${status.tone}`}>{status.text}</div>
+
+        {mfa.exempt ? (
+          <button
+            type="button"
+            disabled={busy}
+            onClick={() => reactivate.mutate()}
+            className="w-full py-2 rounded-lg bg-primary text-primary-foreground text-sm hover:bg-primary/90 transition-colors disabled:opacity-40"
+          >
+            {reactivate.isPending ? 'Reactivando…' : 'Reactivar ahora'}
+          </button>
+        ) : (
+          !isTargetSuperAdmin && (
+            <form
+              onSubmit={(e) => {
+                e.preventDefault();
+                exempt.mutate();
+              }}
+              className="space-y-3"
+            >
+              <p className="text-sm font-medium">Desactivar</p>
+              <div className="flex flex-col gap-1">
+                <label className="text-xs text-muted-foreground font-medium">Duración</label>
+                <select
+                  value={duration}
+                  onChange={(e) => setDuration(e.target.value as MfaDuration)}
+                  className="rounded-lg border border-border bg-background px-3 py-2 text-sm"
+                >
+                  <option value="1">1 día</option>
+                  <option value="7">7 días</option>
+                  <option value="30">30 días</option>
+                  <option value="date">Hasta una fecha…</option>
+                  <option value="indefinite">Indefinidamente</option>
+                </select>
+              </div>
+              {duration === 'date' && (
+                <div className="flex flex-col gap-1">
+                  <label className="text-xs text-muted-foreground font-medium">Hasta el</label>
+                  <input
+                    type="date"
+                    required
+                    value={untilDate}
+                    min={new Date().toISOString().slice(0, 10)}
+                    onChange={(e) => setUntilDate(e.target.value)}
+                    className="rounded-lg border border-border bg-background px-3 py-2 text-sm"
+                  />
+                </div>
+              )}
+              <div className="flex flex-col gap-1">
+                <label className="text-xs text-muted-foreground font-medium">
+                  Motivo (opcional, queda en auditoría)
+                </label>
+                <input
+                  value={reason}
+                  maxLength={200}
+                  onChange={(e) => setReason(e.target.value)}
+                  placeholder="Ej.: cambió de teléfono"
+                  className="rounded-lg border border-border bg-background px-3 py-2 text-sm"
+                />
+              </div>
+              <p className="text-xs text-muted-foreground">
+                No borra su autenticador: al vencer o al reactivarla se vuelve a pedir el mismo.
+              </p>
+              <button
+                type="submit"
+                disabled={busy || (duration === 'date' && !untilDate)}
+                className="w-full py-2 rounded-lg bg-primary text-primary-foreground text-sm hover:bg-primary/90 transition-colors disabled:opacity-40"
+              >
+                {exempt.isPending ? 'Desactivando…' : 'Desactivar verificación'}
+              </button>
+            </form>
+          )
+        )}
+
+        {mfa.enabled && (
+          <div className="space-y-2 border-t border-border pt-4">
+            <p className="text-sm font-medium">Restablecer autenticador</p>
+            <p className="text-xs text-muted-foreground">
+              Para un teléfono perdido o cambiado: borra su autenticador y los dispositivos de
+              confianza.{' '}
+              {isTargetSuperAdmin
+                ? 'Lo configurará de nuevo al iniciar sesión.'
+                : 'Podrá volver a activarlo desde su Perfil.'}
+            </p>
+            <button
+              type="button"
+              disabled={busy}
+              onClick={() => {
+                if (
+                  window.confirm(
+                    `¿Restablecer el autenticador de ${name}? Su configuración actual dejará de funcionar.`,
+                  )
+                ) {
+                  reset.mutate();
+                }
+              }}
+              className="w-full py-2 rounded-lg border border-destructive/40 text-destructive text-sm hover:bg-destructive/10 transition-colors disabled:opacity-40"
+            >
+              {reset.isPending ? 'Restableciendo…' : 'Restablecer autenticador'}
+            </button>
+          </div>
+        )}
+
+        <button
+          type="button"
+          onClick={onClose}
+          className="w-full py-2 rounded-lg border border-border text-sm hover:bg-muted transition-colors"
+        >
+          Cerrar
+        </button>
+      </div>
+    </Modal>
+  );
+}
+
 // ── Main page ────────────────────────────────────────────────────────────────
 function UsersPage() {
   const currentUser = useUser();
@@ -926,6 +1143,17 @@ function UsersPage() {
                       <div className="flex items-center gap-1.5">
                         <StatusPill status={u.status} />
                         {u.status === 'LOCKED' && <Lock className="h-3 w-3 text-destructive" />}
+                        {u.mfa?.exempt && (
+                          <span
+                            title={
+                              u.mfa.exemptUntil
+                                ? `2FA desactivado hasta el ${formatMfaDate(u.mfa.exemptUntil)}`
+                                : '2FA desactivado indefinidamente'
+                            }
+                          >
+                            <ShieldOff className="h-3.5 w-3.5 text-amber-600" />
+                          </span>
+                        )}
                       </div>
                     </td>
                     <td className="px-3 py-3.5">
@@ -938,6 +1166,8 @@ function UsersPage() {
                         onUnlock={() => unlock.mutate(u.id)}
                         onResetPassword={() => resetPassword.mutate(u.id)}
                         onSetPassword={() => setModal({ type: 'setPassword', user: u })}
+                        onManageMfa={() => setModal({ type: 'mfa', user: u })}
+                        isSelf={u.id === currentUser?.sub}
                         onDelete={() => {
                           if (
                             window.confirm(
@@ -989,6 +1219,9 @@ function UsersPage() {
       )}
       {modal?.type === 'setPassword' && (
         <SetPasswordModal user={modal.user} schoolId={schoolId} onClose={() => setModal(null)} />
+      )}
+      {modal?.type === 'mfa' && (
+        <MfaModal user={modal.user} schoolId={schoolId} onClose={() => setModal(null)} />
       )}
     </div>
   );
